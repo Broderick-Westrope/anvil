@@ -3866,6 +3866,7 @@ func (m *UI) ShortHelp() []key.Binding {
 				k.Chat.PageDown,
 				k.Chat.Copy,
 			)
+			binds = append(binds, m.selectedItemBindings()...)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, k.Chat.PillLeft)
 			}
@@ -3892,6 +3893,15 @@ func (m *UI) ShortHelp() []key.Binding {
 		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
 	}
 	return binds
+}
+
+// selectedItemBindings are the help entries for keys only the selected chat
+// item handles.
+func (m *UI) selectedItemBindings() []key.Binding {
+	if _, ok := m.activeChat().SelectedItem().(*chat.DiagramItem); ok {
+		return []key.Binding{m.keyMap.Chat.OpenDiagram}
+	}
+	return nil
 }
 
 // FullHelp implements [help.KeyMap].
@@ -4001,10 +4011,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Chat.End,
 					k.Chat.FocusSidebar,
 				},
-				[]key.Binding{
+				append([]key.Binding{
 					k.Chat.Copy,
 					k.Chat.ClearHighlight,
-				},
+				}, m.selectedItemBindings()...),
 			)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, []key.Binding{k.Chat.PillLeft})

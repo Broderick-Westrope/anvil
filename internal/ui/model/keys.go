@@ -45,6 +45,9 @@ type KeyMap struct {
 		Home           key.Binding
 		End            key.Binding
 		Copy           key.Binding
+		// OpenDiagram is handled by the selected diagram node itself;
+		// the binding is only shown in the help.
+		OpenDiagram key.Binding
 		ClearHighlight key.Binding
 		Expand         key.Binding
 		FocusSidebar   key.Binding
@@ -275,6 +278,10 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.Copy = key.NewBinding(
 		key.WithKeys("c", "y", "C", "Y"),
 		key.WithHelp("c/y", "copy"),
+	)
+	km.Chat.OpenDiagram = key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open in browser"),
 	)
 	km.Chat.ClearHighlight = key.NewBinding(
 		key.WithKeys("esc", "alt+esc"),

@@ -3,6 +3,9 @@ package model
 import (
 	"testing"
 
+	"charm.land/bubbles/v2/key"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -141,4 +144,40 @@ func TestDiagramsOffKeepsAFinishedMessageInOneNode(t *testing.T) {
 		message.TextContent{Text: twoDiagrams}, message.Finish{Reason: message.FinishReasonEndTurn},
 	}})
 	require.Equal(t, []string{"m", "tool-1", "h", "h:assistant-info"}, chatIDs(m.chat), "history loads unsplit")
+}
+
+func helpTexts(binds []key.Binding) []string {
+	var out []string
+	for _, b := range binds {
+		out = append(out, b.Help().Key+" "+b.Help().Desc)
+	}
+	return out
+}
+
+func TestHelpShowsDiagramKeysOnADiagramNode(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	m.keyMap = DefaultKeyMap()
+	sty := m.com.Styles.Attachments
+	m.attachments = attachments.New(attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove), attachments.Keymap{})
+	m.state = uiChat
+	m.session = &session.Session{ID: "s"}
+	m.focus = uiFocusMain
+	m.appendSessionMessage(assistantWithTool(twoDiagrams, message.FinishReasonToolUse))
+
+	m.chat.SetSelected(0)
+	require.NotContains(t, helpTexts(m.ShortHelp()), "o open in browser", "a text node")
+
+	m.chat.SetSelected(1)
+	require.Contains(t, helpTexts(m.ShortHelp()), "o open in browser")
+	require.Contains(t, helpTexts(m.ShortHelp()), "c/y copy")
+	var full []key.Binding
+	for _, group := range m.FullHelp() {
+		full = append(full, group...)
+	}
+	require.Contains(t, helpTexts(full), "o open in browser")
+
+	m.focus = uiFocusEditor
+	require.NotContains(t, helpTexts(m.ShortHelp()), "o open in browser", "the editor has focus")
 }
