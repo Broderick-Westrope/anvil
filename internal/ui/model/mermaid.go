@@ -317,6 +317,19 @@ func (f *mermaidFeature) imageHash(source, bg string) uint64 {
 // diagram runs during rendering, so it only touches the feature's own state
 // and queues work.
 func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) chat.DiagramView {
+	return f.lookup(source, width, kind, true)
+}
+
+// Prefetch implements chat.DiagramRenderer. It does what Diagram does for
+// an image the chat will draw soon, without building its placeholders.
+func (f *mermaidFeature) Prefetch(source string, width int) {
+	f.lookup(source, width, diagramInline, false)
+}
+
+// lookup finds source's image at width, queueing its render if there is
+// none, and marks it drawn for eviction. Only with draw does it build the
+// placeholders that show it.
+func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw bool) chat.DiagramView {
 	cellW, cellH := f.caps.CellSize()
 	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
@@ -335,7 +348,11 @@ func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) cha
 		case diagramFailed:
 			return chat.DiagramView{State: chat.DiagramFailed, Err: e.err}
 		}
-		if out := fimage.EncodingKitty.Render(key.id(), e.cols, e.rows); out != "" {
+		if !draw {
+			if fimage.HasTransmitted(key.id(), e.cols, e.rows) {
+				return chat.DiagramView{State: chat.DiagramReady}
+			}
+		} else if out := fimage.EncodingKitty.Render(key.id(), e.cols, e.rows); out != "" {
 			return chat.DiagramView{State: chat.DiagramReady, Image: out}
 		}
 		// The image cache was reset (e.g. on session switch) or the

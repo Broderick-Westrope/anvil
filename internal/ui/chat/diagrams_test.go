@@ -93,6 +93,7 @@ type fakeDiagrams struct {
 
 func (f fakeDiagrams) Diagram(source string, _ int) DiagramView     { return f.inline[source] }
 func (f fakeDiagrams) FullDiagram(source string, _ int) DiagramView { return f.full[source] }
+func (fakeDiagrams) Prefetch(string, int)                           {}
 
 func finishedMessage(id string, parts ...message.ContentPart) *message.Message {
 	parts = append(parts, message.Finish{Reason: message.FinishReasonEndTurn})

@@ -666,3 +666,25 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestMermaidFeaturePrefetchQueuesAndKeepsDiagrams(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	const src = "flowchart LR\n Prefetched --> Early\n"
+	f.Prefetch(src, 80)
+	ready := waitReady(t, f)
+	require.Equal(t, diagramInline, ready.key.kind, "the chat's image is queued")
+	f.HandleMsg(ready)
+	transmit(ready)
+	f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
+
+	used := f.entries[ready.key].lastUsed
+	f.Prefetch(src, 80)
+	require.Greater(t, f.entries[ready.key].lastUsed, used, "a nearby diagram counts as drawn for eviction")
+	select {
+	case msg := <-f.results:
+		t.Fatalf("a ready diagram was queued again: %T", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

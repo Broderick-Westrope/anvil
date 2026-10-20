@@ -47,6 +47,9 @@ type DiagramRenderer interface {
 	Diagram(source string, width int) DiagramView
 	// FullDiagram is the diagram as shown in its drill-in.
 	FullDiagram(source string, width int) DiagramView
+	// Prefetch queues the chat's image of source at width, as Diagram
+	// does, for a node that will be drawn soon.
+	Prefetch(source string, width int)
 }
 
 // DiagramShower is implemented by items that draw a diagram, so they can be
@@ -57,13 +60,6 @@ type DiagramShower interface {
 
 func (*DiagramItem) showsDiagram()       {}
 func (*DiagramDetailItem) showsDiagram() {}
-
-// Prefetcher is implemented by items that can start slow work before they
-// scroll into view.
-type Prefetcher interface {
-	// Prefetch starts the work for being drawn at width.
-	Prefetch(width int)
-}
 
 // ClickDrillInHandler is implemented by items whose handled click opens a
 // drill-in.
@@ -309,10 +305,10 @@ func (d *DiagramItem) SourceMessage() message.Message { return d.message.Clone()
 // so it is never frozen.
 func (d *DiagramItem) Finished() bool { return false }
 
-// Prefetch implements Prefetcher: it asks for the image, which queues its
-// render, so it is ready by the time the node scrolls into view.
+// Prefetch starts rendering the node's image for drawing at width, so it is
+// ready by the time the node scrolls into view.
 func (d *DiagramItem) Prefetch(width int) {
-	d.diagrams.Diagram(d.source, cappedMessageWidth(width))
+	d.diagrams.Prefetch(d.source, cappedMessageWidth(width))
 }
 
 // RawRender implements list.RawRenderable: the image once it's ready,

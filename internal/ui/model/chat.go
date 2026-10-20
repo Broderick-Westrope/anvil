@@ -211,8 +211,8 @@ func (m *Chat) prefetchNearby() {
 		return
 	}
 	for _, item := range m.list.NearbyItems(m.list.Height()) {
-		if p, ok := item.(chat.Prefetcher); ok {
-			p.Prefetch(m.list.Width())
+		if diagram, ok := item.(*chat.DiagramItem); ok {
+			diagram.Prefetch(m.list.Width())
 		}
 	}
 }

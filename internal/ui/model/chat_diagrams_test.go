@@ -191,6 +191,7 @@ type switchDiagrams struct{ view chat.DiagramView }
 
 func (s *switchDiagrams) Diagram(string, int) chat.DiagramView     { return s.view }
 func (s *switchDiagrams) FullDiagram(string, int) chat.DiagramView { return s.view }
+func (*switchDiagrams) Prefetch(string, int)                       {}
 
 // diagramChat is a 10-row chat holding a text message, then a diagram whose
 // code block is far taller than the image it turns into.
@@ -260,6 +261,7 @@ func (r *recordingDiagrams) Diagram(source string, _ int) chat.DiagramView {
 }
 
 func (r *recordingDiagrams) FullDiagram(string, int) chat.DiagramView { return chat.DiagramView{} }
+func (r *recordingDiagrams) Prefetch(source string, width int)        { r.Diagram(source, width) }
 
 func TestChatDrawAsksForDiagramsWithinAScreenOfTheView(t *testing.T) {
 	t.Parallel()
@@ -298,6 +300,7 @@ func (c *countingDiagrams) Diagram(string, int) chat.DiagramView {
 	return chat.DiagramView{State: chat.DiagramPending}
 }
 func (c *countingDiagrams) FullDiagram(string, int) chat.DiagramView { return c.Diagram("", 0) }
+func (c *countingDiagrams) Prefetch(string, int)                     { c.asked++ }
 
 func TestChatPrefetchesDiagramsBelowTheViewOnlyWhenAsked(t *testing.T) {
 	t.Parallel()
