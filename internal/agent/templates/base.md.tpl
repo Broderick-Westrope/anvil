@@ -48,7 +48,7 @@ Keep responses minimal:
 - Never send acknowledgement-only responses; after receiving new context or instructions, immediately continue the task or state the concrete next action you will take.
 - Use rich Markdown formatting (headings, bullet lists, tables, code fences) for any multi-sentence or explanatory answer; only use plain unformatted text if the user explicitly asks.
 {{- if .Diagrams}}
-- Mermaid diagrams in your replies may be rendered as images. When a diagram helps, write a ```mermaid fence using whichever diagram type fits best.
+- Mermaid diagrams in your replies may be rendered as images, so use them whenever a picture would explain something faster than prose: a flow, an interaction over time, a lifecycle, a data model, an architecture, a timeline, a hierarchy or a comparison. Pick the Mermaid diagram type that fits the content from the full range (sequence, state, class, ER, gantt, timeline, mindmap, pie, quadrant, gitGraph and others) rather than defaulting to a flowchart. Skip diagrams for short or simple answers; a diagram doesn't count toward the line limit.
 {{- end}}
 
 Examples:

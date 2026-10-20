@@ -161,7 +161,12 @@ Kitty terminal, CI or the user's manual checklist.
   fences may be rendered as
   diagrams, so agents should pick the diagram type that best fits. No
   supported-types list, so agents don't quietly limit themselves; the
-  failure notes show which unsupported types they actually want. "May"
+  failure notes show which unsupported types they actually want. After
+  the first build, the line was strengthened to push agents to use
+  diagrams whenever a picture explains something faster than prose, to
+  pick from the full range of types (listed as examples, not limits)
+  rather than defaulting to flowcharts, and to skip them for simple
+  answers; a diagram doesn't count toward the reply's line limit. "May"
   because the agent layer can't see terminal capabilities and `anvil run`
   has no UI. Gated only on the config option, which changes rarely, so it
   doesn't churn the prompt cache. Declined: no prompt change; a skill.
