@@ -49,12 +49,15 @@ func TestRenderStopsAtItsDeadline(t *testing.T) {
 	r, err := NewRenderer()
 	require.NoError(t, err)
 	// The deadline passes before layout starts.
-	r.afterFunc = func(_ time.Duration, fire func()) *time.Timer {
+	var deadline time.Duration
+	r.afterFunc = func(d time.Duration, fire func()) *time.Timer {
+		deadline = d
 		fire()
 		return time.AfterFunc(time.Hour, func() {})
 	}
 	_, err = r.Render(sampleFlowchart, Options{})
-	require.ErrorIs(t, err, ErrRenderTimeout)
+	require.Equal(t, ErrRenderTimeout, err, "the timeout is returned unwrapped")
+	require.Equal(t, 5*time.Second, deadline)
 
 	r.afterFunc = time.AfterFunc
 
@@ -114,4 +117,36 @@ func TestRenderDropsImages(t *testing.T) {
 		require.Contains(t, res.SVG, "pele-shape-imageSquare", "%s: Pele parsed an image node", name)
 		require.False(t, strings.Contains(res.SVG, "<image"), "%s: SVG has an <image>", name)
 	}
+}
+
+func TestNewRendererRejectsBrokenPele(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source, wantErr string
+	}{
+		"syntax error":          {source: "var (", wantErr: "compile pele"},
+		"throws while loading":  {source: "throw new Error('boom')", wantErr: "load pele"},
+		"no pele global":        {source: "", wantErr: "pele global not defined"},
+		"undefined pele global": {source: "var pele = undefined", wantErr: "pele global not defined"},
+		"render isn't callable": {source: "var pele = {render: 1}", wantErr: "pele.render is not a function"},
+	}
+	for name, tc := range tests {
+		_, err := newRenderer(tc.source)
+		require.ErrorContains(t, err, tc.wantErr, name)
+	}
+}
+
+func TestRenderFitsMaxWidth(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRenderer()
+	require.NoError(t, err)
+	src := sampleDiagrams["subgraph"]
+	wide, err := r.Render(src, Options{})
+	require.NoError(t, err)
+	narrow, err := r.Render(src, Options{MaxWidth: 300})
+	require.NoError(t, err)
+	require.Greater(t, wide.Width, 300.0)
+	require.LessOrEqual(t, narrow.Width, 300.0)
 }

@@ -55,7 +55,12 @@ type renderLimits struct {
 
 // defaultLimits leave room for the largest image Anvil asks for (a 64 MB
 // full-size diagram) and its working memory.
-var defaultLimits = renderLimits{Memory: 256 << 20, Timeout: 10 * time.Second}
+var defaultLimits = renderLimits{Memory: defaultMemoryLimit, Timeout: defaultTimeout}
+
+const (
+	defaultMemoryLimit = 256 << 20
+	defaultTimeout     = 10 * time.Second
+)
 
 // wasmPageSize is the size of a WebAssembly memory page.
 const wasmPageSize = 64 << 10

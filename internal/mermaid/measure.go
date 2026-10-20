@@ -62,14 +62,7 @@ func newMeasurer() (*measurer, error) {
 // width returns the advance width of text in pixels at size, matching
 // Pele's TextMeasurer.width(text, size, style).
 func (m *measurer) width(text string, size float64, style int) float64 {
-	idx := 0
-	if style&styleBold != 0 {
-		idx |= 1
-	}
-	if style&styleItalic != 0 {
-		idx |= 2
-	}
-	f := m.faces[idx]
+	f := m.faces[style&(styleBold|styleItalic)]
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -77,13 +70,13 @@ func (m *measurer) width(text string, size float64, style int) float64 {
 	ppem := fixed.I(measurePPEM)
 	var total fixed.Int26_6
 	prev := sfnt.GlyphIndex(0)
-	for i, r := range text {
+	for _, r := range text {
 		g, err := f.GlyphIndex(&m.buf, r)
 		if err != nil || g == 0 {
 			// Missing glyphs fall back to an average advance.
 			g, _ = f.GlyphIndex(&m.buf, 'n')
 		}
-		if i > 0 {
+		if prev != 0 {
 			if k, err := f.Kern(&m.buf, prev, g, ppem, font.HintingNone); err == nil {
 				total += k
 			}

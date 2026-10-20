@@ -177,6 +177,8 @@ func TestRasterizeRejectsUnusableSize(t *testing.T) {
 		width, height, scale float64
 	}{
 		"zero size":      {width: 0, height: 0, scale: 1},
+		"zero width":     {width: 0, height: 20, scale: 1},
+		"zero height":    {width: 40, height: 0, scale: 1},
 		"negative scale": {width: 40, height: 20, scale: -1},
 		"NaN scale":      {width: 40, height: 20, scale: math.NaN()},
 		"infinite scale": {width: 40, height: 20, scale: math.Inf(1)},
@@ -276,4 +278,68 @@ func TestRasterizeResolvesColorMix(t *testing.T) {
 	require.NoError(t, err)
 	got := img.RGBAAt(5, 5)
 	require.Equal(t, [4]uint8{0x80, 0, 0x80, 0xff}, [4]uint8{got.R, got.G, got.B, got.A})
+}
+
+func TestFitPixels(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		width, height, scale float64
+		limit                int
+		w, h                 int
+	}{
+		"scales each side":       {width: 40, height: 20, scale: 2, limit: 1e6, w: 80, h: 40},
+		"rounds each side up":    {width: 10.2, height: 5.1, scale: 1, limit: 1000, w: 11, h: 6},
+		"shrinks a square":       {width: 100, height: 100, scale: 1, limit: 5000, w: 70, h: 70},
+		"shrinks a wide diagram": {width: 300, height: 7, scale: 1, limit: 1000, w: 187, h: 5},
+		"shrinks a tall diagram": {width: 7, height: 300, scale: 1, limit: 1000, w: 5, h: 187},
+		"shrinks by a little":    {width: 4096, height: 2048, scale: 1.5, limit: MaxPixels, w: 4095, h: 2048},
+		// The bound is conservative: 2x1 would fit too.
+		"shrinks a tiny diagram": {width: 3, height: 1, scale: 1, limit: 2, w: 1, h: 1},
+	}
+	for name, tc := range tests {
+		w, h, err := fitPixels(tc.width, tc.height, tc.scale, tc.limit)
+		require.NoError(t, err, name)
+		require.Equal(t, [2]int{tc.w, tc.h}, [2]int{w, h}, name)
+		require.LessOrEqual(t, w*h, tc.limit, name)
+	}
+}
+
+func TestFitPixelsRejectsUnusableSize(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		width, height float64
+		limit         int
+	}{
+		// Shrinking to fit takes the thin side below the smallest float.
+		"width shrinks to zero":  {width: math.SmallestNonzeroFloat64, height: 1000, limit: 100},
+		"height shrinks to zero": {width: 1000, height: math.SmallestNonzeroFloat64, limit: 100},
+		// Past 2^53 the float area rounds down to the limit while the whole
+		// pixel area is past it.
+		"area past a huge limit": {width: 4, height: 1<<51 + 1, limit: 1<<53 + 3},
+	}
+	for name, tc := range tests {
+		_, _, err := fitPixels(tc.width, tc.height, 1, tc.limit)
+		require.ErrorContains(t, err, "unusable size", name)
+	}
+}
+
+func TestResolveColorMix(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		in, want string
+	}{
+		"weights each channel": {in: `color-mix(in srgb,#804020 25%,#4080c0)`, want: `#507098`},
+		"short hex":            {in: `color-mix(in srgb, #f00 50% , #00f )`, want: `#800080`},
+		"in a longer value":    {in: `url(#a) color-mix(in srgb,#ffffff 0%,#000000) x`, want: `url(#a) #000000 x`},
+		"bad first colour":     {in: `color-mix(in srgb,#ffff 50%,#000000)`, want: `color-mix(in srgb,#ffff 50%,#000000)`},
+		"bad second colour":    {in: `color-mix(in srgb,#000000 50%,#fffff)`, want: `color-mix(in srgb,#000000 50%,#fffff)`},
+		"bad percentage":       {in: `color-mix(in srgb,#000000 1.2.3%,#ffffff)`, want: `color-mix(in srgb,#000000 1.2.3%,#ffffff)`},
+		"both colours bad":     {in: `color-mix(in srgb,#ffff 50%,#fffff)`, want: `color-mix(in srgb,#ffff 50%,#fffff)`},
+	}
+	for name, tc := range tests {
+		require.Equal(t, tc.want, resolveColorMix(tc.in), name)
+	}
 }

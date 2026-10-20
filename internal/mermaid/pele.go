@@ -53,7 +53,11 @@ type Renderer struct {
 
 // NewRenderer loads Pele into a fresh goja runtime.
 func NewRenderer() (*Renderer, error) {
-	prog, err := goja.Compile("pele.global.js", peleSource, true)
+	return newRenderer(peleSource)
+}
+
+func newRenderer(source string) (*Renderer, error) {
+	prog, err := goja.Compile("pele.global.js", source, true)
 	if err != nil {
 		return nil, fmt.Errorf("compile pele: %w", err)
 	}
@@ -87,10 +91,8 @@ func (r *Renderer) Render(source string, opts Options) (Result, error) {
 	}
 	// Images are off because the source is model-written and the exported
 	// page is opened in a browser, which would fetch every image href.
-	jsOpts := map[string]any{"responsive": false, "images": false, "measurer": r.measurer}
-	if opts.MaxWidth > 0 {
-		jsOpts["maxWidth"] = opts.MaxWidth
-	}
+	// Pele treats a maxWidth of 0 as unset.
+	jsOpts := map[string]any{"responsive": false, "images": false, "measurer": r.measurer, "maxWidth": opts.MaxWidth}
 	fired := make(chan struct{})
 	timer := r.afterFunc(renderTimeout, func() {
 		r.vm.Interrupt(ErrRenderTimeout)

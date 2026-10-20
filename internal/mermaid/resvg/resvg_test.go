@@ -127,3 +127,34 @@ func TestNewIsSafeToCallConcurrently(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestDefaultLimits(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, renderLimits{Memory: 256 << 20, Timeout: 10 * time.Second}, defaultLimits)
+	require.Equal(t, 65536, wasmPageSize)
+	require.Equal(t, 32<<20, defaultMaxMemory)
+}
+
+// An instance is replaced only once its memory grows past maxMemory, so
+// one sitting exactly at it is kept.
+func TestRenderKeepsAnInstanceAtMaxMemory(t *testing.T) {
+	t.Parallel()
+
+	e, err := New(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = e.Close() })
+
+	_, err = e.Render([]byte(rectSVG), 10, 10)
+	require.NoError(t, err)
+	inst := e.inst
+	e.maxMemory = inst.mod.Memory().Size()
+	_, err = e.Render([]byte(rectSVG), 10, 10)
+	require.NoError(t, err)
+	require.Same(t, inst, e.inst, "an instance at maxMemory is kept")
+
+	e.maxMemory--
+	_, err = e.Render([]byte(rectSVG), 10, 10)
+	require.NoError(t, err)
+	require.Nil(t, e.inst, "an instance past maxMemory is dropped")
+}

@@ -101,9 +101,12 @@ func parseHex(s string) ([3]uint8, bool) {
 // scale, shrinking the scale when rounding each side up would take the area
 // past limit.
 func fitPixels(width, height, scale float64, limit int) (w, h int, err error) {
+	usable := func(fw, fh float64) bool {
+		return fw > 0 && fh > 0 && !math.IsInf(fw, 0) && !math.IsInf(fh, 0)
+	}
 	fw, fh := width*scale, height*scale
 	unusable := fmt.Errorf("rasterize: unusable size %vx%v at scale %v", width, height, scale)
-	if !(fw > 0 && fh > 0) || math.IsInf(fw, 0) || math.IsInf(fh, 0) {
+	if !usable(fw, fh) {
 		return 0, 0, unusable
 	}
 	if math.Ceil(fw)*math.Ceil(fh) > float64(limit) {
@@ -116,7 +119,8 @@ func fitPixels(width, height, scale float64, limit int) (w, h int, err error) {
 		fw, fh = width*s, height*s
 	}
 	w, h = int(math.Ceil(fw)), int(math.Ceil(fh))
-	if w <= 0 || h <= 0 || w*h > limit {
+	// Shrinking can take a thin side below the smallest float.
+	if !usable(fw, fh) || w*h > limit {
 		return 0, 0, unusable
 	}
 	return w, h, nil
