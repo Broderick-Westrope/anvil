@@ -3,10 +3,26 @@
 package mermaid
 
 import (
+	"cmp"
 	_ "embed"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dop251/goja"
+)
+
+// MaxSourceBytes is the largest diagram source Render accepts.
+const MaxSourceBytes = 64 << 10
+
+// DefaultTimeout bounds a render when Options.Timeout is zero.
+const DefaultTimeout = 5 * time.Second
+
+var (
+	// ErrSourceTooLarge is returned for sources over MaxSourceBytes.
+	ErrSourceTooLarge = errors.New("diagram source too large")
+	// ErrRenderTimeout is returned when layout runs past its deadline.
+	ErrRenderTimeout = errors.New("diagram took too long to lay out")
 )
 
 //go:embed pele.global.js
@@ -20,6 +36,8 @@ type Options struct {
 	FontFamily string
 	// FontSize is the base font size in pixels; zero uses Pele's default.
 	FontSize int
+	// Timeout bounds the layout; zero uses DefaultTimeout.
+	Timeout time.Duration
 }
 
 // Result is a rendered diagram.
@@ -70,6 +88,9 @@ func NewRenderer() (*Renderer, error) {
 
 // Render converts Mermaid source into SVG.
 func (r *Renderer) Render(source string, opts Options) (Result, error) {
+	if len(source) > MaxSourceBytes {
+		return Result{}, ErrSourceTooLarge
+	}
 	jsOpts := map[string]any{"responsive": false, "measurer": r.measurer}
 	if opts.MaxWidth > 0 {
 		jsOpts["maxWidth"] = opts.MaxWidth
@@ -80,7 +101,15 @@ func (r *Renderer) Render(source string, opts Options) (Result, error) {
 	if opts.FontSize > 0 {
 		jsOpts["fontSize"] = opts.FontSize
 	}
+	timer := time.AfterFunc(cmp.Or(opts.Timeout, DefaultTimeout), func() { r.vm.Interrupt(ErrRenderTimeout) })
 	val, err := r.render(goja.Undefined(), r.vm.ToValue(source), r.vm.ToValue(jsOpts))
+	timer.Stop()
+	// An interrupt that fired just as the render finished would stop the
+	// next one.
+	r.vm.ClearInterrupt()
+	if interrupted, ok := errors.AsType[*goja.InterruptedError](err); ok && interrupted.Value() == ErrRenderTimeout {
+		return Result{}, ErrRenderTimeout
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("pele render: %w", err)
 	}

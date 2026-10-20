@@ -3,6 +3,7 @@ package mermaid
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,4 +41,28 @@ func TestRenderFlowchart(t *testing.T) {
 	if dir := os.Getenv("MERMAID_TEST_OUT"); dir != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "flowchart.svg"), []byte(res.SVG), 0o644))
 	}
+}
+
+func TestRenderStopsAtItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRenderer()
+	require.NoError(t, err)
+	_, err = r.Render(sampleFlowchart, Options{Timeout: time.Nanosecond})
+	require.ErrorIs(t, err, ErrRenderTimeout)
+
+	_, err = r.Render(sampleFlowchart, Options{})
+	require.NoError(t, err, "the renderer still works after an interrupted render")
+}
+
+func TestRenderRefusesHugeSources(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRenderer()
+	require.NoError(t, err)
+	huge := "flowchart TD\n" + strings.Repeat("  A --> B\n", MaxSourceBytes/10+1)
+	_, err = r.Render(huge, Options{})
+	require.ErrorIs(t, err, ErrSourceTooLarge)
+	_, err = r.Render(huge[:MaxSourceBytes], Options{})
+	require.NotErrorIs(t, err, ErrSourceTooLarge)
 }
