@@ -391,3 +391,22 @@ func TestSidebarCountsASplitMessageAsOneTurn(t *testing.T) {
 		})
 	}
 }
+
+func TestHelpHidesTheBrowserKeyOnAFailedDiagram(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	m.keyMap = DefaultKeyMap()
+	sty := m.com.Styles.Attachments
+	m.attachments = attachments.New(attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove), attachments.Keymap{})
+	m.state = uiChat
+	m.session = &session.Session{ID: "s"}
+	m.focus = uiFocusMain
+	diagrams := &switchDiagrams{view: chat.DiagramView{State: chat.DiagramFailed, Err: "bad"}}
+	m.diagrams = diagrams
+	m.chat.SetSize(80, 20)
+	m.appendSessionMessage(assistantWithTool(twoDiagrams, message.FinishReasonToolUse))
+	m.chat.SetSelected(1)
+	m.chat.list.Render()
+	require.NotContains(t, helpTexts(m.ShortHelp()), "o open in browser")
+}

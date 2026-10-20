@@ -266,6 +266,8 @@ type DiagramItem struct {
 
 	// codeBlock caches the code-block render, which goes through glamour.
 	codeBlock diagramCodeBlock
+	// failed reports that the last render showed the failure note.
+	failed bool
 }
 
 // NewDiagramItem creates the node for a message's index-th segment.
@@ -290,6 +292,10 @@ func (d *DiagramItem) ID() string {
 	}
 	return segmentID(d.message.ID, d.index)
 }
+
+// Failed reports whether the diagram failed to render when last drawn, so
+// it can't be opened in the browser either.
+func (d *DiagramItem) Failed() bool { return d.failed }
 
 // Source is the diagram's Mermaid source.
 func (d *DiagramItem) Source() string { return d.source }
@@ -316,6 +322,7 @@ func (d *DiagramItem) Prefetch(width int) {
 func (d *DiagramItem) RawRender(width int) string {
 	w := cappedMessageWidth(width)
 	view := d.diagrams.Diagram(d.source, w)
+	d.failed = view.State == DiagramFailed
 	if view.State == DiagramReady {
 		return view.Image
 	}
