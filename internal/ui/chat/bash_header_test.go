@@ -118,7 +118,7 @@ func TestExtractMessageItemsPassesWorkingDirToBash(t *testing.T) {
 		},
 	}
 
-	items := ExtractMessageItems(&sty, msg, nil, ToolItemOptions{WorkingDir: "/repo"})
+	items := ExtractMessageItems(&sty, msg, nil, ToolItemOptions{WorkingDir: "/repo"}, nil)
 
 	require.Len(t, items, 1)
 	out := ansi.Strip(items[0].Render(120))

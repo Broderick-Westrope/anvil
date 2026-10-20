@@ -199,6 +199,26 @@ func TestUpdate_ToolCallStructuralChangeFlushes(t *testing.T) {
 	require.True(t, got.ToolCalls()[0].Finished)
 }
 
+func TestUpdate_ToolCallStartedAtChangeFlushes(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t, WithDebounce(time.Hour))
+
+	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AddToolCall(ToolCall{ID: "tc1", Name: "view", Input: "{}", Finished: true})
+	require.NoError(t, svc.Update(testCtx(t), msg))
+
+	for _, startedAt := range []int64{1000, 2000} {
+		msg.AddToolCall(ToolCall{ID: "tc1", Name: "view", Input: "{}", Finished: true, StartedAt: startedAt})
+		require.NoError(t, svc.Update(testCtx(t), msg))
+
+		got, err := svc.Get(t.Context(), msg.ID)
+		require.NoError(t, err)
+		require.Equal(t, startedAt, got.ToolCalls()[0].StartedAt)
+	}
+}
+
 // TestUpdate_DeltaAfterStructuralFlushDebounces guards against pruning
 // the pending entry on every structural flush. Pruning drops the
 // last-flushed baseline, so every later delta compared against an empty

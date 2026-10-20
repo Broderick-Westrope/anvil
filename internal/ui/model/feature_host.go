@@ -1,6 +1,9 @@
 package model
 
 import (
+	"image/color"
+	"slices"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
@@ -40,6 +43,20 @@ type featureHost interface {
 	Reloading() bool
 	// KeyMap is a copy of the current key bindings.
 	KeyMap() KeyMap
+	// InvalidateDiagrams re-renders every diagram item, in the root chat
+	// and every drill-in, so an image that just arrived replaces its
+	// placeholder. Each chat keeps its scroll position (Chat.
+	// InvalidateDiagrams).
+	InvalidateDiagrams()
+	// AppBackground is the background Anvil paints the terminal with, or
+	// nil when the TUI is transparent and the terminal's own shows.
+	AppBackground() color.Color
+	// PushDrillIn opens c as a drill-in labelled label, scrolled to its
+	// top, focuses it and blurs the editor, as the tool and thinking
+	// drill-ins do.
+	PushDrillIn(c *Chat, label string)
+	// DrillInOpen reports whether c is still on the drill-in stack.
+	DrillInOpen(c *Chat) bool
 }
 
 // uiHost is UI as a featureHost.
@@ -89,3 +106,36 @@ func (h uiHost) ComposerHasContent() bool {
 func (h uiHost) Reloading() bool { return h.m.reloading }
 
 func (h uiHost) KeyMap() KeyMap { return h.m.keyMap }
+
+func (h uiHost) InvalidateDiagrams() {
+	if h.m.chat != nil {
+		h.m.chat.InvalidateDiagrams()
+	}
+	for _, entry := range h.m.drillStack {
+		if entry.chat != nil {
+			entry.chat.InvalidateDiagrams()
+		}
+	}
+}
+
+func (h uiHost) AppBackground() color.Color {
+	if h.m.isTransparent {
+		return nil
+	}
+	return h.m.com.Styles.Background
+}
+
+func (h uiHost) PushDrillIn(c *Chat, label string) {
+	c.SetFollow(false)
+	c.Focus()
+	h.m.drillStack = append(h.m.drillStack, drillInEntry{chat: c, label: label})
+	h.m.textarea.Blur()
+	h.m.focus = uiFocusMain
+	h.m.updateLayoutAndSize()
+	// Sizing a new chat pins it to the bottom; start at the top.
+	c.ScrollToTop()
+}
+
+func (h uiHost) DrillInOpen(c *Chat) bool {
+	return slices.ContainsFunc(h.m.drillStack, func(e drillInEntry) bool { return e.chat == c })
+}

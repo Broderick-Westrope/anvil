@@ -140,6 +140,9 @@ type sessionAgent struct {
 	tools              *csync.Slice[fantasy.AgentTool]
 	lazyMCPToolMap     *csync.Map[string, string]
 	connectFn          *csync.Value[tools.ConnectFn]
+	// runningSteps holds the assistant message IDs of steps in flight.
+	// The coordinator shares one set between all its agents.
+	runningSteps *csync.Map[string, struct{}]
 
 	depth                int
 	isSubAgent           bool
@@ -202,6 +205,7 @@ func (a *sessionAgent) WaitBackgroundJobs() {
 
 type SessionAgentOptions struct {
 	admission            *admission
+	runningSteps         *csync.Map[string, struct{}]
 	LargeModel           Model
 	SmallModel           Model
 	SystemPromptPrefix   string
@@ -233,7 +237,11 @@ func NewSessionAgent(
 	if opts.admission == nil {
 		opts.admission = newAdmission(context.Background())
 	}
+	if opts.runningSteps == nil {
+		opts.runningSteps = csync.NewMap[string, struct{}]()
+	}
 	return &sessionAgent{
+		runningSteps:         opts.runningSteps,
 		largeModel:           csync.NewValue(opts.LargeModel),
 		smallModel:           csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
@@ -379,6 +387,9 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			defer a.lastTurn.Del(call.SessionID)
 		}
 	}
+	// Deferred so that no exit, including a panic recovered upstream,
+	// leaves the last step looking in flight and its calls timing forever.
+	defer t.endStep()
 	result, err := agent.Stream(ctx, t.streamCall(history, files))
 	if err != nil {
 		if t.assistant == nil {

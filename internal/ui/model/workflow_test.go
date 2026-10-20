@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"image/color"
 	"strings"
 	"testing"
 
@@ -35,6 +36,12 @@ type fakeHost struct {
 	reloading   bool
 	keyMap      KeyMap
 }
+
+// The diagram surface is unused by workflows.
+func (*fakeHost) InvalidateDiagrams()        {}
+func (*fakeHost) AppBackground() color.Color { return nil }
+func (*fakeHost) PushDrillIn(*Chat, string)  {}
+func (*fakeHost) DrillInOpen(*Chat) bool     { return false }
 
 func (h *fakeHost) SessionID() string {
 	if h.session == nil {

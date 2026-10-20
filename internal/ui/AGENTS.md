@@ -88,7 +88,27 @@ plugs into `UI` through the `feature` interface in `model/features.go`
 to `UI` and cases to the dispatchers. That keeps upstream's cases in
 `update`, `handleDialogMsg` and `handleKeyPressMsg` in their Crush shape,
 so cherry-picks still apply. See `docs/adr/0003-ui-complexity.md`. The
-workflow feature (`model/workflow.go`) is the worked example.
+workflow feature (`model/workflow.go`) is the worked example. The Mermaid
+diagram feature (`model/mermaid.go`) is the other.
+
+Diagrams are the one exception that touches upstream-shaped code
+directly, because chat items are built in `UI` (`ExtractMessageItems`):
+
+- `UI` holds the feature's `chat.DiagramRenderer` in `m.diagrams`, set in
+  `New` (nil when `options.tui.diagrams` is off), gives it to the root chat
+  with `Chat.SetDiagrams`, and passes it to every `ExtractMessageItems` call
+  except `loadNestedToolCalls`, whose assistant text is never shown.
+- `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
+- `selectedItemBindings` adds the diagram node's help entry.
+- `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
+  message's `<id>#<n>` nodes, `Chat.HandleDelayedClick` opens drill-ins
+  through `chat.ClickDrillInHandler`, and `sourceSelection` copies a
+  `chat.WholeSelectable` item's whole text.
+- `list.List` gained `SpliceItems`, `NearbyItems`, `ClampOffset` and
+  `ScrollPosition`.
+- `image.ResetCache` keeps the records of images a Kitty terminal holds.
+
+Keep any new diagram wiring behind these.
 
 `UI` registers features in `New`, in precedence order, and offers each one
 what the dispatchers don't own. Each hook is one generic line in `ui.go`:
@@ -189,12 +209,14 @@ tool names to specific types:
 | `chat/generic.go`         | Fallback for unrecognized tools                          |
 | `chat/assistant.go`       | Assistant messages ("Thought for" line, content, errors) |
 | `chat/thinking_detail.go` | Full thinking text in the thinking drill-in              |
+| `chat/diagrams.go`        | Splitting messages at Mermaid fences; diagram nodes      |
+| `chat/diagram_detail.go`  | A diagram at full size in its drill-in                   |
 | `chat/user.go`            | User messages (input + attachments)                      |
 
 ### Drill-ins
 
 `UI.drillStack` holds the views opened on top of the root chat. There are
-three kinds, each opened by its own message:
+four kinds, each opened by its own message:
 
 - **Agent** (`util.AgentDrillInMsg`): a subagent's session. Its entry has
   a `sessionID`, and child-session events update its chat even when another
@@ -202,8 +224,12 @@ three kinds, each opened by its own message:
 - **Tool** (`util.ToolDrillInMsg`): a tool call's detail view.
 - **Thinking** (`util.ThinkingDrillInMsg`): an assistant message's full
   thinking, rendered by `chat.ThinkingDetailItem` from the live source item.
+- **Diagram** (`chat.DiagramOpenMsg`): a Mermaid diagram at full size,
+  rendered by `chat.DiagramDetailItem`. The diagram feature opens it
+  through `featureHost.PushDrillIn` and frees its image once the entry
+  leaves the stack.
 
-Tool and thinking entries have no `sessionID`, so `viewedSessionEntry`
+Tool, thinking and diagram entries have no `sessionID`, so `viewedSessionEntry`
 skips them when the header and sidebar look for the session being viewed.
 
 ### Styling

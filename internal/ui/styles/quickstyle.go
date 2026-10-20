@@ -71,6 +71,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	)
 
 	s.Background = o.bgBase
+	s.Diagram = diagramPalette(o)
 
 	// Populate color fields
 	s.WorkingGradFromColor = o.primary

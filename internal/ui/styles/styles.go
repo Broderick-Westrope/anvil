@@ -146,6 +146,9 @@ type Styles struct {
 	// Background
 	Background color.Color
 
+	// Diagram is the palette Mermaid diagrams are drawn with.
+	Diagram DiagramPalette
+
 	// Logo
 	Logo struct {
 		TitleColorA        color.Color

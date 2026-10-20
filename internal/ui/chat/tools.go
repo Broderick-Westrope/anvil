@@ -70,6 +70,14 @@ type ToolMessageItem interface {
 	SetStatus(status ToolStatus)
 	Status() ToolStatus
 	HasResult() bool
+	// SetStepRunning records whether the step that made the call is still
+	// in flight. A call without a result only shows a live duration while
+	// its step runs; otherwise it was orphaned, such as by a crash.
+	SetStepRunning(running bool)
+	// TimerCandidate reports whether the call is running with a known
+	// start, so it needs refreshing each tick while its step is in flight
+	// (it shows a duration once it reaches the threshold).
+	TimerCandidate() bool
 }
 
 // Compactable is an interface for tool items that can render in a compacted mode.
@@ -117,11 +125,14 @@ type ToolRenderOpts struct {
 	IsSpinning      bool
 	Status          ToolStatus
 	NoTruncate      bool
-	// StartedAt is when the assistant message carrying the tool call was
-	// created; zero when unknown.
-	StartedAt time.Time
+	// MessageCreatedAt is when the assistant message carrying the tool call
+	// was created, in whole seconds; zero when unknown.
+	MessageCreatedAt time.Time
 	// Now is the render time, used for live elapsed counters.
 	Now time.Time
+	// Duration is how long the call ran, shown at the end of its header;
+	// zero shows nothing.
+	Duration time.Duration
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -189,7 +200,12 @@ type baseToolMessageItem struct {
 	expandedContent bool
 	noTruncate      bool
 	resultVersion   uint64
-	startedAt       time.Time
+	// messageCreatedAt is when the assistant message carrying the tool
+	// call was created.
+	messageCreatedAt time.Time
+	// stepRunning reports whether the step that made the call is still
+	// in flight.
+	stepRunning bool
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -394,17 +410,19 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 	content, height, ok := t.getCachedRender(toolItemWidth)
 	// if we are spinning or there is no cache rerender
 	if !ok || t.isSpinning() {
+		now := time.Now()
 		content = t.toolRenderer.RenderTool(t.sty, toolItemWidth, &ToolRenderOpts{
-			ToolCall:        t.toolCall,
-			Result:          t.result,
-			Anim:            t.anim,
-			ExpandedContent: t.expandedContent,
-			Compact:         t.isCompact,
-			IsSpinning:      t.isSpinning(),
-			Status:          t.computeStatus(),
-			NoTruncate:      t.noTruncate,
-			StartedAt:       t.startedAt,
-			Now:             time.Now(),
+			ToolCall:         t.toolCall,
+			Result:           t.result,
+			Anim:             t.anim,
+			ExpandedContent:  t.expandedContent,
+			Compact:          t.isCompact,
+			IsSpinning:       t.isSpinning(),
+			Status:           t.computeStatus(),
+			NoTruncate:       t.noTruncate,
+			MessageCreatedAt: t.messageCreatedAt,
+			Now:              now,
+			Duration:         t.timerDuration(now),
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -477,31 +495,67 @@ func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.Bump()
 }
 
-// SetCallStartedAt records when the tool call started, for elapsed-time
-// displays.
-func (t *baseToolMessageItem) SetCallStartedAt(at time.Time) {
-	if t.startedAt.Equal(at) {
+// SetMessageCreatedAt records when the assistant message carrying the tool
+// call was created.
+func (t *baseToolMessageItem) SetMessageCreatedAt(at time.Time) {
+	if t.messageCreatedAt.Equal(at) {
 		return
 	}
-	t.startedAt = at
+	t.messageCreatedAt = at
 	t.clearCache()
 	t.Bump()
 }
 
-// SetToolCallStartedAt records the start time on tool items that track it.
-// unixSeconds is a message CreatedAt timestamp; zero leaves it unset.
-func SetToolCallStartedAt(item MessageItem, unixSeconds int64) {
+// SetToolMessageCreatedAt records when the tool call's assistant message
+// was created on tool items that track it. unixSeconds is a message
+// CreatedAt timestamp; zero leaves it unset.
+func SetToolMessageCreatedAt(item MessageItem, unixSeconds int64) {
 	if unixSeconds == 0 {
 		return
 	}
-	if st, ok := item.(interface{ SetCallStartedAt(time.Time) }); ok {
-		st.SetCallStartedAt(time.Unix(unixSeconds, 0))
+	if st, ok := item.(interface{ SetMessageCreatedAt(time.Time) }); ok {
+		st.SetMessageCreatedAt(time.Unix(unixSeconds, 0))
 	}
 }
 
 // MessageID returns the ID of the message containing this tool call.
 func (t *baseToolMessageItem) MessageID() string {
 	return t.messageID
+}
+
+// SetStepRunning implements [ToolMessageItem].
+func (t *baseToolMessageItem) SetStepRunning(running bool) {
+	if t.stepRunning == running {
+		return
+	}
+	t.stepRunning = running
+	t.clearCache()
+	t.Bump()
+}
+
+// TimerCandidate implements [ToolMessageItem]. It runs for every item on
+// every tick, so the cheap checks come before hasOwnTimer's JSON parse.
+func (t *baseToolMessageItem) TimerCandidate() bool {
+	return t.toolCall.StartedAt != 0 && t.computeStatus() == ToolStatusRunning && !t.hasOwnTimer()
+}
+
+// hasOwnTimer reports whether the tool shows its own elapsed time, so its
+// header gets no duration.
+func (t *baseToolMessageItem) hasOwnTimer() bool {
+	switch t.toolCall.Name {
+	case tools.AgenticFetchToolName, agent.TaskToolName:
+		return true
+	}
+	return IsJobOutputWait(t.toolCall)
+}
+
+// timerDuration returns the duration the header shows at now.
+func (t *baseToolMessageItem) timerDuration(now time.Time) time.Duration {
+	if t.hasOwnTimer() {
+		return 0
+	}
+	running := t.stepRunning && t.computeStatus() == ToolStatusRunning
+	return toolTimerDuration(t.toolCall, t.result, running, now)
 }
 
 // SetMessageID sets the ID of the message containing this tool call.
@@ -784,10 +838,14 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 	if nested {
 		nameStyle = sty.Tool.NameNested
 	}
+	var duration time.Duration
+	if opts != nil {
+		duration = opts.Duration
+	}
 	toolName := nameStyle.Render(name)
 	prefix := fmt.Sprintf("%s %s ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
-	remainingWidth := width - prefixWidth
+	suffix, remainingWidth := fitToolTimerSuffix(sty, duration, width, prefixWidth)
 	paramsStr := toolParamList(sty, params, remainingWidth, opts)
 
 	// When expanded, toolParamList may return multiple lines. Indent
@@ -798,9 +856,12 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 		for i := 1; i < len(lines); i++ {
 			lines[i] = indent + lines[i]
 		}
-		return prefix + strings.Join(lines, "\n")
+		return prefix + strings.Join(lines, "\n") + suffix
 	}
-	return prefix + paramsStr
+	if paramsStr == "" && suffix != "" {
+		prefix = strings.TrimSuffix(prefix, " ")
+	}
+	return prefix + paramsStr + suffix
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.

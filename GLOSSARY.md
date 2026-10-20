@@ -44,18 +44,25 @@ A provider the user defines in `anvil.json` that isn't in the Catwalk catalog, o
 - **Code:** `prepareCustomProvider`, `discoverCustomProviderModels` (`internal/config/load.go`)
 - **Not:** known provider.
 
+## Diagram Node
+
+A chat item showing one top-level Mermaid fence from a finished assistant message, as an image where the terminal can show it and as its code block otherwise. The message stays one `message.Message`; the UI shows it as several nodes in document order. The first node is the head and keeps the message ID; the others are `<id>#<n>`.
+
+- **Code:** `chat.DiagramItem`, `chat.NewAssistantMessageItems` (`internal/ui/chat/diagrams.go`); `mermaidFeature` (`internal/ui/model/mermaid.go`)
+- **Not:** a message. Lookups by message ID find the head, and branching from any node branches from the message.
+
 ## Drill-in
 
-A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, or a message's thinking.
+A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, a message's thinking, or a diagram at full size.
 
-- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`)
+- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`), `chat.DiagramOpenMsg`
 - **Not:** dialog. Dialogs ask for input; drill-ins show detail.
 
 ## Feature
 
-In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows are the first.
+In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows and Mermaid diagrams are features.
 
-- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`)
+- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `mermaidFeature` (`internal/ui/model/mermaid.go`)
 - **Not:** sub-component such as `Chat` or `Attachments`, which `UI` calls directly; feature flag.
 
 ## Hook
@@ -102,6 +109,13 @@ The main agent the user talks to. It handles small tasks itself and delegates th
 - **Code:** `config.AgentOrchestrator`, `templates/orchestrator.md.tpl`
 - **Not:** coder, coordinator.
 
+## Orphaned Tool Call
+
+A tool call with no result whose step is no longer running, left behind by a crash or a killed process. It shows no timer and is answered only in the model's history.
+
+- **Code:** detected with `Coordinator.IsStepRunning`; recovered for the model by orphan recovery in `internal/agent/agent.go`
+- **Not:** a canceled call, which gets an error result.
+
 ## Plugin
 
 A directory with an `anvil-plugin.json` manifest that supplies skills, commands and agents.
@@ -136,6 +150,13 @@ An agent defined in a plugin's agent `.md` file, with its own model, tools and p
 
 - **Code:** built by the coordinator, prompt from `templates/specialist.md.tpl`
 - **Not:** subagent is acceptable in conversation, but code and docs say specialist agent.
+
+## Step
+
+One model request inside a turn, with the assistant message it creates and the tool results that follow. A step is running from when `prepareStep` creates its assistant message until the next step starts or the run ends.
+
+- **Code:** `turn.prepareStep`; running steps are tracked by assistant message ID in the coordinator's `runningSteps` (`Coordinator.IsStepRunning`)
+- **Not:** turn. A turn has one or more steps.
 
 ## Step Usage
 

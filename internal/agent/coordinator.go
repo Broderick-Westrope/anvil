@@ -93,6 +93,11 @@ type Coordinator interface {
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
 	IsBusy() bool
+	// IsStepRunning reports whether the step that created the assistant
+	// message is still in flight in this process, in any of the
+	// coordinator's agents. A tool call without a result whose step isn't
+	// running was orphaned, such as by a crash.
+	IsStepRunning(assistantMessageID string) bool
 	QueuedPrompts(sessionID string) int
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
@@ -122,17 +127,18 @@ type Coordinator interface {
 }
 
 type coordinator struct {
-	admission   *admission
-	cfg         *config.ConfigStore
-	sessions    session.Service
-	messages    message.Service
-	permissions permission.Service
-	filetracker filetracker.Service
-	lspManager  *lsp.Manager
-	notify      pubsub.Publisher[notify.Notification]
-	jobEvents   *jobevents.Store // Nil disables job notifications.
-	jobArchive  tools.JobArchive // Nil disables persisted job fallbacks.
-	onIdle      func(sessionID string)
+	admission    *admission
+	runningSteps *csync.Map[string, struct{}]
+	cfg          *config.ConfigStore
+	sessions     session.Service
+	messages     message.Service
+	permissions  permission.Service
+	filetracker  filetracker.Service
+	lspManager   *lsp.Manager
+	notify       pubsub.Publisher[notify.Notification]
+	jobEvents    *jobevents.Store // Nil disables job notifications.
+	jobArchive   tools.JobArchive // Nil disables persisted job fallbacks.
+	onIdle       func(sessionID string)
 	// jobWakeEnabled reports whether job events wake idle sessions; nil
 	// means they never do.
 	jobWakeEnabled func() bool
@@ -208,6 +214,7 @@ func NewCoordinator(
 
 	c := &coordinator{
 		admission:      newAdmission(ctx),
+		runningSteps:   csync.NewMap[string, struct{}](),
 		cfg:            cfg,
 		sessions:       sessions,
 		messages:       messages,
@@ -746,6 +753,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 	}
 	result := NewSessionAgent(SessionAgentOptions{
 		admission:            c.admission,
+		runningSteps:         c.runningSteps,
 		LargeModel:           large,
 		SmallModel:           small,
 		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
@@ -1287,6 +1295,11 @@ func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release fu
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
 	return c.getOrchestrator().IsSessionBusy(sessionID)
+}
+
+func (c *coordinator) IsStepRunning(assistantMessageID string) bool {
+	_, ok := c.runningSteps.Get(assistantMessageID)
+	return ok
 }
 
 func (c *coordinator) Model() Model {

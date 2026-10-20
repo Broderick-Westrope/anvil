@@ -116,6 +116,10 @@ type Workspace interface {
 	AgentCancel(sessionID string)
 	AgentIsBusy() bool
 	AgentIsSessionBusy(sessionID string) bool
+	// AgentIsStepRunning reports whether the step that created the
+	// assistant message is still in flight, so its result-less tool calls
+	// are running rather than orphaned.
+	AgentIsStepRunning(assistantMessageID string) bool
 	AgentModel() AgentModel
 	AgentIsReady() bool
 	AgentQueuedPrompts(sessionID string) int
@@ -192,6 +196,8 @@ type Workspace interface {
 
 	// Config (read-only data)
 	Config() *config.Config
+	// DiagramsEnabled reports options.tui.diagrams as it was at startup.
+	DiagramsEnabled() bool
 	WorkingDir() string
 	Resolver() config.VariableResolver
 

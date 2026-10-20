@@ -46,6 +46,7 @@ internal/
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
+  mermaid/                         Mermaid to pixels: Pele in goja, resvg in wazero (vendored)
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -145,6 +146,15 @@ Terms with a specific meaning in this codebase are defined in
   `lsp_idle_timeout` minutes of inactivity (default 15, `0` disables) and
   restart on demand. Any code path that reads a client must call
   `Manager.Touch(name)` so active clients are never reaped.
+- **Memory across instances**: people run many Anvil instances at once,
+  so anything a feature holds per instance is multiplied. Share it through
+  the first of these that meets a measured need, and say in the design
+  why earlier steps don't: (1) load on first use and release when idle;
+  (2) let the OS share it (memory-map read-only data; on-disk caches only
+  cut load time and peaks); (3) use the resource's own sharing mode, built
+  in the resource when we own it; (4) a shared process Anvil manages,
+  which doesn't exist yet and needs its own ADR. See
+  `docs/adr/0005-cross-instance-sharing.md`.
 - **Herdr reporting**: inside a Herdr pane the interactive TUI reports
   `idle`/`working`/`blocked` and names its tab via the `herdr` CLI
   (`internal/herdr`, wired in `internal/cmd/root.go`). The UI snapshots
@@ -153,6 +163,17 @@ Terms with a specific meaning in this codebase are defined in
   behaviour and the isolated-session test recipe live in
   `plans/completed/design-2026-10-08-herdr-integration.md`; never test
   against the user's default Herdr session.
+- **Tool call timers**: each `message.ToolCall` records `StartedAt` and each
+  `message.ToolResult` records `FinishedAt` (Unix ms, display only;
+  `ToAIMessage` drops them). The per-turn `timedTool` wrapper in
+  `internal/agent/turn.go` wraps every tool outside its hooks, sets the
+  start when `Run` begins, and restarts it through
+  `permission.WithPromptObserver` when a human closes the call's prompt. The
+  coordinator's `runningSteps` set (`Coordinator.IsStepRunning`) says
+  whether a result-less call is still running or was orphaned. The UI shows
+  the duration once it reaches 10s (`internal/ui/chat/tool_timer.go`,
+  refreshed by the elapsed tick in `internal/ui/model/tool_timer.go`).
+  Design: `plans/completed/design-2026-10-18-tool-call-timer.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
   normalised token counts, prices and hashed request fingerprints. The
@@ -189,6 +210,37 @@ Terms with a specific meaning in this codebase are defined in
   tool restriction, pinned model and a `submit_result` tool for schemas.
   Startup marks runs of dead instances interrupted and prunes run
   directories older than 14 days (`Store.PruneRunDirs`).
+- **Mermaid diagrams**: when an assistant message finishes, each top-level
+  ```` ```mermaid ```` fence becomes its own chat node
+  (`chat.NewAssistantMessageItems`, spliced in by
+  `Chat.SyncAssistantSegments`); the head keeps the message ID and the
+  rest are `<id>#<n>`. `mermaidFeature` (`internal/ui/model/mermaid.go`
+  for its cache and messages, `mermaid_render.go` for the worker) renders
+  them on one goroutine with `internal/mermaid` (Pele in goja for SVG, the
+  vendored resvg in wazero for pixels; see
+  `docs/adr/0004-mermaid-rendering.md`) and sends Kitty graphics with
+  Unicode placeholders. Items get the renderer through their constructors
+  as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
+  code block shows while pending, without Kitty support, or (with a note)
+  after a failure. When the view moves, the chat tells the renderer which
+  diagrams are on or within a screen of it (`Chat.SetDiagrams`,
+  `chat.DiagramRenderer.InView`), which renders them ahead and never
+  evicts them while they stay there. An image arriving re-renders
+  only diagram items (`Chat.InvalidateDiagrams`), which keeps the scroll
+  position. The terminal holds the pixels; Anvil keeps none once sent, and
+  deletes the least recently drawn images out of view past 128 MB (a wide
+  diagram on a HiDPI screen is ~17 MB). The engines load on
+  the first diagram and drop after 20 seconds idle. resvg's compiled
+  code goes in wazero's compilation cache under the user cache dir
+  (`anvil/wasm`), shared by every process, so only the first load after
+  an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).
+  Colours come from
+  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a restart:
+  `ConfigStore.DiagramsEnabled` reads the startup snapshot, and both the
+  UI (a nil renderer means no split) and the system prompt line gate on
+  it. Design: `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  measurements and resvg workarounds:
+  `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
@@ -336,6 +388,11 @@ credentials, such as the Claude CLI's.
   `docs:`, `sec:`, etc).
 - Try to keep commits to one line, not including your attribution. Only use
   multi-line commits when additional context is truly necessary.
+- Land a feature's docs in the PR that ships it, not a follow-up: move its
+  design doc (and any plans) from `plans/` to `plans/completed/`, update
+  every link to them, and make the `AGENTS.md`, `GLOSSARY.md` and ADR
+  changes there too. Earlier designs were moved after they shipped; don't
+  copy that.
 
 ## Working on the TUI (UI)
 

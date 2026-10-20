@@ -207,6 +207,18 @@ func (s *ConfigStore) StartupSnapshot() (*Config, *TrustedBouncer, string) {
 	return s.startupConfig, s.startupBouncer, s.startupRawProjectDir
 }
 
+// DiagramsEnabled reports whether Mermaid fences render as diagrams, as
+// configured at startup. Turning it on or off needs a restart, so the UI
+// and the system prompt read this rather than the live config and never
+// disagree.
+func (s *ConfigStore) DiagramsEnabled() bool {
+	cfg, _, _ := s.StartupSnapshot()
+	if cfg == nil {
+		cfg = s.Config()
+	}
+	return cfg.Options == nil || cfg.Options.TUI.DiagramsEnabled()
+}
+
 // markAppliedLive records a change this process has already applied in the
 // startup snapshot, so RestartRequired doesn't report it.
 func (s *ConfigStore) markAppliedLive(apply func(*Config)) {

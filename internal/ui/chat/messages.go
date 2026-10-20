@@ -393,7 +393,8 @@ func cappedMessageWidth(availableWidth int) int {
 //
 // For assistant messages with tool calls, pass a toolResults map to link results.
 // Use BuildToolResultMap to create this map from all messages in a session.
-func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, opts ToolItemOptions) []MessageItem {
+// diagrams renders Mermaid diagrams; nil leaves them as code blocks.
+func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, opts ToolItemOptions, diagrams DiagramRenderer) []MessageItem {
 	switch msg.Role {
 	case message.User:
 		if msg.MessageType == message.MessageTypeJobEvent {
@@ -407,7 +408,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 	case message.Assistant:
 		var items []MessageItem
 		if ShouldRenderAssistantMessage(msg) {
-			items = append(items, NewAssistantMessageItem(sty, msg))
+			items = append(items, NewAssistantMessageItems(sty, msg, diagrams)...)
 		}
 		for _, tc := range msg.ToolCalls() {
 			var result *message.ToolResult
@@ -422,7 +423,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 				msg.FinishReason() == message.FinishReasonCanceled,
 				opts,
 			)
-			SetToolCallStartedAt(item, msg.CreatedAt)
+			SetToolMessageCreatedAt(item, msg.CreatedAt)
 			items = append(items, item)
 		}
 		return items

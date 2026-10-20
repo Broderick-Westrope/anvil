@@ -350,6 +350,10 @@ type UI struct {
 	// features are the fork features routed to from the dispatchers.
 	features features
 
+	// diagrams renders Mermaid diagrams in the chat, or is nil when
+	// options.tui.diagrams is off.
+	diagrams chat.DiagramRenderer
+
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
 
@@ -474,6 +478,12 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
+	if com.Workspace.DiagramsEnabled() {
+		diagrams := newMermaidFeature(uiHost{ui}, &ui.caps, com)
+		ui.features.register(diagrams)
+		ui.diagrams = diagrams
+		ui.chat.SetDiagrams(diagrams)
+	}
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -811,6 +821,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.startElapsedTickForJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
@@ -1015,6 +1028,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+				if cmd := m.startElapsedTickForToolStart(msg.Payload); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 			break
 		}
@@ -1083,6 +1099,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
+		// An automatic approval moves a call back to running without a new
+		// start time, so nothing else restarts a tick that stopped while
+		// it awaited permission.
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
 	case tea.TerminalVersionMsg:
@@ -1334,7 +1356,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
-		shouldContinue := anyRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
+		anyTimed := m.syncToolTimers()
+		shouldContinue := anyRunning || anyTimed || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -1604,15 +1627,15 @@ func (m *UI) setSessionMessages(msgs []message.Message) {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		}
 	}
 
@@ -1665,7 +1688,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Extract nested tool items.
 		var nestedTools []chat.ToolMessageItem
 		for _, nestedMsg := range nestedMsgPtrs {
-			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.toolItemOptions())
+			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.toolItemOptions(), nil)
 			for _, nestedItem := range nestedItems {
 				if nestedToolItem, ok := nestedItem.(chat.ToolMessageItem); ok {
 					// Mark nested tools as simple (compact) rendering.
@@ -1740,14 +1763,14 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions())
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() {
 			c.ScrollToBottom()
 		}
 	case message.Assistant:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions())
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() && c.Follow() {
@@ -1826,6 +1849,7 @@ func (m *UI) applySessionMessageEvent(event pubsub.Event[message.Message]) tea.C
 		cmds = append(cmds, m.updateSessionMessage(event.Payload))
 		m.applyLazyMCPMessageParts(event.Payload)
 		cmds = append(cmds, m.startElapsedTickForBackgroundResult(event.Payload))
+		cmds = append(cmds, m.startElapsedTickForToolStart(event.Payload))
 	case pubsub.DeletedEvent:
 		m.chat.RemoveMessage(event.Payload.ID)
 	}
@@ -1857,6 +1881,9 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
 			assistantItem.SetMessage(&msg)
 		}
+		// A message that just finished with diagrams becomes several
+		// nodes; see chat.NewAssistantMessageItems.
+		c.SyncAssistantSegments(m.com.Styles, &msg, m.diagrams)
 	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
@@ -1886,15 +1913,16 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		existingToolItem := c.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
-			// Only update if finished state changed or input changed
+			tc.StartedAt = applyToolStart(toolItem, tc.StartedAt)
+			// Only update if finished state, input or start time changed
 			// to avoid clearing the cache.
-			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
+			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input || tc.StartedAt != existingToolCall.StartedAt {
 				toolItem.SetToolCall(tc)
 			}
 		}
 		if existingToolItem == nil {
 			item := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.toolItemOptions())
-			chat.SetToolCallStartedAt(item, msg.CreatedAt)
+			chat.SetToolMessageCreatedAt(item, msg.CreatedAt)
 			items = append(items, item)
 		}
 	}
@@ -2018,7 +2046,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		if !found {
 			// Create a new nested tool item.
 			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.toolItemOptions())
-			chat.SetToolCallStartedAt(nestedItem, event.Payload.CreatedAt)
+			chat.SetToolMessageCreatedAt(nestedItem, event.Payload.CreatedAt)
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
 			}
@@ -2213,9 +2241,9 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 		switch msg.Role {
 		case message.User:
 			lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(
 					m.com.Styles, msg, m.com.Config(),
@@ -2224,7 +2252,7 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		}
 	}
 
@@ -3916,6 +3944,7 @@ func (m *UI) ShortHelp() []key.Binding {
 				k.Chat.PageDown,
 				k.Chat.Copy,
 			)
+			binds = append(binds, m.selectedItemBindings()...)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, k.Chat.PillLeft)
 			}
@@ -3942,6 +3971,15 @@ func (m *UI) ShortHelp() []key.Binding {
 		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
 	}
 	return binds
+}
+
+// selectedItemBindings are the help entries for keys only the selected chat
+// item handles.
+func (m *UI) selectedItemBindings() []key.Binding {
+	if diagram, ok := m.activeChat().SelectedItem().(*chat.DiagramItem); ok && !diagram.Failed() {
+		return []key.Binding{m.keyMap.Chat.OpenDiagram}
+	}
+	return nil
 }
 
 // FullHelp implements [help.KeyMap].
@@ -4058,10 +4096,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Chat.End,
 					k.Chat.FocusSidebar,
 				},
-				[]key.Binding{
+				append([]key.Binding{
 					k.Chat.Copy,
 					k.Chat.ClearHighlight,
-				},
+				}, m.selectedItemBindings()...),
 			)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, []key.Binding{k.Chat.PillLeft})
@@ -5763,19 +5801,14 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
-	// Search the root and every drill-in chat, not just the visible one:
+	// Update the root and every drill-in chat, not just the visible one:
 	// a subagent's tool may sit under a thinking or tool drill-in.
-	toolItem := m.findMessageItem(notification.ToolCallID)
-	if toolItem == nil {
-		return
+	status := chat.ToolStatusAwaitingPermission
+	if notification.Granted {
+		status = chat.ToolStatusRunning
 	}
-
-	if permItem, ok := toolItem.(chat.ToolMessageItem); ok {
-		if notification.Granted {
-			permItem.SetStatus(chat.ToolStatusRunning)
-		} else {
-			permItem.SetStatus(chat.ToolStatusAwaitingPermission)
-		}
+	for _, item := range m.toolItemsByCallID(notification.ToolCallID) {
+		item.SetStatus(status)
 	}
 }
 

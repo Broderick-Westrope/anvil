@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"io"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 
@@ -69,9 +70,11 @@ var (
 )
 
 // ResetCache clears the image cache, freeing all cached decoded images.
+// Records of images sent to a Kitty terminal hold no pixels and stay, since
+// the terminal still has those images.
 func ResetCache() {
 	cachedMutex.Lock()
-	clear(cachedImages)
+	maps.DeleteFunc(cachedImages, func(_ imageKey, c cachedImage) bool { return c.img != nil })
 	cachedMutex.Unlock()
 }
 
@@ -91,14 +94,7 @@ func fitImage(id string, img image.Image, cs CellSize, cols, rows int) image.Ima
 		return cached.img
 	}
 
-	if cs.Width == 0 || cs.Height == 0 {
-		return img
-	}
-
-	maxWidth := cols * cs.Width
-	maxHeight := rows * cs.Height
-
-	img = imaging.Fit(img, maxWidth, maxHeight, imaging.Lanczos)
+	img = resizeToCells(img, cs, cols, rows)
 
 	cachedMutex.Lock()
 	cachedImages[key] = cachedImage{
@@ -111,6 +107,15 @@ func fitImage(id string, img image.Image, cs CellSize, cols, rows int) image.Ima
 	return img
 }
 
+// resizeToCells fits img within cols x rows cells of size cs, keeping its
+// aspect ratio. An unknown cell size leaves it as it is.
+func resizeToCells(img image.Image, cs CellSize, cols, rows int) image.Image {
+	if cs.Width == 0 || cs.Height == 0 {
+		return img
+	}
+	return imaging.Fit(img, cols*cs.Width, rows*cs.Height, imaging.Lanczos)
+}
+
 // HasTransmitted checks if the image with the given ID has already been
 // transmitted to the terminal.
 func HasTransmitted(id string, cols, rows int) bool {
@@ -120,6 +125,25 @@ func HasTransmitted(id string, cols, rows int) bool {
 	_, ok := cachedImages[key]
 	cachedMutex.RUnlock()
 	return ok
+}
+
+// Forget drops one image from the cache and, for Kitty, returns the command
+// that deletes it and frees its data in the terminal.
+func (e Encoding) Forget(id string, cols, rows int, tmux bool) tea.Cmd {
+	key := imageKey{id: id, cols: cols, rows: rows}
+
+	cachedMutex.Lock()
+	delete(cachedImages, key)
+	cachedMutex.Unlock()
+
+	if e != EncodingKitty {
+		return nil
+	}
+	seq := ansi.KittyGraphics(nil, "a=d", "d=I", fmt.Sprintf("i=%d", key.Hash()), "q=2")
+	if tmux {
+		seq = ansi.TmuxPassthrough(seq)
+	}
+	return func() tea.Msg { return tea.RawMsg{Msg: seq} }
 }
 
 // Transmit transmits the image data to the terminal if needed. This is used to
@@ -150,8 +174,20 @@ func (e Encoding) Transmit(id string, img image.Image, cs CellSize, cols, rows i
 			return TransmittedMsg{ID: key.ID()}
 		}
 
+		// Claim the key before sending, so of several commands made for
+		// one image only the first sends it. The terminal then holds the
+		// image and placeholders only need its key, so the record keeps no
+		// pixels.
+		cachedMutex.Lock()
+		if _, sent := cachedImages[key]; sent {
+			cachedMutex.Unlock()
+			return nil
+		}
+		cachedImages[key] = cachedImage{cols: cols, rows: rows}
+		cachedMutex.Unlock()
+
 		var buf bytes.Buffer
-		img := fitImage(id, img, cs, cols, rows)
+		img := resizeToCells(img, cs, cols, rows)
 		bounds := img.Bounds()
 		imgWidth := bounds.Dx()
 		imgHeight := bounds.Dy()
@@ -176,6 +212,9 @@ func (e Encoding) Transmit(id string, img image.Image, cs CellSize, cols, rows i
 			},
 		}); err != nil {
 			slog.Error("Failed to encode image for kitty graphics", "err", err)
+			cachedMutex.Lock()
+			delete(cachedImages, key)
+			cachedMutex.Unlock()
 			return util.InfoMsg{
 				Type: util.InfoTypeError,
 				Msg:  "failed to encode image",
