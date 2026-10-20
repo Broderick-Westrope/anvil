@@ -333,3 +333,15 @@ func TestDiagramCodeBlockHasNoBlankPaddingLines(t *testing.T) {
 		})
 	}
 }
+
+func TestDiagramItemDoesNotOpenAFailedDiagramInTheBrowser(t *testing.T) {
+	t.Parallel()
+
+	const src = "A\n"
+	sty := styles.TokyoNight()
+	item := NewDiagramItem(&sty, finishedMessage("m"), 1, src, fakeDiagrams{inline: map[string]DiagramView{src: {State: DiagramFailed, Err: "bad"}}})
+	item.Render(80)
+	handled, cmd := item.HandleKeyEvent(keyPress("o"))
+	require.True(t, handled)
+	require.Nil(t, cmd, "the export would fail the same way")
+}

@@ -59,8 +59,9 @@ type WholeSelectable interface {
 	SelectedText() string
 }
 
-// DiagramShower is implemented by items that draw a diagram, so they can be
-// re-rendered alone when its image changes.
+// DiagramShower marks the items that draw a diagram, so they can be
+// re-rendered alone when its image changes. Its method is unexported, so
+// only this package's diagram items implement it.
 type DiagramShower interface {
 	showsDiagram()
 }
@@ -312,9 +313,6 @@ func (d *DiagramItem) ID() string {
 // it can't be opened in the browser either.
 func (d *DiagramItem) Failed() bool { return d.failed }
 
-// Source is the diagram's Mermaid source.
-func (d *DiagramItem) Source() string { return d.source }
-
 // SegmentKey implements SegmentKeyed.
 func (d *DiagramItem) SegmentKey() string { return "diagram:" + d.source }
 
@@ -422,6 +420,11 @@ func (d *DiagramItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	case "right", "l":
 		return true, diagramOpenCmd(d.source, false)
 	case "o":
+		if d.failed {
+			// The browser page renders it the same way, so it would fail
+			// too; the help doesn't offer it either.
+			return true, nil
+		}
 		return true, diagramOpenCmd(d.source, true)
 	case "c", "y":
 		return true, common.CopyToClipboard(d.source, "Diagram source copied to clipboard")
