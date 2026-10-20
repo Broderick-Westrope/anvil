@@ -201,6 +201,13 @@ func (e Encoding) Transmit(id string, img image.Image, cs CellSize, cols, rows i
 			}
 		}
 
+		// The terminal now holds the image and placeholders only need
+		// its key, so keep the record that it was sent but not its
+		// pixels.
+		cachedMutex.Lock()
+		cachedImages[key] = cachedImage{cols: cols, rows: rows}
+		cachedMutex.Unlock()
+
 		return tea.RawMsg{Msg: buf.String()}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"image"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,4 +44,21 @@ func TestResetIdempotent(t *testing.T) {
 	cachedMutex.RUnlock()
 
 	require.Equal(t, 0, length)
+}
+
+func TestKittyTransmitKeepsNoPixels(t *testing.T) {
+	t.Parallel()
+
+	const id = "kitty-keeps-no-pixels"
+	img := image.NewRGBA(image.Rect(0, 0, 20, 40))
+	msg := EncodingKitty.Transmit(id, img, CellSize{Width: 10, Height: 20}, 2, 2, false)()
+	require.IsType(t, tea.RawMsg{}, msg)
+
+	cachedMutex.RLock()
+	cached, ok := cachedImages[imageKey{id: id, cols: 2, rows: 2}]
+	cachedMutex.RUnlock()
+	require.True(t, ok, "it is recorded as sent")
+	require.Nil(t, cached.img, "the terminal holds the image, so its pixels aren't kept")
+	require.True(t, HasTransmitted(id, 2, 2))
+	require.NotEmpty(t, EncodingKitty.Render(id, 2, 2), "placeholders still render")
 }
