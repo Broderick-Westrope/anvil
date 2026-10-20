@@ -172,9 +172,10 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 	return summary, nil
 }
 
-// DiscardBranchSummary deletes a branch summary and its child session and
-// moves the leaf back to the summary's parent. It is refused once a
-// message has been sent after the summary.
+// DiscardBranchSummary deletes a branch summary and its child session.
+// When the summary is the session's leaf, the leaf moves back to the
+// summary's parent. It is refused once a message has been sent after the
+// summary.
 func (c *coordinator) DiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error {
 	// Holding waits out a send that has read the leaf but not yet stored
 	// its message, so the checks below see it.
@@ -192,7 +193,7 @@ func (c *coordinator) DiscardBranchSummary(ctx context.Context, sessionID, summa
 	if err != nil {
 		return fmt.Errorf("get children of %s: %w", summaryID, err)
 	}
-	if sess.LeafMessageID != summaryID || len(children) > 0 {
+	if len(children) > 0 {
 		return ErrBranchSummaryInUse
 	}
 	summary, err := c.messages.Get(ctx, summaryID)
@@ -202,8 +203,10 @@ func (c *coordinator) DiscardBranchSummary(ctx context.Context, sessionID, summa
 	if summary.MessageType != message.MessageTypeBranchSummary {
 		return fmt.Errorf("message %s is not a branch summary", summaryID)
 	}
-	if err := c.sessions.MoveLeaf(ctx, sessionID, summary.ParentMessageID); err != nil {
-		return fmt.Errorf("move leaf: %w", err)
+	if sess.LeafMessageID == summaryID {
+		if err := c.sessions.MoveLeaf(ctx, sessionID, summary.ParentMessageID); err != nil {
+			return fmt.Errorf("move leaf: %w", err)
+		}
 	}
 	if err := c.messages.Delete(ctx, summaryID); err != nil {
 		return fmt.Errorf("delete branch summary %s: %w", summaryID, err)

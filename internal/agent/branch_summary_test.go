@@ -223,3 +223,20 @@ func TestBranchSummarizers_ListsMarkedAgentsBuiltinFirst(t *testing.T) {
 
 	require.Equal(t, []string{BuiltinBranchSummarizer, "a-summarizer"}, f.c.BranchSummarizers())
 }
+
+func TestDiscardBranchSummary_AfterReturningToTheOldBranch(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.setSummarizer(reply("summary"))
+	summary, err := f.c.SummarizeBranch(t.Context(), f.request())
+	require.NoError(t, err)
+	require.NoError(t, f.env.sessions.MoveLeaf(t.Context(), f.sessionID, f.a2))
+
+	require.NoError(t, f.c.DiscardBranchSummary(t.Context(), f.sessionID, summary.ID))
+
+	sess, err := f.env.sessions.Get(t.Context(), f.sessionID)
+	require.NoError(t, err)
+	require.Equal(t, f.a2, sess.LeafMessageID)
+	_, err = f.env.messages.Get(t.Context(), summary.ID)
+	require.Error(t, err)
+}
