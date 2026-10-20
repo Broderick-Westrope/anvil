@@ -81,6 +81,9 @@ func (m *UI) beginBranchReturn(pending bool) tea.Cmd {
 	if m.branchNavigation != nil || m.branchRestoring {
 		return util.ReportWarn("Please wait for navigation to finish.")
 	}
+	if m.branchSummary != nil && m.hasSession() && m.branchSummary.Busy(m.session.ID) {
+		return m.branchSummary.Cancel()
+	}
 	snapshot := m.branchReturn
 	if pending {
 		snapshot = m.pendingBranch

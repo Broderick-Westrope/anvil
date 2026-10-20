@@ -84,6 +84,9 @@ func NewBranchSummaryPicker(com *common.Common, offer BranchSummaryOffer) *Branc
 	return p
 }
 
+// Offer returns the rewind the picker is for.
+func (p *BranchSummaryPicker) Offer() BranchSummaryOffer { return p.offer }
+
 // ID implements [Dialog].
 func (*BranchSummaryPicker) ID() string { return BranchSummaryPickerID }
 

@@ -337,6 +337,9 @@ type UI struct {
 
 	// features are the fork features routed to from the dispatchers.
 	features features
+	// branchSummary is also registered in features; UI asks it whether a
+	// summary is running before it rewinds again.
+	branchSummary *branchSummaryFeature
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -476,6 +479,8 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
+	ui.branchSummary = newBranchSummaryFeature(uiHost{ui}, com, com.Workspace)
+	ui.features.register(ui.branchSummary)
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -5229,6 +5234,9 @@ func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	}
 	if m.branchNavigation != nil || m.branchRestoring {
 		return util.ReportWarn("Please wait for navigation to finish.")
+	}
+	if m.branchSummary != nil && m.branchSummary.Busy(m.session.ID) {
+		return util.ReportWarn("Wait for the branch summary, or cancel it with esc, before rewinding again.")
 	}
 	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
 		return util.ReportWarn("Return to pre-branch conversation, then send or clear its draft before branching again.")
