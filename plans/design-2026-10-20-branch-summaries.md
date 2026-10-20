@@ -42,7 +42,7 @@ Anvil already has the scaffolding:
 - Context injection through `FilterMetadataMessage`.
 - `/tree` already hides these messages.
 
-Nothing creates one yet.
+The first version of this design found nothing that created one.
 
 **Goal:**
 
@@ -116,10 +116,11 @@ Out:
 - **Picker options:**
   - "No summary".
   - One entry per eligible summarizer.
-  - A toggle that adds focus text.
+  - An always-visible focus field: anything typed there is sent to the
+    summarizer as focus text.
 - **Picker default:** the summarizer last used in this Anvil process,
   falling back to the built-in. The choice is not persisted.
-- **Precedence for `options.branch_summary.prompt` (`ask` | `always` |
+- **Precedence for `options.branch_summary.offer` (`ask` | `always` |
   `never`; default `ask`):**
   1. If the abandoned range contains no assistant message of type
      `message`, there is no picker and no summary, whatever the setting.
@@ -143,7 +144,11 @@ Out:
 - **Eligibility.** An agent appears in the picker when it is marked and
   its model resolves. If the built-in is overridden by an agent that
   isn't eligible, the picker falls back to the remaining eligible agents.
-  If none is eligible, the picker shows only "No summary" with a warning.
+  If none is eligible, no picker opens and a warning says so.
+- **Tools.** Summarizers run over untrusted branch content, so they get
+  at most the read-only tools `view`, `grep`, `glob` and `ls`, whatever
+  their frontmatter allows. The coordinator refuses any agent that isn't
+  marked.
 - **Summarizers are not delegation targets.**
   - They are excluded from the orchestrator's agent list and routing
     hints.
@@ -327,11 +332,20 @@ session is therefore reserved and held:
   credentials in URLs and connection strings, bearer tokens and
   authorization headers, common provider key formats, and `*KEY*`,
   `*TOKEN*`, `*SECRET*`, `*PASSWORD*` assignments.
-- **Before rendering,** the summarizer's output passes the same sanitiser.
+- **Before rendering,** the stored summary passes the same sanitiser, and
+  the chat item strips escape sequences.
+- **Prompt framing.** The branch is untrusted. Each message is its own
+  `<message role="…">` element, content can't close or open the
+  prompt's tags, the preamble says the tags hold data rather than
+  instructions, and the summary reaches the main thread labelled as an
+  automatically generated summary, not an instruction from the user.
 - **The built-in prompt** also tells the model not to repeat secrets or
   personal data.
-- **Limits are documented.** It can't catch secrets in arbitrary prose,
-  and plugin summarizers receive the same sanitised input.
+- **Limits are documented.**
+  - It can't catch secrets in arbitrary prose.
+  - Plugin summarizers receive the same sanitised input.
+  - The summarizer's own child session, shown on drill-in, holds its raw
+    output and the files it read; only the stored summary is sanitised.
 
 **10. Storage, context and compaction.**
 
@@ -441,7 +455,7 @@ rebuilt:
 
 **Success Criteria:**
 
-- [ ] **Picker precedence.** For each `prompt` setting, and for empty,
+- [ ] **Picker precedence.** For each `offer` setting, and for empty,
       metadata-only and normal ranges, the picker and summary behave as
       in decision 1. Shift+B, `/branch` and `/tree` all go through it.
 - [ ] **Picker contents.** The picker lists the eligible summarizers: the
