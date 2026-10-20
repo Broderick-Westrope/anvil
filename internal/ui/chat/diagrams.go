@@ -171,11 +171,11 @@ func splitMermaid(content string) []markdownSegment {
 	return segs
 }
 
-// splittable reports whether msg is shown as several nodes. Only a message
-// that finished normally is split: while it streams it stays one node, so
-// nodes never appear or vanish mid-stream, and canceled or failed messages
-// keep their footer on the one node.
-func splittable(msg *message.Message) bool {
+// MaySplit reports whether msg may be shown as several nodes. Only a
+// message that finished normally is split: while it streams it stays one
+// node, so nodes never appear or vanish mid-stream, and canceled or failed
+// messages keep their footer on the one node.
+func MaySplit(msg *message.Message) bool {
 	if !msg.IsFinished() || msg.IsErrorLike() || msg.FinishReason() == message.FinishReasonCanceled {
 		return false
 	}
@@ -191,7 +191,7 @@ func splittable(msg *message.Message) bool {
 // unless it would be empty, in which case the first diagram is the head.
 func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message, diagrams DiagramRenderer) []MessageItem {
 	head := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
-	if diagrams == nil || !splittable(msg) {
+	if diagrams == nil || !MaySplit(msg) {
 		return []MessageItem{head}
 	}
 	segs := splitMermaid(msg.Content().Text)

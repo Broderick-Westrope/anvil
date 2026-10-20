@@ -10,17 +10,25 @@ import (
 // SyncAssistantSegments brings msg's nodes in line with how it should be
 // split around its diagrams (see chat.NewAssistantMessageItems). It does
 // nothing while the split is unchanged, so streaming updates and repeat
-// updates of a finished message keep their items. It returns whether it
-// replaced any. diagrams is nil when diagrams are turned off.
-func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message, diagrams chat.DiagramRenderer) bool {
+// updates of a finished message keep their items. diagrams is nil when
+// diagrams are turned off, and then nothing is ever split.
+func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message, diagrams chat.DiagramRenderer) {
+	if diagrams == nil {
+		return
+	}
 	idx, ok := m.idInxMap[msg.ID]
 	if !ok {
-		return false
+		return
 	}
 	// The head is the message's first node: text, or a diagram when the
 	// message opens with one.
-	if _, ok := m.list.ItemAt(idx).(chat.SegmentKeyed); !ok {
-		return false
+	head, ok := m.list.ItemAt(idx).(chat.SegmentKeyed)
+	if !ok {
+		return
+	}
+	if head.SegmentKey() == "" && !chat.MaySplit(msg) {
+		// Unsplit and staying so, as on every streaming update.
+		return
 	}
 	n := 1
 	for idx+n < m.list.Len() {
@@ -33,7 +41,7 @@ func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message, d
 
 	want := chat.NewAssistantMessageItems(sty, msg, diagrams)
 	if sameSegments(m.list, idx, n, want) {
-		return false
+		return
 	}
 	items := make([]list.Item, len(want))
 	for i, item := range want {
@@ -46,7 +54,6 @@ func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message, d
 	}
 	m.list.SpliceItems(idx, n, items...)
 	m.reindexFrom(idx)
-	return true
 }
 
 // sameSegments reports whether the n items at idx show what want would.
