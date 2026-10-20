@@ -993,6 +993,7 @@ func TestDiagramsEnabledWithoutStartupSnapshotReadsConfig(t *testing.T) {
 	off := false
 	require.False(t, testStore(&Config{Options: &Options{TUI: &TUIOptions{Diagrams: &off}}}).DiagramsEnabled())
 	require.True(t, testStore(&Config{}).DiagramsEnabled())
+	require.True(t, testStore(&Config{Options: &Options{}}).DiagramsEnabled(), "no tui options")
 }
 
 func TestStartupSnapshot_UnconfiguredStore(t *testing.T) {
