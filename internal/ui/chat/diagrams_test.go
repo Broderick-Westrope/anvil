@@ -274,3 +274,21 @@ func keyPress(key string) tea.KeyPressMsg {
 	}
 	return tea.KeyPressMsg{Code: rune(key[0]), Text: key}
 }
+
+func TestDiagramCodeBlockHasNoBlankPaddingLines(t *testing.T) {
+	t.Parallel()
+
+	const src = "flowchart LR\n  A --> B\n"
+	sty := styles.TokyoNight()
+	failed := DiagramView{State: DiagramFailed, Err: "bad"}
+	for name, view := range map[string]DiagramView{"code block": {}, "with a failure note": failed} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			item := NewDiagramItem(&sty, finishedMessage("m"), 1, src, fakeDiagrams{inline: map[string]DiagramView{src: view}})
+			lines := strings.Split(ansi.Strip(item.RawRender(80)), "\n")
+			require.NotEmpty(t, strings.TrimSpace(lines[0]), "first line")
+			require.NotEmpty(t, strings.TrimSpace(lines[len(lines)-1]), "last line")
+			require.Contains(t, lines[0], "flowchart LR")
+		})
+	}
+}

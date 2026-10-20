@@ -269,6 +269,21 @@ func (d *DiagramItem) RawRender(width int) string {
 	return d.codeBlock.render(d.sty, d.source, w, view)
 }
 
+// trimBlankLines drops the lines glamour pads a code block with, which hold
+// only spaces and styling, so a code block standing alone as a node starts
+// and ends with code.
+func trimBlankLines(s string) string {
+	lines := strings.Split(s, "\n")
+	blank := func(line string) bool { return strings.TrimSpace(ansi.Strip(line)) == "" }
+	for len(lines) > 0 && blank(lines[0]) {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && blank(lines[len(lines)-1]) {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // diagramCodeBlock renders a diagram's source as its fallback code block,
 // caching glamour's output per width.
 type diagramCodeBlock struct {
@@ -288,7 +303,7 @@ func (c *diagramCodeBlock) render(sty *styles.Styles, source string, width int, 
 		if err != nil {
 			out = source
 		}
-		c.out, c.width = trimGlamourMargins(out), width
+		c.out, c.width = trimBlankLines(out), width
 	}
 	if view.State != DiagramFailed {
 		return c.out
