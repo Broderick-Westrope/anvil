@@ -192,7 +192,7 @@ type switchDiagrams struct{ view chat.DiagramView }
 
 func (s *switchDiagrams) Diagram(string, int) chat.DiagramView     { return s.view }
 func (s *switchDiagrams) FullDiagram(string, int) chat.DiagramView { return s.view }
-func (*switchDiagrams) Prefetch(string, int)                       {}
+func (*switchDiagrams) InView([]string, int)                       {}
 
 // diagramChat is a 10-row chat holding a text message, then a diagram whose
 // code block is far taller than the image it turns into.
@@ -253,8 +253,13 @@ func TestChatOpenedAtTheTopStaysThereWhenADiagramGrows(t *testing.T) {
 	require.Zero(t, c.list.Offset(), "the drill-in still starts at the top of the diagram")
 }
 
-// recordingDiagrams records which sources the chat asked for.
-type recordingDiagrams struct{ asked []string }
+// recordingDiagrams records which sources the chat asked for, and the
+// last set it said were in view.
+type recordingDiagrams struct {
+	asked  []string
+	inView []string
+	views  int
+}
 
 func (r *recordingDiagrams) Diagram(source string, _ int) chat.DiagramView {
 	r.asked = append(r.asked, source)
@@ -262,7 +267,11 @@ func (r *recordingDiagrams) Diagram(source string, _ int) chat.DiagramView {
 }
 
 func (r *recordingDiagrams) FullDiagram(string, int) chat.DiagramView { return chat.DiagramView{} }
-func (r *recordingDiagrams) Prefetch(source string, width int)        { r.Diagram(source, width) }
+func (r *recordingDiagrams) InView(sources []string, _ int) {
+	r.views++
+	r.inView = sources
+	r.asked = append(r.asked, sources...)
+}
 
 func TestChatDrawAsksForDiagramsWithinAScreenOfTheView(t *testing.T) {
 	t.Parallel()
@@ -281,7 +290,7 @@ func TestChatDrawAsksForDiagramsWithinAScreenOfTheView(t *testing.T) {
 	far := chat.NewDiagramItem(com.Styles, msg, 2, "far\n", diagrams)
 	c := NewChat(com)
 	c.SetSize(80, 10)
-	c.SetPrefetch(true)
+	c.SetDiagrams(diagrams)
 	c.SetMessages(filler("a"), filler("b"), near, filler("c"), filler("d"), filler("e"), far)
 	c.ScrollToTop()
 	// Sizing measured the items at the bottom; only count what Draw asks.
@@ -301,7 +310,7 @@ func (c *countingDiagrams) Diagram(string, int) chat.DiagramView {
 	return chat.DiagramView{State: chat.DiagramPending}
 }
 func (c *countingDiagrams) FullDiagram(string, int) chat.DiagramView { return c.Diagram("", 0) }
-func (c *countingDiagrams) Prefetch(string, int)                     { c.asked++ }
+func (c *countingDiagrams) InView(sources []string, _ int)           { c.asked += len(sources) }
 
 func TestChatPrefetchesDiagramsBelowTheViewOnlyWhenAsked(t *testing.T) {
 	t.Parallel()
@@ -314,7 +323,9 @@ func TestChatPrefetchesDiagramsBelowTheViewOnlyWhenAsked(t *testing.T) {
 			msg := &message.Message{ID: "m", Role: message.Assistant}
 			c := NewChat(com)
 			c.SetSize(80, 5)
-			c.SetPrefetch(on)
+			if on {
+				c.SetDiagrams(diagrams)
+			}
 			c.SetMessages(
 				chat.NewAssistantMessageItem(com.Styles, finishedText("m", strings.Repeat("line\n\n", 5))),
 				chat.NewDiagramItem(com.Styles, msg, 1, "A\n", diagrams),
@@ -451,7 +462,7 @@ func TestChatPrefetchesOnlyWhenTheViewMoves(t *testing.T) {
 	msg := &message.Message{ID: "m", Role: message.Assistant}
 	c := NewChat(com)
 	c.SetSize(80, 5)
-	c.SetPrefetch(true)
+	c.SetDiagrams(diagrams)
 	c.SetMessages(
 		chat.NewAssistantMessageItem(com.Styles, finishedText("m", strings.Repeat("line\n\n", 5))),
 		chat.NewDiagramItem(com.Styles, msg, 1, "A\n", diagrams),
@@ -567,4 +578,27 @@ func TestUIHostDrillInOpen(t *testing.T) {
 	m.drillStack = []drillInEntry{{chat: open}}
 	require.True(t, uiHost{m}.DrillInOpen(open))
 	require.False(t, uiHost{m}.DrillInOpen(other))
+}
+
+func TestChatReportsTheDiagramsInViewAsItScrolls(t *testing.T) {
+	t.Parallel()
+
+	com := common.DefaultCommon(nil)
+	diagrams := &recordingDiagrams{}
+	msg := &message.Message{ID: "m", Role: message.Assistant}
+	filler := func(id string) chat.MessageItem {
+		return chat.NewAssistantMessageItem(com.Styles, finishedText(id, strings.Repeat("filler\n\n", 3)))
+	}
+	c := NewChat(com)
+	c.SetSize(80, 10)
+	c.SetDiagrams(diagrams)
+	c.SetMessages(chat.NewDiagramItem(com.Styles, msg, 1, "top\n", diagrams),
+		filler("a"), filler("b"), filler("c"), filler("d"), filler("e"), filler("f"), filler("g"))
+	c.ScrollToTop()
+	c.prefetchNearby()
+	require.Equal(t, []string{"top\n"}, diagrams.inView, "the diagram on screen counts")
+
+	c.ScrollToBottom()
+	c.prefetchNearby()
+	require.Empty(t, diagrams.inView, "nothing in view, so nothing is held")
 }

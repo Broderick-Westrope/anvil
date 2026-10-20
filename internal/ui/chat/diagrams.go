@@ -48,9 +48,11 @@ type DiagramRenderer interface {
 	Diagram(source string, width int) DiagramView
 	// FullDiagram is the diagram as shown in its drill-in.
 	FullDiagram(source string, width int) DiagramView
-	// Prefetch queues the chat's image of source at width, as Diagram
-	// does, for a node that will be drawn soon.
-	Prefetch(source string, width int)
+	// InView says which diagrams are on or within a screen of the chat's
+	// view, drawn at width. It queues any not yet rendered, and those
+	// images are never evicted while they stay in view. Each call replaces
+	// the last.
+	InView(sources []string, width int)
 }
 
 // WholeSelectable is implemented by items that copy all of their text when
@@ -324,10 +326,16 @@ func (d *DiagramItem) SourceMessage() message.Message { return d.message.Clone()
 // so it is never frozen.
 func (d *DiagramItem) Finished() bool { return false }
 
-// Prefetch starts rendering the node's image for drawing at width, so it is
-// ready by the time the node scrolls into view.
-func (d *DiagramItem) Prefetch(width int) {
-	d.diagrams.Prefetch(d.source, cappedMessageWidth(width))
+// ReportDiagramsInView tells diagrams which of items, a chat's items on or
+// near its view at listWidth, are diagrams.
+func ReportDiagramsInView(diagrams DiagramRenderer, items []list.Item, listWidth int) {
+	var sources []string
+	for _, item := range items {
+		if d, ok := item.(*DiagramItem); ok {
+			sources = append(sources, d.source)
+		}
+	}
+	diagrams.InView(sources, cappedMessageWidth(listWidth))
 }
 
 // RawRender implements list.RawRenderable: the image once it's ready,

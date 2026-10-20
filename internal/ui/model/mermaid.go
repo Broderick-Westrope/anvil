@@ -43,9 +43,11 @@ const (
 	// Reloading them costs about 370 ms.
 	diagramIdleTimeout = 20 * time.Second
 	// diagramCacheBudget caps the pixels of the diagrams held in the
-	// terminal (Anvil keeps none once sent). Past it, the least recently
-	// drawn are deleted and render again if they scroll back into view.
-	diagramCacheBudget = 32 << 20
+	// terminal (Anvil keeps none once sent) that are out of view. Past it,
+	// the least recently drawn are deleted and render again if they scroll
+	// back into view. A wide diagram on a HiDPI screen is ~17 MB, and
+	// Ghostty's default image storage is 320 MB.
+	diagramCacheBudget = 128 << 20
 	// diagramExportMaxAge is how long a page exported for the browser is
 	// kept; older ones are deleted when the next is written.
 	diagramExportMaxAge = 24 * time.Hour
@@ -145,6 +147,9 @@ type mermaidFeature struct {
 	// other widths are stale after a resize.
 	widths [2]int
 	clock  uint64
+	// inView are the chat images on or near the chat's view, which are
+	// never evicted (see InView).
+	inView map[diagramKey]bool
 	// termBg is the terminal's own background, for when the TUI is
 	// transparent.
 	termBg string
@@ -321,10 +326,30 @@ func (f *mermaidFeature) imageHash(source, bg string) uint64 {
 	return h.Sum64()
 }
 
-// Prefetch implements chat.DiagramRenderer. It does what Diagram does for
-// an image the chat will draw soon, without building its placeholders.
-func (f *mermaidFeature) Prefetch(source string, width int) {
-	f.lookup(source, width, diagramInline, false)
+// InView implements chat.DiagramRenderer. It does what Diagram does for
+// each image the chat shows or will soon, without building placeholders,
+// and holds them against eviction until the next call.
+func (f *mermaidFeature) InView(sources []string, width int) {
+	inView := map[diagramKey]bool{}
+	for _, source := range sources {
+		if key, ok := f.imageKey(source, width, diagramInline); ok {
+			inView[key] = true
+		}
+		f.lookup(source, width, diagramInline, false)
+	}
+	f.mu.Lock()
+	f.inView = inView
+	f.mu.Unlock()
+}
+
+// imageKey is the key of source's image of kind at width, or false when
+// diagrams can't be drawn.
+func (f *mermaidFeature) imageKey(source string, width int, kind diagramKind) (diagramKey, bool) {
+	cellW, cellH := f.caps.CellSize()
+	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
+		return diagramKey{}, false
+	}
+	return diagramKey{hash: f.imageHash(source, f.background()), width: width, kind: kind, cellW: cellW, cellH: cellH}, true
 }
 
 // lookup finds source's image at width, queueing its render if there is
@@ -332,11 +357,10 @@ func (f *mermaidFeature) Prefetch(source string, width int) {
 // placeholders that show it. It runs during rendering, so it only touches
 // the feature's own state and queues work.
 func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw bool) chat.DiagramView {
-	cellW, cellH := f.caps.CellSize()
-	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
+	key, ok := f.imageKey(source, width, kind)
+	if !ok {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
-	key := diagramKey{hash: f.imageHash(source, f.background()), width: width, kind: kind, cellW: cellW, cellH: cellH}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -351,7 +375,7 @@ func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw
 			if !e.transient || e.retried {
 				return chat.DiagramView{State: chat.DiagramFailed, Err: e.err}
 			}
-			req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: cellW, cellH: cellH, maxCols: width}
+			req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: key.cellW, cellH: key.cellH, maxCols: width}
 			if f.enqueue(req) {
 				e.state, e.retried = diagramPending, true
 			}
@@ -368,7 +392,7 @@ func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw
 		// either: render it again.
 		delete(f.entries, key)
 	}
-	req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: cellW, cellH: cellH, maxCols: width}
+	req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: key.cellW, cellH: key.cellH, maxCols: width}
 	if f.enqueue(req) {
 		f.entries[key] = &diagramEntry{state: diagramPending, lastUsed: f.clock}
 	}
@@ -508,7 +532,9 @@ func (f *mermaidFeature) tmux() bool {
 
 // evictLocked drops transmitted diagrams drawn at a width their kind no
 // longer uses, then the least recently drawn until the rest fit
-// cacheBudget. keep is never dropped. It returns the commands that free
+// cacheBudget. keep and diagrams in view are never dropped, even when they
+// alone pass the budget: dropping one on screen would show its code block
+// until it rendered again, and that would evict the next. It returns the commands that free
 // them in the terminal.
 func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 	var sent []diagramKey
@@ -538,7 +564,7 @@ func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 		total += f.entries[key].bytes
 	}
 	for _, key := range held {
-		if total > f.cacheBudget && key != keep {
+		if total > f.cacheBudget && key != keep && !f.inView[key] {
 			total -= f.entries[key].bytes
 			cmds = append(cmds, f.forgetLocked(key))
 		}
