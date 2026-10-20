@@ -46,7 +46,7 @@ internal/
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
-  mermaid/                         Mermaid to pixels: Pele in goja, resvg in wazero (vendored)
+  mermaid/                         Mermaid to pixels: pele-go (Go port of Pele), resvg in wazero (vendored)
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -216,10 +216,10 @@ Terms with a specific meaning in this codebase are defined in
   `Chat.SyncAssistantSegments`); the head keeps the message ID and the
   rest are `<id>#<n>`. `mermaidFeature` (`internal/ui/model/mermaid.go`
   for its cache and messages, `mermaid_render.go` for the worker) renders
-  them on one goroutine with `internal/mermaid` (Pele in goja for SVG, the
-  vendored resvg in wazero for pixels; see
-  `docs/adr/0004-mermaid-rendering.md`) and sends Kitty graphics with
-  Unicode placeholders. Items get the renderer through their constructors
+  them on one goroutine with `internal/mermaid` (pele-go, a Go port of
+  Pele, for SVG, the vendored resvg in wazero for pixels; see
+  `docs/adr/0004-mermaid-rendering.md` and `docs/adr/0006-pele-go.md`)
+  and sends Kitty graphics with Unicode placeholders. Items get the renderer through their constructors
   as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
   code block shows while pending, without Kitty support, or (with a note)
   after a failure. When the view moves, the chat tells the renderer which
@@ -229,8 +229,8 @@ Terms with a specific meaning in this codebase are defined in
   only diagram items (`Chat.InvalidateDiagrams`), which keeps the scroll
   position. The terminal holds the pixels; Anvil keeps none once sent, and
   deletes the least recently drawn images out of view past 128 MB (a wide
-  diagram on a HiDPI screen is ~17 MB). The engines load on
-  the first diagram and drop after 20 seconds idle. resvg's compiled
+  diagram on a HiDPI screen is ~17 MB). resvg loads on the
+  first diagram and drops after 20 seconds idle. Its compiled
   code goes in wazero's compilation cache under the user cache dir
   (`anvil/wasm`), shared by every process, so only the first load after
   an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).

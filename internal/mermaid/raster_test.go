@@ -96,7 +96,7 @@ func TestRasterizeDiagrams(t *testing.T) {
 	out := os.Getenv("MERMAID_TEST_OUT")
 	for name, src := range sampleDiagrams {
 		start := time.Now()
-		res, err := r.Render(src, Options{MaxWidth: 900})
+		res, err := r.Render(t.Context(), src, Options{MaxWidth: 900})
 		require.NoError(t, err, name)
 		peleTime := time.Since(start)
 
@@ -206,7 +206,7 @@ func TestRasterizeTransparentBackground(t *testing.T) {
 	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
-	res, err := r.Render(sampleFlowchart, Options{})
+	res, err := r.Render(t.Context(), sampleFlowchart, Options{})
 	require.NoError(t, err)
 
 	clearImg, err := rast.Rasterize(res, testTheme, RasterOptions{Scale: 1})
@@ -250,7 +250,7 @@ func TestRenderLabelDeclaringVariablesStaysSmall(t *testing.T) {
 	rast, err := NewRasterizer(t.Context(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rast.Close() })
-	res, err := r.Render(`flowchart LR
+	res, err := r.Render(t.Context(), `flowchart LR
   A["--zz:var(--zz)var(--zz)"] --> B`, Options{})
 	require.NoError(t, err)
 

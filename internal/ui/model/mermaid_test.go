@@ -49,7 +49,7 @@ func (h *fakeDiagramHost) PushDrillIn(c *Chat, label string) {
 func (h *fakeDiagramHost) DrillInOpen(c *Chat) bool { return slices.Contains(h.drills, c) }
 
 // engineSlots caps how many tests run render engines at once. Each worker
-// loads its own Pele and resvg, and under the race detector a few dozen at
+// loads its own resvg, and under the race detector a few dozen at
 // once starve each other past their deadlines.
 var engineSlots = make(chan struct{}, 4)
 

@@ -1,6 +1,7 @@
 # 0004: Render Mermaid in-process with vendored Pele and resvg
 
-**Status:** Accepted
+**Status:** Accepted; running Pele in goja is superseded by
+[ADR 0006](0006-pele-go.md)
 **Date:** 2026-10-20
 
 ## Context

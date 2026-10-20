@@ -77,7 +77,7 @@ func transientRenderError(err error) bool {
 }
 
 // diagramEngines is everything a render needs. The worker owns it alone,
-// since neither engine is safe for concurrent use. The rasterizer loads on
+// since the rasterizer isn't safe for concurrent use. The rasterizer loads on
 // the first image, so exporting alone doesn't compile resvg.
 type diagramEngines struct {
 	pele   *mermaid.Renderer
@@ -172,7 +172,7 @@ func requestFailed(req diagramRequest, err error) tea.Msg {
 }
 
 func (f *mermaidFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
-	res, err := e.pele.Render(req.source, mermaid.Options{})
+	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{})
 	if err != nil {
 		return diagramExportedMsg{err: err}
 	}
@@ -199,7 +199,7 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	}
 	cw, ch := float64(req.cellW), float64(req.cellH)
 	fit := newDiagramFit(req)
-	res, err := e.pele.Render(req.source, mermaid.Options{MaxWidth: fit.maxWidth})
+	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{MaxWidth: fit.maxWidth})
 	if err != nil {
 		return fail(err)
 	}
