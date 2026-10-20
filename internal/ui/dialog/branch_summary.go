@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/agent/branchsummary"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -15,10 +16,6 @@ import (
 
 // BranchSummaryPickerID is the identifier for the branch summary picker.
 const BranchSummaryPickerID = "branch_summary_picker"
-
-// branchSummaryFocusLimit caps the focus text, matching what the
-// summarizer is sent.
-const branchSummaryFocusLimit = 2_000
 
 // BranchSummaryOffer is a rewind that could be summarized.
 type BranchSummaryOffer struct {
@@ -69,7 +66,7 @@ func NewBranchSummaryPicker(com *common.Common, offer BranchSummaryOffer) *Branc
 	p.input = textinput.New()
 	p.input.SetVirtualCursor(false)
 	p.input.Placeholder = "Optional focus, e.g. the PR and what's left…"
-	p.input.CharLimit = branchSummaryFocusLimit
+	p.input.CharLimit = branchsummary.MaxFocusChars
 	p.input.SetStyles(com.Styles.TextInput)
 	p.input.Focus()
 
