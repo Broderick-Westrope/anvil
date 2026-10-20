@@ -159,7 +159,12 @@ type diagramReadyMsg struct {
 	err        error
 }
 
-type diagramShownMsg struct{ key diagramKey }
+// diagramShownMsg follows a diagram's transmit command, once the image is
+// in the terminal.
+type diagramShownMsg struct {
+	key        diagramKey
+	cols, rows int
+}
 
 type diagramExportedMsg struct {
 	path string
@@ -501,19 +506,21 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		e.bytes = msg.cols * msg.cellW * msg.rows * msg.cellH * 4
 		cs := fimage.CellSize{Width: msg.cellW, Height: msg.cellH}
 		transmit := fimage.EncodingKitty.Transmit(msg.key.id(), msg.img, cs, msg.cols, msg.rows, f.tmux())
-		shown := func() tea.Msg { return diagramShownMsg{key: msg.key} }
+		shown := func() tea.Msg { return diagramShownMsg{key: msg.key, cols: msg.cols, rows: msg.rows} }
 		return tea.Batch(f.listen, tea.Sequence(transmit, shown)), true
 	case diagramShownMsg:
 		f.mu.Lock()
 		e, ok := f.entries[msg.key]
-		if ok {
-			e.state = diagramReady
+		if !ok {
+			f.mu.Unlock()
+			// Forgotten while it transmitted (its drill-in closed or it
+			// was evicted), so the transmit put it back: free it again.
+			return fimage.EncodingKitty.Forget(msg.key.id(), msg.cols, msg.rows, f.tmux()), true
 		}
+		e.state = diagramReady
 		evict := f.evictLocked(msg.key)
 		f.mu.Unlock()
-		if ok {
-			f.host.InvalidateChat()
-		}
+		f.host.InvalidateChat()
 		return evict, true
 	}
 	return nil, false

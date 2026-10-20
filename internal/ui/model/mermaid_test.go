@@ -84,7 +84,7 @@ func showDiagram(t *testing.T, f *mermaidFeature, src string, width int) (diagra
 	raw := fimage.EncodingKitty.Transmit(ready.key.id(), ready.img, cs, ready.cols, ready.rows, false)()
 	require.IsType(t, tea.RawMsg{}, raw)
 
-	evict, handled := f.HandleMsg(diagramShownMsg{key: ready.key})
+	evict, handled := f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
 	require.True(t, handled)
 	return ready, evict
 }
@@ -129,7 +129,7 @@ func TestMermaidFeatureRendersKittyPlaceholders(t *testing.T) {
 
 	cs := fimage.CellSize{Width: ready.cellW, Height: ready.cellH}
 	fimage.EncodingKitty.Transmit(ready.key.id(), ready.img, cs, ready.cols, ready.rows, false)()
-	_, handled = f.HandleMsg(diagramShownMsg{key: ready.key})
+	_, handled = f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
 	require.True(t, handled)
 	require.Equal(t, 1, host.invalidations)
 
@@ -283,7 +283,7 @@ func TestMermaidFeatureOpensDrillIn(t *testing.T) {
 	require.True(t, handled)
 	cs := fimage.CellSize{Width: full.cellW, Height: full.cellH}
 	fimage.EncodingKitty.Transmit(full.key.id(), full.img, cs, full.cols, full.rows, false)()
-	f.HandleMsg(diagramShownMsg{key: full.key})
+	f.HandleMsg(diagramShownMsg{key: full.key, cols: full.cols, rows: full.rows})
 	require.Contains(t, item.RawRender(80), string(kitty.Placeholder))
 
 	// Closing the drill-in frees the full-size image.
@@ -386,4 +386,31 @@ func TestMermaidFeatureThemeFollowsTheStyles(t *testing.T) {
 	theme := f.theme()
 	require.Equal(t, "#010203", theme["pele-accent"])
 	require.Equal(t, "#040506", theme["pele-series-8"])
+}
+
+func TestMermaidFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n"})
+	item := host.drills[0].MessageItems()[0].(*chat.DiagramDetailItem)
+	item.RawRender(80)
+	full := waitReady(t, f)
+	_, handled := f.HandleMsg(full)
+	require.True(t, handled)
+
+	// The drill-in closes before the transmit command runs.
+	host.drills = nil
+	f.Observe(nil)
+	cs := fimage.CellSize{Width: full.cellW, Height: full.cellH}
+	fimage.EncodingKitty.Transmit(full.key.id(), full.img, cs, full.cols, full.rows, false)()
+	require.NotEmpty(t, fimage.EncodingKitty.Render(full.key.id(), full.cols, full.rows), "the late transmit cached it")
+
+	invalidations := host.invalidations
+	cmd, handled := f.HandleMsg(diagramShownMsg{key: full.key, cols: full.cols, rows: full.rows})
+	require.True(t, handled)
+	require.Len(t, rawMsgs(cmd), 1, "the terminal is told to delete it")
+	require.Empty(t, fimage.EncodingKitty.Render(full.key.id(), full.cols, full.rows), "and the cache drops it")
+	require.Equal(t, invalidations, host.invalidations, "nothing new to show")
 }
