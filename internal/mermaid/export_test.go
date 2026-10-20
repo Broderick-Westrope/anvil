@@ -29,3 +29,11 @@ func TestHTMLDocument(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "nested.html"), []byte(doc), 0o644))
 	}
 }
+
+func TestHTMLDocumentBlocksRemoteLoads(t *testing.T) {
+	t.Parallel()
+
+	doc, err := HTMLDocument(Result{SVG: `<svg xmlns="http://www.w3.org/2000/svg"></svg>`}, testTheme, "d")
+	require.NoError(t, err)
+	require.Contains(t, doc, `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:">`)
+}

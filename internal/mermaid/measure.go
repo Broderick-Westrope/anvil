@@ -32,23 +32,27 @@ type measurer struct {
 	mu    sync.Mutex
 }
 
-var fontPaths = [4]string{
-	"fonts/DejaVuSans.ttf",
-	"fonts/DejaVuSans-Bold.ttf",
-	"fonts/DejaVuSans-Oblique.ttf",
-	"fonts/DejaVuSans-BoldOblique.ttf",
+// fontFaces lists the embedded faces with their CSS weight and style,
+// indexed by Pele's style bits.
+var fontFaces = [4]struct {
+	path, weight, style string
+}{
+	{"fonts/DejaVuSans.ttf", "normal", "normal"},
+	{"fonts/DejaVuSans-Bold.ttf", "bold", "normal"},
+	{"fonts/DejaVuSans-Oblique.ttf", "normal", "italic"},
+	{"fonts/DejaVuSans-BoldOblique.ttf", "bold", "italic"},
 }
 
 func newMeasurer() (*measurer, error) {
 	m := &measurer{}
-	for i, p := range fontPaths {
-		data, err := fontFiles.ReadFile(p)
+	for i, face := range fontFaces {
+		data, err := fontFiles.ReadFile(face.path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read %s: %w", face.path, err)
 		}
 		f, err := sfnt.Parse(data)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", p, err)
+			return nil, fmt.Errorf("parse %s: %w", face.path, err)
 		}
 		m.faces[i] = f
 	}

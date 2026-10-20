@@ -11,19 +11,11 @@ import (
 // browser draws labels with the font Pele measured them in.
 const exportFontFamily = "Anvil DejaVu Sans"
 
-// fontFaces maps each embedded face to its CSS weight and style.
-var fontFaces = []struct {
-	path, weight, style string
-}{
-	{"fonts/DejaVuSans.ttf", "normal", "normal"},
-	{"fonts/DejaVuSans-Bold.ttf", "bold", "normal"},
-	{"fonts/DejaVuSans-Oblique.ttf", "normal", "italic"},
-	{"fonts/DejaVuSans-BoldOblique.ttf", "bold", "italic"},
-}
-
 // HTMLDocument returns a standalone page showing the diagram on the theme's
 // background, scaled to the window and zoomable in the browser. It embeds
-// the label fonts so the layout matches the terminal rendering.
+// the label fonts so the layout matches the terminal rendering. Its content
+// policy blocks every load from outside the page, because the SVG comes
+// from model-written source.
 func HTMLDocument(res Result, theme Theme, title string) (string, error) {
 	var faces strings.Builder
 	for _, f := range fontFaces {
@@ -36,9 +28,11 @@ func HTMLDocument(res Result, theme Theme, title string) (string, error) {
 	}
 	bg := theme["pele-bg"]
 	fg := theme["pele-fg"]
-	svg := ResolveVars(res.SVG, theme)
+	svg := resolveVars(res.SVG, theme)
 	return `<!doctype html>
-<html><head><meta charset="utf-8"><title>` + html.EscapeString(title) + `</title>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:">
+<title>` + html.EscapeString(title) + `</title>
 <style>
 ` + faces.String() + `html,body{margin:0;background:` + bg + `;color:` + fg + `}
 body{display:flex;justify-content:center;padding:32px;box-sizing:border-box;min-height:100vh}

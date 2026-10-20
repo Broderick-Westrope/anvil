@@ -10,6 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testTheme is a dark palette for tests. Anvil's real one comes from
+// internal/ui/styles.
+var testTheme = Theme{
+	"pele-bg":      "#101010",
+	"pele-fg":      "#f0f0f0",
+	"pele-line":    "#c0c0c0",
+	"pele-surface": "#303030",
+	"pele-border":  "#a080f0",
+	"pele-accent":  "#7090f0",
+}
+
 var sampleDiagrams = map[string]string{
 	"flowchart": sampleFlowchart,
 	"sequence": `sequenceDiagram
@@ -89,8 +100,8 @@ func TestRasterizeDiagrams(t *testing.T) {
 		img, err := rast.Rasterize(res, testTheme, RasterOptions{Scale: 2})
 		require.NoError(t, err, name)
 		t.Logf("%-9s pele %8s  raster %8s  %vx%v -> %v", name, peleTime, time.Since(start), res.Width, res.Height, img.Bounds().Size())
-		require.NotContains(t, ResolveVars(res.SVG, testTheme), "var(", name)
-		require.NotContains(t, resolveColorMix(ResolveVars(res.SVG, testTheme)), "color-mix", name)
+		require.NotContains(t, resolveVars(res.SVG, testTheme), "var(", name)
+		require.NotContains(t, resolveColorMix(resolveVars(res.SVG, testTheme)), "color-mix", name)
 
 		if out != "" {
 			f, err := os.Create(filepath.Join(out, name+".png"))
@@ -138,6 +149,6 @@ func TestResolveVars(t *testing.T) {
 	t.Parallel()
 
 	svg := `<svg style="--_bg:var(--pele-bg,#fff);--_fg:var(--pele-fg,#000)" fill="var(--_fg)"><rect fill="var(--_bg)" stroke="var(--missing, var(--_fg))"/></svg>`
-	got := ResolveVars(svg, Theme{"pele-bg": "#111"})
+	got := resolveVars(svg, Theme{"pele-bg": "#111"})
 	require.Equal(t, `<svg style="--_bg:#111;--_fg:#000" fill="#000"><rect fill="#111" stroke="#000"/></svg>`, got)
 }

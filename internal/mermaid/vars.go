@@ -11,11 +11,11 @@ type Theme map[string]string
 
 var customPropertyDecl = regexp.MustCompile(`--([A-Za-z0-9_-]+)\s*:\s*`)
 
-// ResolveVars substitutes every CSS var() in svg, because resvg cannot
+// resolveVars substitutes every CSS var() in svg, because resvg cannot
 // resolve custom properties. Declarations are treated as global, which holds
 // for Pele's output where they only appear on the root element. Theme
 // entries take precedence over declarations in the SVG.
-func ResolveVars(svg string, theme Theme) string {
+func resolveVars(svg string, theme Theme) string {
 	defs := map[string]string{}
 	for _, loc := range customPropertyDecl.FindAllStringSubmatchIndex(svg, -1) {
 		name := svg[loc[2]:loc[3]]

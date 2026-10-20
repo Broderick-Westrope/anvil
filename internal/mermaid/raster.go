@@ -47,8 +47,7 @@ var rootFontShorthand = regexp.MustCompile(`font:(\d+(?:\.\d+)?)px`)
 
 // normalizeRootFont copies the root `font:` shorthand's size into a
 // font-size attribute, because resvg ignores the shorthand and would fall
-// back to 12px for every label that inherits it. A non-empty bg is painted
-// behind the diagram.
+// back to 12px for every label that inherits it.
 func normalizeRootFont(svg string) string {
 	if !strings.HasPrefix(svg, "<svg ") {
 		return svg
@@ -112,7 +111,7 @@ func (r *Rasterizer) Rasterize(res Result, theme Theme, opts RasterOptions) (*im
 	if w*h > limit {
 		return nil, fmt.Errorf("rasterize: %dx%d exceeds %d pixels", w, h, limit)
 	}
-	svg := normalizeRootFont(resolveColorMix(ResolveVars(res.SVG, theme)))
+	svg := normalizeRootFont(resolveColorMix(resolveVars(res.SVG, theme)))
 	img, err := r.engine.Render([]byte(svg), w, h)
 	if err != nil {
 		return nil, fmt.Errorf("rasterize: %w", err)

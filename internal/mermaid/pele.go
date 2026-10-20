@@ -38,7 +38,6 @@ type Result struct {
 	SVG    string
 	Width  float64
 	Height float64
-	Type   string
 }
 
 // Renderer owns one goja runtime with Pele loaded. It is not safe for
@@ -86,7 +85,9 @@ func (r *Renderer) Render(source string, opts Options) (Result, error) {
 	if len(source) > MaxSourceBytes {
 		return Result{}, ErrSourceTooLarge
 	}
-	jsOpts := map[string]any{"responsive": false, "measurer": r.measurer}
+	// Images are off because the source is model-written and the exported
+	// page is opened in a browser, which would fetch every image href.
+	jsOpts := map[string]any{"responsive": false, "images": false, "measurer": r.measurer}
 	if opts.MaxWidth > 0 {
 		jsOpts["maxWidth"] = opts.MaxWidth
 	}
@@ -113,6 +114,5 @@ func (r *Renderer) Render(source string, opts Options) (Result, error) {
 		SVG:    obj.Get("svg").String(),
 		Width:  obj.Get("width").ToFloat(),
 		Height: obj.Get("height").ToFloat(),
-		Type:   obj.Get("type").String(),
 	}, nil
 }
