@@ -164,8 +164,14 @@ Out:
   in `internal/config/restart_required.go` alongside `compact_mode` and
   `transparent`, so a config reload reports "restart required" instead
   of re-splitting live chats, cancelling queued renders, freeing images
-  and changing the system prompt mid-session. Declined: live toggling
-  (a lot of lifecycle for a setting changed rarely).
+  and changing the system prompt mid-session. Reporting alone doesn't stop
+  live reads: `PromptDat.Config` reads the live config on every prompt
+  rebuild (`internal/agent/coordinator.go`). So the effective value is read
+  once at startup into one place (e.g. resolved in `app` and passed to
+  both the UI feature and the prompt data), and both gates use only that.
+  Tests cover toggling each way across a reload, including a specialist
+  created after it. Declined: live toggling (a lot of lifecycle for a
+  setting changed rarely).
 - **Render states are explicit.** The renderer the chat items call
   returns a state, not `(string, bool)`: pending (show the code block in
   the node, "Rendering diagram…" in the drill-in), unsupported (no Kitty
