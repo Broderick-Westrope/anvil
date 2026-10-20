@@ -1,6 +1,6 @@
 # 0005: Share memory across Anvil instances with the cheapest mechanism that works
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-20
 
 ## Context
