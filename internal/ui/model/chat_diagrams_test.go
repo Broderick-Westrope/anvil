@@ -10,10 +10,11 @@ import (
 )
 
 // newSplitTestUI is newTestUI with a workspace, which message updates read
-// config from.
+// config from, and diagrams turned on.
 func newSplitTestUI() *UI {
 	m := newTestUI()
 	m.com.Workspace = &testWorkspace{cfg: &config.Config{}}
+	m.diagrams = newMermaidFeature(uiHost{m}, &m.caps, m.com)
 	return m
 }
 
@@ -125,4 +126,19 @@ func TestADiagramHeadReturnsToOneNode(t *testing.T) {
 	_, ok = m.chat.MessageItem("m").(*chat.AssistantMessageItem)
 	require.True(t, ok)
 	requireIndexed(t, m.chat)
+}
+
+func TestDiagramsOffKeepsAFinishedMessageInOneNode(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	m.diagrams = nil
+	m.appendSessionMessage(assistantWithTool(twoDiagrams, ""))
+	m.updateSessionMessage(assistantWithTool(twoDiagrams, message.FinishReasonToolUse))
+	require.Equal(t, []string{"m", "tool-1"}, chatIDs(m.chat))
+
+	m.appendSessionMessage(message.Message{ID: "h", Role: message.Assistant, Parts: []message.ContentPart{
+		message.TextContent{Text: twoDiagrams}, message.Finish{Reason: message.FinishReasonEndTurn},
+	}})
+	require.Equal(t, []string{"m", "tool-1", "h", "h:assistant-info"}, chatIDs(m.chat), "history loads unsplit")
 }

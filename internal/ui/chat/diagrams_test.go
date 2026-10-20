@@ -37,12 +37,14 @@ func TestSplitMermaidLeavesNestedFences(t *testing.T) {
 	}
 }
 
-type fakeDiagrams map[string]string
-
-func (f fakeDiagrams) Diagram(source string, _ int) (string, bool) {
-	out, ok := f[source]
-	return out, ok
+// fakeDiagrams answers with a fixed view per source; any other source is
+// pending.
+type fakeDiagrams struct {
+	inline, full map[string]DiagramView
 }
+
+func (f fakeDiagrams) Diagram(source string, _ int) DiagramView     { return f.inline[source] }
+func (f fakeDiagrams) FullDiagram(source string, _ int) DiagramView { return f.full[source] }
 
 func finishedMessage(id string, parts ...message.ContentPart) *message.Message {
 	parts = append(parts, message.Finish{Reason: message.FinishReasonEndTurn})
@@ -75,7 +77,7 @@ func TestNewAssistantMessageItemsSplitsInDocumentOrder(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	text := "Intro\n\n```mermaid\nA\n```\n\nMiddle\n\n```mermaid\nB\n```\n\n```mermaid\nC\n```\n\nOutro\n"
-	items := NewAssistantMessageItems(&sty, finishedMessage("m", message.TextContent{Text: text}))
+	items := NewAssistantMessageItems(&sty, finishedMessage("m", message.TextContent{Text: text}), fakeDiagrams{})
 	require.Equal(t, []string{
 		"m text:Intro",
 		"m#1 diagram:A",
@@ -115,7 +117,7 @@ func TestNewAssistantMessageItemsHead(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			items := NewAssistantMessageItems(&sty, finishedMessage("m", tc.parts...))
+			items := NewAssistantMessageItems(&sty, finishedMessage("m", tc.parts...), fakeDiagrams{})
 			require.Equal(t, tc.want, nodeSummary(items))
 		})
 	}
@@ -137,12 +139,24 @@ func TestNewAssistantMessageItemsKeepsOneNode(t *testing.T) {
 	for name, msg := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			items := NewAssistantMessageItems(&sty, msg)
+			items := NewAssistantMessageItems(&sty, msg, fakeDiagrams{})
 			require.Len(t, items, 1)
 			require.Equal(t, "m", items[0].ID())
 			require.Empty(t, items[0].(SegmentKeyed).SegmentKey(), "an unsplit message")
 		})
 	}
+}
+
+func TestNewAssistantMessageItemsWithoutRendererKeepsOneNode(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	msg := finishedMessage("m", message.TextContent{Text: "Intro\n\n```mermaid\nA\n```\n"})
+	items := NewAssistantMessageItems(&sty, msg, nil)
+	require.Len(t, items, 1, "diagrams turned off")
+	out := ansi.Strip(items[0].Render(80))
+	require.Contains(t, out, "Intro")
+	require.Contains(t, out, "A", "the diagram stays a code block")
 }
 
 func TestSegmentsShowOnlyTheirOwnText(t *testing.T) {
@@ -151,7 +165,7 @@ func TestSegmentsShowOnlyTheirOwnText(t *testing.T) {
 	sty := styles.TokyoNight()
 	reasoning := message.ReasoningContent{Thinking: "hmm", StartedAt: testStartedAt, FinishedAt: testFinishedAt}
 	msg := finishedMessage("m", reasoning, message.TextContent{Text: "Intro\n\n```mermaid\nA\n```\n\nOutro\n"})
-	items := NewAssistantMessageItems(&sty, msg)
+	items := NewAssistantMessageItems(&sty, msg, fakeDiagrams{})
 	require.Len(t, items, 3)
 
 	head := ansi.Strip(items[0].Render(80))
@@ -166,21 +180,63 @@ func TestSegmentsShowOnlyTheirOwnText(t *testing.T) {
 	require.Equal(t, "Outro", items[2].(*AssistantMessageItem).SelectionSource())
 }
 
-//nolint:paralleltest // Mutates the package-level Diagrams hook.
 func TestDiagramItemRender(t *testing.T) {
-	prev := Diagrams
-	t.Cleanup(func() { Diagrams = prev })
+	t.Parallel()
 
+	const src = "flowchart LR\n  A --> B\n"
 	sty := styles.TokyoNight()
-	item := NewDiagramItem(&sty, finishedMessage("m"), 1, "flowchart LR\n  A --> B\n")
+	tests := map[string]struct {
+		view     DiagramView
+		want     []string
+		wantNot  []string
+		maxWidth int
+	}{
+		"pending shows the code block": {
+			view:    DiagramView{State: DiagramPending},
+			want:    []string{"A --> B"},
+			wantNot: []string{"not rendered"},
+		},
+		"unsupported shows the code block without a note": {
+			view:    DiagramView{State: DiagramUnsupported},
+			want:    []string{"A --> B"},
+			wantNot: []string{"not rendered"},
+		},
+		"failed shows the code block and why": {
+			view: DiagramView{State: DiagramFailed, Err: "unsupported diagram type\n\"gantt\""},
+			want: []string{"A --> B", `Diagram not rendered: unsupported diagram type "gantt"`},
+		},
+		"ready shows the image": {
+			view:    DiagramView{State: DiagramReady, Image: "[[IMG1]]\n[[IMG2]]"},
+			want:    []string{"[[IMG1]]", "[[IMG2]]"},
+			wantNot: []string{"A --> B"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			item := NewDiagramItem(&sty, finishedMessage("m"), 1, src, fakeDiagrams{inline: map[string]DiagramView{src: tc.view}})
+			out := ansi.Strip(item.Render(80))
+			for _, want := range tc.want {
+				require.Contains(t, out, want)
+			}
+			for _, not := range tc.wantNot {
+				require.NotContains(t, out, not)
+			}
+		})
+	}
+}
 
-	Diagrams = nil
-	out := ansi.Strip(item.Render(80))
-	require.Contains(t, out, "A --> B", "without images, the code block")
+func TestDiagramItemFailureNoteFitsTheWidth(t *testing.T) {
+	t.Parallel()
 
-	Diagrams = fakeDiagrams{"flowchart LR\n  A --> B\n": "[[IMG1]]\n[[IMG2]]"}
-	out = ansi.Strip(item.Render(80))
-	require.Equal(t, []string{"[[IMG1]]", "[[IMG2]]"}, strings.Fields(out))
+	const src = "A\n"
+	sty := styles.TokyoNight()
+	view := DiagramView{State: DiagramFailed, Err: strings.Repeat("very long reason ", 20)}
+	item := NewDiagramItem(&sty, finishedMessage("m"), 1, src, fakeDiagrams{inline: map[string]DiagramView{src: view}})
+	for line := range strings.SplitSeq(item.Render(40), "\n") {
+		require.LessOrEqual(t, ansi.StringWidth(line), 40, line)
+	}
+	require.Contains(t, ansi.Strip(item.Render(40)), "Diagram not rendered: very")
 }
 
 func TestDiagramItemActions(t *testing.T) {
@@ -188,13 +244,15 @@ func TestDiagramItemActions(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	msg := finishedMessage("m")
-	item := NewDiagramItem(&sty, msg, 2, "A\n")
+	item := NewDiagramItem(&sty, msg, 2, "A\n", fakeDiagrams{})
 	require.Equal(t, "m#2", item.ID())
 	require.True(t, IsSegmentOf(item.ID(), "m"))
 	require.False(t, IsSegmentOf(item.ID(), "m#"), "not a segment of a longer ID")
 	require.Equal(t, "m", item.SourceMessage().ID, "actions on the message work from any node")
 
-	for _, key := range []string{"right", "l", "v"} {
+	handled, _ := item.HandleKeyEvent(keyPress("v"))
+	require.False(t, handled, "v is not a diagram key")
+	for _, key := range []string{"right", "l"} {
 		handled, cmd := item.HandleKeyEvent(keyPress(key))
 		require.True(t, handled, key)
 		require.Equal(t, DiagramOpenMsg{Source: "A\n"}, cmdMsg(t, cmd), key)

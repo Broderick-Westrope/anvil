@@ -13,22 +13,39 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// DiagramRenderer turns Mermaid source into terminal output that stands in
-// for its code block.
-type DiagramRenderer interface {
-	// Diagram returns the rendered diagram for source, at most width
-	// columns wide, or false when it isn't ready (the render is then
-	// queued) or can't be shown, in which case the code block is kept.
-	Diagram(source string, width int) (string, bool)
+// DiagramState is how far a diagram's image has got.
+type DiagramState int
+
+const (
+	// DiagramPending is queued or rendering.
+	DiagramPending DiagramState = iota
+	// DiagramUnsupported can't be shown, because the terminal can't show
+	// images or hasn't reported its cell size.
+	DiagramUnsupported
+	// DiagramFailed was rejected by the renderer; DiagramView.Err says why.
+	DiagramFailed
+	// DiagramReady is in the terminal; DiagramView.Image draws it.
+	DiagramReady
+)
+
+// DiagramView is what a diagram shows at a given width.
+type DiagramView struct {
+	State DiagramState
+	// Image draws the diagram when State is DiagramReady.
+	Image string
+	// Err is why the render failed when State is DiagramFailed.
+	Err string
 }
 
-// Diagrams renders Mermaid diagrams in the chat. Nil leaves them as code
-// blocks.
-//
-// SPIKE: a package-level hook keeps the experiment out of the item
-// constructors. A real implementation would thread it through
-// NewAssistantMessageItem.
-var Diagrams DiagramRenderer
+// DiagramRenderer turns Mermaid source into images for the chat. Asking
+// for a diagram that isn't rendered yet queues it.
+type DiagramRenderer interface {
+	// Diagram is the diagram as shown in the chat, at most width columns
+	// wide.
+	Diagram(source string, width int) DiagramView
+	// FullDiagram is the diagram as shown in its drill-in.
+	FullDiagram(source string, width int) DiagramView
+}
 
 // ClickDrillInHandler is implemented by items whose handled click opens a
 // drill-in.
@@ -43,7 +60,7 @@ type SegmentKeyed interface {
 }
 
 // DiagramOpenMsg asks to show a diagram at full size: in a drill-in, or in
-// the browser when External is set or the terminal can't show images.
+// the browser when External is set.
 type DiagramOpenMsg struct {
 	Source   string
 	External bool
@@ -137,13 +154,14 @@ func splittable(msg *message.Message) bool {
 
 // NewAssistantMessageItems returns the nodes an assistant message is shown
 // as: one item, or, once it has finished with top-level diagrams, text and
-// diagram nodes in document order. The first node is the head: it keeps the
+// diagram nodes in document order. A nil diagrams (diagrams turned off)
+// always gives one item. The first node is the head: it keeps the
 // message's ID, and the others are "<id>#<n>". The head is a text node
 // holding the "Thought for" line and any text before the first diagram,
 // unless it would be empty, in which case the first diagram is the head.
-func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message) []MessageItem {
+func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message, diagrams DiagramRenderer) []MessageItem {
 	head := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
-	if !splittable(msg) {
+	if diagrams == nil || !splittable(msg) {
 		return []MessageItem{head}
 	}
 	segs := splitMermaid(msg.Content().Text)
@@ -175,7 +193,7 @@ func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message) []Messag
 	}
 	for _, s := range segs {
 		if s.mermaid {
-			items = append(items, NewDiagramItem(sty, msg, next, s.text))
+			items = append(items, NewDiagramItem(sty, msg, next, s.text, diagrams))
 		} else {
 			seg := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
 			seg.segment = &assistantSegment{index: next, text: s.text}
@@ -193,18 +211,18 @@ type DiagramItem struct {
 	*list.Versioned
 	*focusableMessageItem
 
-	sty     *styles.Styles
-	message *message.Message
-	index   int
-	source  string
+	sty      *styles.Styles
+	message  *message.Message
+	index    int
+	source   string
+	diagrams DiagramRenderer
 
-	// fallback caches the code-block render, which goes through glamour.
-	fallback      string
-	fallbackWidth int
+	// codeBlock caches the code-block render, which goes through glamour.
+	codeBlock diagramCodeBlock
 }
 
 // NewDiagramItem creates the node for a message's index-th segment.
-func NewDiagramItem(sty *styles.Styles, msg *message.Message, index int, source string) *DiagramItem {
+func NewDiagramItem(sty *styles.Styles, msg *message.Message, index int, source string, diagrams DiagramRenderer) *DiagramItem {
 	v := list.NewVersioned()
 	return &DiagramItem{
 		Versioned:            v,
@@ -213,6 +231,7 @@ func NewDiagramItem(sty *styles.Styles, msg *message.Message, index int, source 
 		message:              msg,
 		index:                index,
 		source:               source,
+		diagrams:             diagrams,
 	}
 }
 
@@ -239,26 +258,44 @@ func (d *DiagramItem) SourceMessage() message.Message { return d.message.Clone()
 // so it is never frozen.
 func (d *DiagramItem) Finished() bool { return false }
 
-// RawRender implements list.RawRenderable.
+// RawRender implements list.RawRenderable: the image once it's ready,
+// otherwise the code block, with a note when the render failed.
 func (d *DiagramItem) RawRender(width int) string {
 	w := cappedMessageWidth(width)
-	if Diagrams != nil {
-		if out, ok := Diagrams.Diagram(d.source, w); ok {
-			return out
-		}
+	view := d.diagrams.Diagram(d.source, w)
+	if view.State == DiagramReady {
+		return view.Image
 	}
-	if d.fallback == "" || d.fallbackWidth != w {
-		renderer := common.MarkdownRenderer(d.sty, w)
+	return d.codeBlock.render(d.sty, d.source, w, view)
+}
+
+// diagramCodeBlock renders a diagram's source as its fallback code block,
+// caching glamour's output per width.
+type diagramCodeBlock struct {
+	out   string
+	width int
+}
+
+// render returns the code block at width, followed by a one-line note when
+// view says the render failed.
+func (c *diagramCodeBlock) render(sty *styles.Styles, source string, width int, view DiagramView) string {
+	if c.out == "" || c.width != width {
+		renderer := common.MarkdownRenderer(sty, width)
 		mu := common.LockMarkdownRenderer(renderer)
 		mu.Lock()
-		out, err := renderer.Render("```mermaid\n" + d.source + "```\n")
+		out, err := renderer.Render("```mermaid\n" + source + "```\n")
 		mu.Unlock()
 		if err != nil {
-			out = d.source
+			out = source
 		}
-		d.fallback, d.fallbackWidth = trimGlamourMargins(out), w
+		c.out, c.width = trimGlamourMargins(out), width
 	}
-	return d.fallback
+	if view.State != DiagramFailed {
+		return c.out
+	}
+	reason := strings.Join(strings.Fields(view.Err), " ")
+	note := ansi.Truncate("Diagram not rendered: "+reason, width, "…")
+	return c.out + "\n" + sty.Header.KeystrokeTip.Render(note)
 }
 
 // Render implements list.Item, with the same focus prefix as assistant
@@ -289,7 +326,7 @@ func (d *DiagramItem) ClickDrillIn() tea.Cmd { return diagramOpenCmd(d.source, f
 // source.
 func (d *DiagramItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	switch key.String() {
-	case "right", "l", "v":
+	case "right", "l":
 		return true, diagramOpenCmd(d.source, false)
 	case "o":
 		return true, diagramOpenCmd(d.source, true)
@@ -301,4 +338,4 @@ func (d *DiagramItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 
 // clearCache implements cacheClearable. The image is looked up on every
 // render, so only the version bump that follows matters.
-func (d *DiagramItem) clearCache() { d.fallback = "" }
+func (d *DiagramItem) clearCache() { d.codeBlock = diagramCodeBlock{} }

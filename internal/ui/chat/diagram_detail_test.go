@@ -9,20 +9,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDiagramDetailItem(t *testing.T) {
+func TestDiagramDetailItemStates(t *testing.T) {
+	t.Parallel()
+
+	const src = "flowchart LR\n  A --> B\n"
+	sty := styles.TokyoNight()
+	tests := map[string]struct {
+		view    DiagramView
+		want    []string
+		wantNot []string
+	}{
+		"pending says it is rendering": {
+			view:    DiagramView{State: DiagramPending},
+			want:    []string{"Rendering diagram"},
+			wantNot: []string{"A --> B"},
+		},
+		"unsupported shows the code block": {
+			view:    DiagramView{State: DiagramUnsupported},
+			want:    []string{"A --> B"},
+			wantNot: []string{"Rendering diagram", "not rendered"},
+		},
+		"failed shows the code block and why": {
+			view:    DiagramView{State: DiagramFailed, Err: "bad syntax"},
+			want:    []string{"A --> B", "Diagram not rendered: bad syntax"},
+			wantNot: []string{"Rendering diagram"},
+		},
+		"ready shows the image": {
+			view:    DiagramView{State: DiagramReady, Image: "[[FULL]]"},
+			want:    []string{"[[FULL]]", "open in browser"},
+			wantNot: []string{"Rendering diagram", "A --> B"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			item := NewDiagramDetailItem(&sty, src, fakeDiagrams{full: map[string]DiagramView{src: tc.view}})
+			out := ansi.Strip(item.RawRender(80))
+			for _, want := range tc.want {
+				require.Contains(t, out, want)
+			}
+			for _, not := range tc.wantNot {
+				require.NotContains(t, out, not)
+			}
+		})
+	}
+}
+
+func TestDiagramDetailItemKeys(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	ready := false
-	item := NewDiagramDetailItem(&sty, "A\n", func(source string, width int) (string, bool) {
-		return "[[FULL " + source[:1] + "]]", ready
-	})
-	require.Contains(t, ansi.Strip(item.RawRender(80)), "Rendering diagram")
-	ready = true
-	out := ansi.Strip(item.RawRender(80))
-	require.Contains(t, out, "[[FULL A]]")
-	require.Contains(t, out, "open in browser")
-
+	item := NewDiagramDetailItem(&sty, "A\n", fakeDiagrams{})
 	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	require.True(t, handled)
 	require.Equal(t, DiagramOpenMsg{Source: "A\n", External: true}, cmdMsg(t, cmd))

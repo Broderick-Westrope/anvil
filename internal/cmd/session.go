@@ -554,7 +554,7 @@ func outputSessionHuman(ctx context.Context, cfg *config.ConfigStore, sess sessi
 
 	first := true
 	for _, msg := range msgs {
-		items := chat.ExtractMessageItems(&styles, msg, toolResults, nil)
+		items := chat.ExtractMessageItems(&styles, msg, toolResults, nil, nil)
 		for _, item := range items {
 			if !first {
 				fmt.Fprintln(&buf)

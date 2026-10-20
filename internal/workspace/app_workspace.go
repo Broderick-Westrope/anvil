@@ -369,6 +369,10 @@ func (w *AppWorkspace) Config() *config.Config {
 	return w.store.Config()
 }
 
+func (w *AppWorkspace) DiagramsEnabled() bool {
+	return w.store.DiagramsEnabled()
+}
+
 func (w *AppWorkspace) WorkingDir() string {
 	return w.store.WorkingDir()
 }

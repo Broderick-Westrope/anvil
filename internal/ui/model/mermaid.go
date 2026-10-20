@@ -28,9 +28,9 @@ import (
 	"github.com/pkg/browser"
 )
 
-// SPIKE: renders ```mermaid fences in finished assistant messages as Kitty
-// graphics, shows one full size in a drill-in, and opens one in the
-// browser. See internal/mermaid.
+// mermaidFeature renders ```mermaid fences in finished assistant messages
+// as Kitty graphics, shows one full size in a drill-in, and opens one in
+// the browser. See internal/mermaid.
 
 // diagramHost is what the mermaid feature needs from UI.
 type diagramHost interface {
@@ -129,6 +129,8 @@ const (
 
 type diagramEntry struct {
 	state      diagramState
+	// err is why the render failed.
+	err        string
 	cols, rows int
 	// bytes is the decoded image held in the image cache once the
 	// diagram is transmitted.
@@ -208,13 +210,13 @@ func newMermaidFeature(host diagramHost, caps *common.Capabilities, com *common.
 	}
 }
 
-// Diagram implements chat.DiagramRenderer for diagrams in the chat.
-func (f *mermaidFeature) Diagram(source string, width int) (string, bool) {
+// Diagram implements chat.DiagramRenderer.
+func (f *mermaidFeature) Diagram(source string, width int) chat.DiagramView {
 	return f.diagram(source, width, diagramInline)
 }
 
-// FullDiagram renders a diagram for the drill-in.
-func (f *mermaidFeature) FullDiagram(source string, width int) (string, bool) {
+// FullDiagram implements chat.DiagramRenderer.
+func (f *mermaidFeature) FullDiagram(source string, width int) chat.DiagramView {
 	return f.diagram(source, width, diagramFull)
 }
 
@@ -268,13 +270,10 @@ func sourceHash(source string, theme mermaid.Theme) uint64 {
 
 // diagram runs during rendering, so it only touches the feature's own state
 // and queues work.
-func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) (string, bool) {
-	if !f.caps.SupportsKittyGraphics() {
-		return "", false
-	}
+func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) chat.DiagramView {
 	cellW, cellH := f.caps.CellSize()
-	if cellW == 0 || cellH == 0 || width <= 0 {
-		return "", false
+	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
+		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
 	theme := f.theme()
 	key := diagramKey{hash: sourceHash(source, theme), width: width, kind: kind}
@@ -285,11 +284,14 @@ func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) (st
 	f.clock++
 	if e, ok := f.entries[key]; ok {
 		e.lastUsed = f.clock
-		if e.state != diagramReady {
-			return "", false
+		switch e.state {
+		case diagramPending:
+			return chat.DiagramView{State: chat.DiagramPending}
+		case diagramFailed:
+			return chat.DiagramView{State: chat.DiagramFailed, Err: e.err}
 		}
 		if out := fimage.EncodingKitty.Render(key.id(), e.cols, e.rows); out != "" {
-			return out, true
+			return chat.DiagramView{State: chat.DiagramReady, Image: out}
 		}
 		// The image cache was reset (e.g. on session switch) or the
 		// entry was evicted: render it again.
@@ -299,7 +301,7 @@ func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) (st
 	if f.enqueue(req) {
 		f.entries[key] = &diagramEntry{state: diagramPending, lastUsed: f.clock}
 	}
-	return "", false
+	return chat.DiagramView{State: chat.DiagramPending}
 }
 
 // enqueue hands req to the worker, starting it if needed, and reports false
@@ -479,13 +481,16 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		return tea.Batch(f.listen, openInBrowser(msg.path)), true
 	case diagramReadyMsg:
-		f.mu.Lock()
-		defer f.mu.Unlock()
 		if msg.err != nil {
 			slog.Warn("Failed to render mermaid diagram", "err", msg.err)
-			f.entries[msg.key] = &diagramEntry{state: diagramFailed}
+			f.mu.Lock()
+			f.entries[msg.key] = &diagramEntry{state: diagramFailed, err: msg.err.Error()}
+			f.mu.Unlock()
+			f.host.InvalidateChat()
 			return f.listen, true
 		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		e := f.entries[msg.key]
 		if e == nil || msg.key.width != f.widths[msg.key.kind] {
 			// Resized while it rendered; it would be evicted at once.
@@ -514,10 +519,9 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	return nil, false
 }
 
-// open shows a diagram in a drill-in, or in the browser when asked to or
-// when the terminal can't show images.
+// open shows a diagram in a drill-in, or in the browser when asked to.
 func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
-	if msg.External || !f.caps.SupportsKittyGraphics() {
+	if msg.External {
 		theme := f.theme()
 		req := diagramRequest{key: diagramKey{hash: sourceHash(msg.Source, theme)}, source: msg.Source, theme: theme, export: true}
 		if !f.enqueue(req) {
@@ -526,7 +530,7 @@ func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 		return util.ReportInfo("Opening diagram in browser")
 	}
 	c := NewChat(f.com)
-	c.SetMessages(chat.NewDiagramDetailItem(f.com.Styles, msg.Source, f.FullDiagram))
+	c.SetMessages(chat.NewDiagramDetailItem(f.com.Styles, msg.Source, f))
 	c.SelectLast()
 	f.host.PushDrillIn(c, "Diagram")
 	var cmd tea.Cmd

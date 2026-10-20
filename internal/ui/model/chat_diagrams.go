@@ -11,8 +11,8 @@ import (
 // split around its diagrams (see chat.NewAssistantMessageItems). It does
 // nothing while the split is unchanged, so streaming updates and repeat
 // updates of a finished message keep their items. It returns whether it
-// replaced any.
-func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message) bool {
+// replaced any. diagrams is nil when diagrams are turned off.
+func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message, diagrams chat.DiagramRenderer) bool {
 	idx, ok := m.idInxMap[msg.ID]
 	if !ok {
 		return false
@@ -31,7 +31,7 @@ func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message) b
 		n++
 	}
 
-	want := chat.NewAssistantMessageItems(sty, msg)
+	want := chat.NewAssistantMessageItems(sty, msg, diagrams)
 	if sameSegments(m.list, idx, n, want) {
 		return false
 	}

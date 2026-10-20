@@ -15,6 +15,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
 	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
 )
@@ -74,8 +75,7 @@ func waitReady(t *testing.T, f *mermaidFeature) diagramReadyMsg {
 // command the shown message produced.
 func showDiagram(t *testing.T, f *mermaidFeature, src string, width int) (diagramReadyMsg, tea.Cmd) {
 	t.Helper()
-	_, ok := f.Diagram(src, width)
-	require.False(t, ok, "first request only queues the render")
+	require.Equal(t, chat.DiagramPending, f.Diagram(src, width).State, "first request only queues the render")
 	ready := waitReady(t, f)
 	_, handled := f.HandleMsg(ready)
 	require.True(t, handled)
@@ -114,10 +114,8 @@ func TestMermaidFeatureRendersKittyPlaceholders(t *testing.T) {
 	f := newTestMermaidFeature(t, host, kittyCaps())
 	src := "flowchart LR\n  A[Prompt] --> B[Pele] --> C[Kitty]\n"
 
-	_, ok := f.Diagram(src, 80)
-	require.False(t, ok, "first request only queues the render")
-	_, ok = f.Diagram(src, 80)
-	require.False(t, ok, "a pending render isn't queued twice")
+	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State, "first request only queues the render")
+	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State, "a pending render isn't queued twice")
 
 	ready := waitReady(t, f)
 	require.LessOrEqual(t, ready.cols, 80)
@@ -127,8 +125,7 @@ func TestMermaidFeatureRendersKittyPlaceholders(t *testing.T) {
 
 	_, handled := f.HandleMsg(ready)
 	require.True(t, handled)
-	_, ok = f.Diagram(src, 80)
-	require.False(t, ok, "not shown until the image is transmitted")
+	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State, "not shown until the image is transmitted")
 
 	cs := fimage.CellSize{Width: ready.cellW, Height: ready.cellH}
 	fimage.EncodingKitty.Transmit(ready.key.id(), ready.img, cs, ready.cols, ready.rows, false)()
@@ -136,18 +133,38 @@ func TestMermaidFeatureRendersKittyPlaceholders(t *testing.T) {
 	require.True(t, handled)
 	require.Equal(t, 1, host.invalidations)
 
-	out, ok := f.Diagram(src, 80)
-	require.True(t, ok)
-	require.Contains(t, out, string(kitty.Placeholder))
+	view := f.Diagram(src, 80)
+	require.Equal(t, chat.DiagramReady, view.State)
+	require.Contains(t, view.Image, string(kitty.Placeholder))
 }
 
 func TestMermaidFeatureWithoutKittyKeepsCodeBlock(t *testing.T) {
 	t.Parallel()
 
 	f := newTestMermaidFeature(t, &fakeDiagramHost{}, &common.Capabilities{PixelX: 1000, PixelY: 800, Columns: 100, Rows: 40})
-	_, ok := f.Diagram("flowchart LR\n A --> B\n", 80)
-	require.False(t, ok)
+	require.Equal(t, chat.DiagramUnsupported, f.Diagram("flowchart LR\n A --> B\n", 80).State)
+	require.Equal(t, chat.DiagramUnsupported, f.FullDiagram("flowchart LR\n A --> B\n", 80).State)
 	require.Empty(t, f.entries, "nothing is queued")
+}
+
+func TestMermaidFeatureReportsFailures(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	const src = "notADiagram at all\n"
+	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State)
+	failed, ok := waitResult(t, f).(diagramReadyMsg)
+	require.True(t, ok)
+	require.Error(t, failed.err)
+
+	_, handled := f.HandleMsg(failed)
+	require.True(t, handled)
+	require.Equal(t, 1, host.invalidations, "the chat shows the failure at once")
+	view := f.Diagram(src, 80)
+	require.Equal(t, chat.DiagramFailed, view.State)
+	require.Equal(t, failed.err.Error(), view.Err)
+	require.Equal(t, chat.DiagramPending, f.FullDiagram(src, 80).State, "each kind renders on its own")
 }
 
 func TestMermaidFeatureReleasesEnginesWhenIdle(t *testing.T) {
@@ -197,8 +214,7 @@ func TestMermaidFeatureEvictsLeastRecentlyDrawnOverBudget(t *testing.T) {
 	second, _ := showDiagram(t, f, srcs[1], 80)
 	// Room for two: drawing the first again makes the second the oldest.
 	f.cacheBudget = f.entries[first.key].bytes + f.entries[second.key].bytes
-	_, ok := f.Diagram(srcs[0], 80)
-	require.True(t, ok)
+	require.Equal(t, chat.DiagramReady, f.Diagram(srcs[0], 80).State)
 
 	third, evict := showDiagram(t, f, srcs[2], 80)
 	require.Len(t, rawMsgs(evict), 1)
@@ -206,9 +222,9 @@ func TestMermaidFeatureEvictsLeastRecentlyDrawnOverBudget(t *testing.T) {
 	require.NotContains(t, f.entries, second.key)
 	require.Contains(t, f.entries, third.key)
 
-	out, ok := f.Diagram(srcs[1], 80)
-	require.False(t, ok, "an evicted diagram renders again")
-	require.Empty(t, out)
+	view := f.Diagram(srcs[1], 80)
+	require.Equal(t, chat.DiagramPending, view.State, "an evicted diagram renders again")
+	require.Empty(t, view.Image)
 	require.True(t, strings.HasPrefix(waitReady(t, f).key.id(), "mermaid-"))
 }
 
@@ -278,14 +294,34 @@ func TestMermaidFeatureOpensDrillIn(t *testing.T) {
 	require.Nil(t, f.drill)
 }
 
+func TestMermaidFeatureWithoutKittyOpensTheCodeBlock(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	f := newTestMermaidFeature(t, host, &common.Capabilities{})
+	cmd, handled := f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n"})
+	require.True(t, handled)
+	require.Nil(t, cmd, "nothing opens the browser")
+	require.Len(t, host.drills, 1)
+	item, ok := host.drills[0].MessageItems()[0].(*chat.DiagramDetailItem)
+	require.True(t, ok)
+	out := ansi.Strip(item.RawRender(80))
+	require.Contains(t, out, "A --> B")
+	require.NotContains(t, out, "Rendering diagram")
+	select {
+	case msg := <-f.results:
+		t.Fatalf("the worker was asked for something: %T", msg)
+	default:
+	}
+}
+
 func TestMermaidFeatureExportsForTheBrowser(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		caps     *common.Capabilities
-		external bool
+		caps *common.Capabilities
 	}{
-		"asked to":             {caps: kittyCaps(), external: true},
+		"with kitty":           {caps: kittyCaps()},
 		"terminal lacks kitty": {caps: &common.Capabilities{}},
 	}
 	for name, tc := range tests {
@@ -294,7 +330,7 @@ func TestMermaidFeatureExportsForTheBrowser(t *testing.T) {
 
 			host := &fakeDiagramHost{}
 			f := newTestMermaidFeature(t, host, tc.caps)
-			cmd, handled := f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n", External: tc.external})
+			cmd, handled := f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n", External: true})
 			require.True(t, handled)
 			require.NotNil(t, cmd)
 			require.Empty(t, host.drills)
