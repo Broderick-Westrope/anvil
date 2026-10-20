@@ -609,3 +609,18 @@ func TestDiagramExportDirIsPerUser(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(cache, "anvil", "diagrams"), diagramExportDir())
 }
+
+func TestFileURL(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct{ path, want string }{
+		"unix":    {path: "/home/me/a b.html", want: "file:///home/me/a%20b.html"},
+		"windows": {path: `C:\Users\me\a.html`, want: "file:///C:/Users/me/a.html"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, fileURL(tc.path))
+		})
+	}
+}

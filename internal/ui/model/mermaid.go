@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -646,11 +647,21 @@ func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 
 func openInBrowser(path string) tea.Cmd {
 	return func() tea.Msg {
-		if err := browser.OpenURL("file://" + path); err != nil {
+		if err := browser.OpenURL(fileURL(path)); err != nil {
 			return util.NewErrorMsg(fmt.Errorf("open diagram: %w", err))
 		}
 		return util.NewInfoMsg("Opened diagram in browser")
 	}
+}
+
+// fileURL is the file:// URL for path, which may be a Windows path with a
+// drive letter and backslashes.
+func fileURL(path string) string {
+	slashed := strings.ReplaceAll(path, `\`, "/")
+	if !strings.HasPrefix(slashed, "/") {
+		slashed = "/" + slashed
+	}
+	return (&url.URL{Scheme: "file", Path: slashed}).String()
 }
 
 func (f *mermaidFeature) tmux() bool {
