@@ -72,10 +72,11 @@ var (
 )
 
 var (
-	shaPattern    = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
+	shaPattern   = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	gitSHARecord = regexp.MustCompile(`(?m)^\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,40})\]` +
+		`|\b([0-9a-f]{7,40})\.\.\.?([0-9a-f]{7,40})\b` +
+		`|^HEAD is now at ([0-9a-f]{7,40})\b`)
 	prURLPattern  = regexp.MustCompile(`https://[^\s"')]+/pull/\d+`)
-	hasDigit      = regexp.MustCompile(`[0-9]`)
-	hasHexLetter  = regexp.MustCompile(`[a-f]`)
 	permissionErr = "Permission denied"
 	// failedOutput matches the lines bash adds to a failed command's
 	// output, for results recorded before bash stored exit codes.
@@ -214,11 +215,17 @@ func status(res message.ToolResult, hasResult bool) message.LedgerStatus {
 	}
 }
 
+// refs returns the commit SHAs git printed in its own records (a commit
+// line, a push or fetch range, a reset), and the pull request URLs gh
+// printed. Other hex strings in the output are left out, since a compound
+// command can print anything.
 func refs(output string) []string {
 	var out []string
-	for _, sha := range shaPattern.FindAllString(output, -1) {
-		if hasDigit.MatchString(sha) && hasHexLetter.MatchString(sha) {
-			out = append(out, sha)
+	for _, m := range gitSHARecord.FindAllStringSubmatch(output, -1) {
+		for _, sha := range m[1:] {
+			if sha != "" {
+				out = append(out, sha)
+			}
 		}
 	}
 	out = append(out, prURLPattern.FindAllString(output, -1)...)
@@ -439,7 +446,7 @@ func redactKeeping(s string, keep []string) string {
 	placeholders := make([]string, 0, 2*len(keep))
 	for i, ref := range keep {
 		placeholder := fmt.Sprintf("\x00%d\x00", i)
-		s = strings.ReplaceAll(s, ref, placeholder)
+		s = regexp.MustCompile(`\b`+ref+`\b`).ReplaceAllLiteralString(s, placeholder)
 		placeholders = append(placeholders, placeholder, ref)
 	}
 	return strings.NewReplacer(placeholders...).Replace(redact(s))

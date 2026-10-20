@@ -445,3 +445,39 @@ func TestRedaction_KeepsLedgerCommitSHAs(t *testing.T) {
 	require.Contains(t, stored, sha)
 	require.NotContains(t, stored, other)
 }
+
+func TestLedger_TakesSHAsOnlyFromGitRecords(t *testing.T) {
+	t.Parallel()
+
+	token := "0123456789abcdef0123456789abcdef01234567"
+	rng := []message.Message{
+		msg("a1", message.Assistant, call("c", "bash", map[string]string{"command": "git commit -m fix && cat token.txt"})),
+		msg("t1", message.Tool, result("c", "[main 1a2b3c4] fix\n 1 file changed\n"+token, false)),
+	}
+
+	ledger := branchsummary.Ledger(rng, noChildren)
+	prompt := branchsummary.Prompt(rng, ledger, "", 10_000)
+
+	require.Equal(t, []string{"1a2b3c4"}, ledger.Events[0].Refs)
+	require.NotContains(t, prompt, token)
+}
+
+func TestLedger_ReadsPushAndResetSHAs(t *testing.T) {
+	t.Parallel()
+
+	rng := []message.Message{
+		msg("a1", message.Assistant,
+			call("p", "bash", map[string]string{"command": "git push"}),
+			call("r", "bash", map[string]string{"command": "git reset --hard origin/main"}),
+		),
+		msg("t1", message.Tool,
+			result("p", "To github.com:acme/app.git\n   1a2b3c4..5d6e7f8  main -> main", false),
+			result("r", "HEAD is now at 9a8b7c6 fix", false),
+		),
+	}
+
+	got := branchsummary.Ledger(rng, noChildren)
+
+	require.Equal(t, []string{"1a2b3c4", "5d6e7f8"}, got.Events[0].Refs)
+	require.Equal(t, []string{"9a8b7c6"}, got.Events[1].Refs)
+}
