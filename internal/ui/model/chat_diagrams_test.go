@@ -74,7 +74,7 @@ func TestUpdateSplitsAFinishedMessageAroundItsDiagrams(t *testing.T) {
 	requireIndexed(t, m.chat)
 	diagram, ok := m.chat.MessageItem("m#1").(*chat.DiagramItem)
 	require.True(t, ok)
-	require.Equal(t, "A\n", diagram.Source())
+	require.Equal(t, "diagram:A\n", diagram.SegmentKey())
 
 	// A repeat update of the finished message keeps the same nodes.
 	before := m.chat.MessageItems()

@@ -205,7 +205,7 @@ func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.
 
 // Diagram implements chat.DiagramRenderer.
 func (f *mermaidFeature) Diagram(source string, width int) chat.DiagramView {
-	return f.diagram(source, width, diagramInline)
+	return f.lookup(source, width, diagramInline, true)
 }
 
 // FullDiagram implements chat.DiagramRenderer. When the chat's image of the
@@ -216,7 +216,7 @@ func (f *mermaidFeature) FullDiagram(source string, width int) chat.DiagramView 
 	if inline != "" && !squeezed {
 		return chat.DiagramView{State: chat.DiagramReady, Image: inline}
 	}
-	view := f.diagram(source, width, diagramFull)
+	view := f.lookup(source, width, diagramFull, true)
 	if view.State == chat.DiagramPending {
 		view.Image = inline
 	}
@@ -314,12 +314,6 @@ func (f *mermaidFeature) imageHash(source, bg string) uint64 {
 	return h.Sum64()
 }
 
-// diagram runs during rendering, so it only touches the feature's own state
-// and queues work.
-func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) chat.DiagramView {
-	return f.lookup(source, width, kind, true)
-}
-
 // Prefetch implements chat.DiagramRenderer. It does what Diagram does for
 // an image the chat will draw soon, without building its placeholders.
 func (f *mermaidFeature) Prefetch(source string, width int) {
@@ -328,7 +322,8 @@ func (f *mermaidFeature) Prefetch(source string, width int) {
 
 // lookup finds source's image at width, queueing its render if there is
 // none, and marks it drawn for eviction. Only with draw does it build the
-// placeholders that show it.
+// placeholders that show it. It runs during rendering, so it only touches
+// the feature's own state and queues work.
 func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw bool) chat.DiagramView {
 	cellW, cellH := f.caps.CellSize()
 	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {

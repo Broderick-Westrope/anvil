@@ -103,7 +103,7 @@ func (f *mermaidFeature) work() {
 			if engines == nil {
 				pele, err := mermaid.NewRenderer()
 				if err != nil {
-					f.results <- f.failure(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
+					f.results <- requestFailed(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
 					continue
 				}
 				engines = &diagramEngines{pele: pele}
@@ -134,7 +134,7 @@ func (f *mermaidFeature) runRequest(e *diagramEngines, req diagramRequest) (msg 
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Mermaid renderer panicked", "panic", r)
-			msg, ok = f.failure(req, fmt.Errorf("diagram renderer crashed: %v", r)), false
+			msg, ok = requestFailed(req, fmt.Errorf("diagram renderer crashed: %v", r)), false
 		}
 	}()
 	if req.export {
@@ -143,7 +143,8 @@ func (f *mermaidFeature) runRequest(e *diagramEngines, req diagramRequest) (msg 
 	return renderDiagram(e, req), true
 }
 
-func (f *mermaidFeature) failure(req diagramRequest, err error) tea.Msg {
+// requestFailed is the result for req when it fails with err.
+func requestFailed(req diagramRequest, err error) tea.Msg {
 	if req.export {
 		return diagramExportedMsg{err: err}
 	}
