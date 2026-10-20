@@ -602,3 +602,21 @@ func TestChatReportsTheDiagramsInViewAsItScrolls(t *testing.T) {
 	c.prefetchNearby()
 	require.Empty(t, diagrams.inView, "nothing in view, so nothing is held")
 }
+
+func TestChatReportsADiagramAtTheBottomOfTheView(t *testing.T) {
+	t.Parallel()
+
+	com := common.DefaultCommon(nil)
+	diagrams := &recordingDiagrams{}
+	msg := &message.Message{ID: "m", Role: message.Assistant}
+	c := NewChat(com)
+	c.SetSize(80, 10)
+	c.SetDiagrams(diagrams)
+	c.SetMessages(
+		chat.NewAssistantMessageItem(com.Styles, finishedText("a", strings.Repeat("filler\n\n", 8))),
+		chat.NewDiagramItem(com.Styles, msg, 1, "last\n", diagrams),
+	)
+	c.ScrollToBottom()
+	c.prefetchNearby()
+	require.Equal(t, []string{"last\n"}, diagrams.inView, "the last item on screen counts")
+}
