@@ -584,3 +584,13 @@ func TestLedger_CompoundCommandOutcomeIsUnknown(t *testing.T) {
 		})
 	}
 }
+
+func TestFinalize_RedactsFileListsBeforeCutting(t *testing.T) {
+	t.Parallel()
+
+	path := "/r/" + strings.Repeat("d", 280) + `/TOKEN="hunter2hunter2"`
+
+	got := branchsummary.Finalize("done", message.BranchLedger{Modified: []string{path}})
+
+	require.NotContains(t, got, "hunter2")
+}

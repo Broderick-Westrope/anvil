@@ -429,3 +429,22 @@ func TestBranchSummary_HoldsMCPTogglesWhileRunning(t *testing.T) {
 	require.Len(t, infos, 1)
 	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
 }
+
+func TestBranchSummary_HoldsModelAndReasoningChangesWhileRunning(t *testing.T) {
+	t.Parallel()
+	actions := map[string]dialog.Action{
+		"model":     dialog.ActionSelectModel{},
+		"reasoning": dialog.ActionSelectReasoningEffort{Effort: "high"},
+	}
+	for name, action := range actions {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+			b.ws.running["sess-1"] = true
+
+			_, claimed := b.f.HandleAction(action)
+
+			require.True(t, claimed, "the change writes metadata under the summary's target")
+		})
+	}
+}

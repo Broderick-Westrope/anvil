@@ -299,7 +299,7 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 	writeLedger(&ledgerText, ledger)
 	// The ledger may take at most half the budget, so the conversation
 	// always gets the rest.
-	sb.WriteString(truncate(ledgerText.String(), budget*charsPerToken/2))
+	sb.WriteString(truncate(clean(ledgerText.String()), budget*charsPerToken/2))
 	if focus = strings.TrimSpace(focus); focus != "" {
 		fmt.Fprintf(&sb, "<focus>\n%s\n</focus>\n\n", truncate(clean(focus), maxFocusChars))
 	}
@@ -495,7 +495,7 @@ func writeTagged(sb *strings.Builder, tag string, items []string) {
 			fmt.Fprintf(sb, "+%d more\n", len(items)-i)
 			break
 		}
-		sb.WriteString(redact(truncate(item, maxEntryChars)) + "\n")
+		sb.WriteString(truncate(redact(item), maxEntryChars) + "\n")
 	}
 	fmt.Fprintf(sb, "</%s>", tag)
 }
