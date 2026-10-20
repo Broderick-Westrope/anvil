@@ -115,6 +115,9 @@ type Chat struct {
 	// bottom on new messages.
 	follow bool
 
+	// prefetch starts slow work for items near the view on every draw.
+	prefetch bool
+
 	// drawCache memoizes the decoded form of the last list.Render output so
 	// repeat frames with byte-identical content skip the per-cell ANSI
 	// reparse that uv.StyledString.Draw performs every call. See F9
@@ -196,10 +199,17 @@ func (m *Chat) Draw(scr uv.Screen, area uv.Rectangle) {
 	drawCachedBuffer(scr, area, m.drawCache.buf)
 }
 
+// SetPrefetch sets whether drawing starts the slow work for items near the
+// view (see prefetchNearby). Only chats that can hold such items need it.
+func (m *Chat) SetPrefetch(on bool) { m.prefetch = on }
+
 // prefetchNearby starts the slow work, such as rendering diagrams, for
 // items within a screen above or below the view, so they are ready when
 // scrolled to.
 func (m *Chat) prefetchNearby() {
+	if !m.prefetch {
+		return
+	}
 	for _, item := range m.list.NearbyItems(m.list.Height()) {
 		if p, ok := item.(chat.Prefetcher); ok {
 			p.Prefetch(m.list.Width())

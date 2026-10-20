@@ -484,6 +484,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		diagrams := newMermaidFeature(uiHost{ui}, &ui.caps, com)
 		ui.features.register(diagrams)
 		ui.diagrams = diagrams
+		ui.chat.SetPrefetch(true)
 	}
 
 	// Initialize slash-command autocomplete.

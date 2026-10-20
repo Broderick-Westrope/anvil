@@ -278,6 +278,7 @@ func TestChatDrawAsksForDiagramsWithinAScreenOfTheView(t *testing.T) {
 	far := chat.NewDiagramItem(com.Styles, msg, 2, "far\n", diagrams)
 	c := NewChat(com)
 	c.SetSize(80, 10)
+	c.SetPrefetch(true)
 	c.SetMessages(filler("a"), filler("b"), near, filler("c"), filler("d"), filler("e"), far)
 	c.ScrollToTop()
 	// Sizing measured the items at the bottom; only count what Draw asks.
@@ -287,4 +288,43 @@ func TestChatDrawAsksForDiagramsWithinAScreenOfTheView(t *testing.T) {
 	c.Draw(scr, scr.Bounds())
 	require.Contains(t, diagrams.asked, "near\n", "within a screen below the view")
 	require.NotContains(t, diagrams.asked, "far\n", "further away")
+}
+
+// countingDiagrams counts the diagrams asked for.
+type countingDiagrams struct{ asked int }
+
+func (c *countingDiagrams) Diagram(string, int) chat.DiagramView {
+	c.asked++
+	return chat.DiagramView{State: chat.DiagramPending}
+}
+func (c *countingDiagrams) FullDiagram(string, int) chat.DiagramView { return c.Diagram("", 0) }
+
+func TestChatPrefetchesDiagramsBelowTheViewOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
+
+	for name, on := range map[string]bool{"on": true, "off": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			com := common.DefaultCommon(nil)
+			diagrams := &countingDiagrams{}
+			msg := &message.Message{ID: "m", Role: message.Assistant}
+			c := NewChat(com)
+			c.SetSize(80, 5)
+			c.SetPrefetch(on)
+			c.SetMessages(
+				chat.NewAssistantMessageItem(com.Styles, finishedText("m", strings.Repeat("line\n\n", 5))),
+				chat.NewDiagramItem(com.Styles, msg, 1, "A\n", diagrams),
+			)
+			c.ScrollToTop()
+			diagrams.asked = 0 // Only count what prefetching asks.
+			c.prefetchNearby()
+			require.Equal(t, on, diagrams.asked > 0)
+		})
+	}
+}
+
+func finishedText(id, text string) *message.Message {
+	return &message.Message{ID: id, Role: message.Assistant, Parts: []message.ContentPart{
+		message.TextContent{Text: text}, message.Finish{Reason: message.FinishReasonEndTurn},
+	}}
 }
