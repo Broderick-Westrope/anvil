@@ -17,8 +17,8 @@ import (
 // BranchSummaryPickerID is the identifier for the branch summary picker.
 const BranchSummaryPickerID = "branch_summary_picker"
 
-// BranchSummaryOffer is a rewind that could be summarized.
-type BranchSummaryOffer struct {
+// RewindOffer is a rewind that could be summarized.
+type RewindOffer struct {
 	SessionID  string
 	FromLeafID string
 	TargetID   string
@@ -44,7 +44,7 @@ type ActionBranchSummaryPick struct {
 // summarizer; anything typed is focus text for it.
 type BranchSummaryPicker struct {
 	com      *common.Common
-	offer    BranchSummaryOffer
+	offer    RewindOffer
 	selected int // 0 is "No summary"; i is offer.Agents[i-1].
 	input    textinput.Model
 	help     help.Model
@@ -57,7 +57,7 @@ type BranchSummaryPicker struct {
 var _ Dialog = (*BranchSummaryPicker)(nil)
 
 // NewBranchSummaryPicker creates the picker for offer.
-func NewBranchSummaryPicker(com *common.Common, offer BranchSummaryOffer) *BranchSummaryPicker {
+func NewBranchSummaryPicker(com *common.Common, offer RewindOffer) *BranchSummaryPicker {
 	p := &BranchSummaryPicker{com: com, offer: offer, selected: 1}
 	if i := slices.Index(offer.Agents, offer.DefaultAgent); i >= 0 {
 		p.selected = i + 1
@@ -82,7 +82,7 @@ func NewBranchSummaryPicker(com *common.Common, offer BranchSummaryOffer) *Branc
 }
 
 // Offer returns the rewind the picker is for.
-func (p *BranchSummaryPicker) Offer() BranchSummaryOffer { return p.offer }
+func (p *BranchSummaryPicker) Offer() RewindOffer { return p.offer }
 
 // ID implements [Dialog].
 func (*BranchSummaryPicker) ID() string { return BranchSummaryPickerID }

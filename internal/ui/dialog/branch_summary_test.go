@@ -11,7 +11,7 @@ import (
 
 func newTestBranchSummaryPicker(defaultAgent string) *BranchSummaryPicker {
 	s := styles.TokyoNight()
-	return NewBranchSummaryPicker(&common.Common{Styles: &s}, BranchSummaryOffer{
+	return NewBranchSummaryPicker(&common.Common{Styles: &s}, RewindOffer{
 		SessionID: "s", FromLeafID: "from", TargetID: "target",
 		Agents: []string{"branch-summarizer", "pr-summarizer"}, DefaultAgent: defaultAgent,
 	})

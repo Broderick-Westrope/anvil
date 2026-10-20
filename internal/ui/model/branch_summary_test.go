@@ -473,3 +473,25 @@ func TestBranchSummary_LeavesModelChangesToUpstream(t *testing.T) {
 
 	require.False(t, claimed, "the OAuth and API key dialogs finish with this action")
 }
+
+func TestBranchSummary_NothingToSummarizeSaysSo(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	infos := b.event(branchsummaries.StateNothing, "", nil)
+
+	require.Len(t, infos, 1)
+	require.Contains(t, infos[0].Msg, "nothing to summarize")
+}
+
+func TestBranchSummary_ANewRewindClearsAFailure(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+	b.event(branchsummaries.StateFailed, "", errors.New("boom"))
+
+	b.rewind("a2", "a1")
+
+	require.Nil(t, b.f.Panel())
+}

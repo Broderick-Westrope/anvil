@@ -112,7 +112,7 @@ func (b *BranchSummaryMessageItem) render(width int) string {
 	var body []string
 	// The summary is model output: strip any escape sequences before it
 	// reaches the terminal.
-	for line := range strings.SplitSeq(strings.TrimSpace(ansi.Strip(b.summary.Summary)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(stripControls(ansi.Strip(b.summary.Summary))), "\n") {
 		if strings.TrimSpace(line) != "" {
 			body = append(body, line)
 		}
@@ -162,4 +162,15 @@ func (b *BranchSummaryMessageItem) Render(width int) string {
 		b.setCachedPrefixedRender(out, width, key)
 	}
 	return out
+}
+
+// stripControls drops C0 control characters other than newline and tab,
+// which a terminal would act on (carriage returns, backspaces, bells).
+func stripControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }

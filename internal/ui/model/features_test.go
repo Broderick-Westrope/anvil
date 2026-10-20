@@ -451,3 +451,13 @@ func TestNavigationGuardRefusesAnMCPToggle(t *testing.T) {
 	require.False(t, u.enabledLazyMCPs["linear"], "a toggle would move the leaf")
 	require.Contains(t, cmdMsgs(cmd), tea.Msg(util.NewWarnMsg("guarded")))
 }
+
+func TestNavigationGuardHoldsMetadataEntries(t *testing.T) {
+	t.Parallel()
+	u, g := newGuardTestUI(t)
+
+	require.False(t, u.canWriteLeafMetadata(), "a model or reasoning entry would move the leaf")
+
+	g.armed = false
+	require.True(t, u.canWriteLeafMetadata())
+}

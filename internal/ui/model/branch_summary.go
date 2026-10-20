@@ -53,7 +53,7 @@ type branchSummaryRun struct {
 }
 
 // branchSummaryOfferMsg says a rewind left something worth summarizing.
-type branchSummaryOfferMsg struct{ offer dialog.BranchSummaryOffer }
+type branchSummaryOfferMsg struct{ offer dialog.RewindOffer }
 
 // branchSummaryDiscardedMsg reports a discard.
 type branchSummaryDiscardedMsg struct{ err error }
@@ -88,7 +88,7 @@ type branchSummaryFeature struct {
 	runs map[string]*branchSummaryRun
 	// pending is the latest rewind waiting for its offer. An offer for any
 	// other rewind is stale and dropped.
-	pending dialog.BranchSummaryOffer
+	pending dialog.RewindOffer
 }
 
 func newBranchSummaryFeature(host featureHost, com *common.Common, ws branchSummaryWorkspace) *branchSummaryFeature {
@@ -152,7 +152,7 @@ func (b *branchSummaryFeature) Observe(msg tea.Msg) tea.Cmd {
 			}
 		}
 		if isSentMessage(msg.Payload) && msg.Payload.SessionID == b.pending.SessionID {
-			b.pending = dialog.BranchSummaryOffer{}
+			b.pending = dialog.RewindOffer{}
 		}
 	}
 	return nil
@@ -163,13 +163,14 @@ func (b *branchSummaryFeature) observeRewind(done navigateTreeDoneMsg) tea.Cmd {
 		return nil
 	}
 	sessionID := done.session.ID
-	b.pending = dialog.BranchSummaryOffer{}
+	b.pending = dialog.RewindOffer{}
 	if done.restore != nil {
 		return b.drop(sessionID)
 	}
 	// A stored summary the user rewinds away from is part of the branch
-	// left behind now; the next summary carries it forward.
-	if r := b.runs[sessionID]; r != nil && r.state == branchsummaries.StateStored {
+	// left behind now; the next summary carries it forward. A failure
+	// belongs to the rewind it was for.
+	if r := b.runs[sessionID]; r != nil && r.state != branchsummaries.StateRunning {
 		delete(b.runs, sessionID)
 	}
 	if done.snapshot == nil || done.snapshot.leafID == "" || done.snapshot.leafID == done.leafID {
@@ -178,7 +179,7 @@ func (b *branchSummaryFeature) observeRewind(done navigateTreeDoneMsg) tea.Cmd {
 	if b.ws.Config().Options.BranchSummaryOffer() == config.BranchSummaryNever {
 		return nil
 	}
-	offer := dialog.BranchSummaryOffer{SessionID: sessionID, FromLeafID: done.snapshot.leafID, TargetID: done.leafID}
+	offer := dialog.RewindOffer{SessionID: sessionID, FromLeafID: done.snapshot.leafID, TargetID: done.leafID}
 	b.pending = offer
 	return func() tea.Msg {
 		worth, err := b.ws.AgentBranchWorthSummarizing(context.Background(), offer.FromLeafID, offer.TargetID)
@@ -197,10 +198,6 @@ func (b *branchSummaryFeature) observeRewind(done navigateTreeDoneMsg) tea.Cmd {
 // metadata entry such as a branch summary, which is also a user message.
 func isSentMessage(m message.Message) bool {
 	return m.Role == message.User && (m.MessageType == message.MessageTypeMessage || m.MessageType == "")
-}
-
-func sameRewind(a, b dialog.BranchSummaryOffer) bool {
-	return a.SessionID == b.SessionID && a.FromLeafID == b.FromLeafID && a.TargetID == b.TargetID
 }
 
 // drop cancels sessionID's running summary or discards its stored one.
@@ -235,11 +232,12 @@ func (b *branchSummaryFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (b *branchSummaryFeature) offer(offer dialog.BranchSummaryOffer) tea.Cmd {
-	if !sameRewind(offer, b.pending) || b.host.SessionID() != offer.SessionID {
+func (b *branchSummaryFeature) offer(offer dialog.RewindOffer) tea.Cmd {
+	if offer.SessionID != b.pending.SessionID || offer.FromLeafID != b.pending.FromLeafID ||
+		offer.TargetID != b.pending.TargetID || b.host.SessionID() != offer.SessionID {
 		return nil
 	}
-	b.pending = dialog.BranchSummaryOffer{}
+	b.pending = dialog.RewindOffer{}
 	offer.Agents = b.ws.AgentBranchSummarizers()
 	if len(offer.Agents) == 0 {
 		return util.ReportWarn("No branch summarizer is available.")
@@ -309,6 +307,9 @@ func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 	case branchsummaries.StateCancelled:
 		delete(b.runs, ev.SessionID)
 		return util.ReportInfo("Branch summary cancelled.")
+	case branchsummaries.StateNothing:
+		delete(b.runs, ev.SessionID)
+		return util.ReportInfo("Branch summary skipped: there was nothing to summarize.")
 	default:
 		delete(b.runs, ev.SessionID)
 		return util.ReportInfo("Branch summary not kept: the conversation moved on before it finished.")

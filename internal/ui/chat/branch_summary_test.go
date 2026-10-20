@@ -84,3 +84,18 @@ func TestBranchSummaryMessageItem_StripsControlSequences(t *testing.T) {
 	require.NotContains(t, out, "\x1b[2J")
 	require.Contains(t, ansi.Strip(out), "safe text")
 }
+
+func TestBranchSummaryMessageItem_StripsControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	msg := branchSummaryMessage()
+	msg.Parts = []message.ContentPart{message.BranchSummaryContent{Summary: "over\rwrite\bbell\x07 done\ttab"}}
+
+	out := NewBranchSummaryMessageItem(&sty, msg).Render(80)
+
+	require.NotContains(t, out, "\r")
+	require.NotContains(t, out, "\b")
+	require.NotContains(t, out, "\x07")
+	require.Contains(t, ansi.Strip(out), "done")
+}
