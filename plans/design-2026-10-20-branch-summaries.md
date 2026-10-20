@@ -415,6 +415,40 @@ operation therefore uses `Coordinator.Hold` on the root session:
 - A placeholder message in the tree (it adds rollback paths with no
   benefit, since streaming comes from the child session).
 
+**Lessons from the first build:**
+
+The first early version kept each run's state in the TUI feature. Review
+showed that this can't uphold decisions 3 to 6, and the lifecycle was
+rebuilt:
+
+- **Runs are owned below the UI, keyed by root session.**
+  - A run in session A had lost its controls when session B started
+    one.
+  - Runs now live in an app-layer service that publishes their events.
+    The TUI only renders those events.
+- **A hold doesn't serialise `MoveLeaf`.** Finalisation now stores the
+  summary only if the session's leaf still equals the target. The check
+  happens in the same transaction as the insert, so a navigation can't
+  land between the check and the insert.
+- **The session is reserved as soon as a run starts.**
+  - The reservation is synchronous, so a send can't overtake a run
+    that is starting up.
+  - The run then waits out any work already in flight.
+- **Esc and Ctrl+C reach the summary before the generic busy-agent
+  cancel.**
+  - A running summarizer makes the app report busy.
+  - Before the change, Esc and Ctrl+C cancelled the root session
+    instead of the summary, and dropped its queued sends.
+- **The ledger must understand `git -C <dir> …`,** the usual form in
+  worktree workflows. Every serialised section, and the stored summary
+  as a whole, has a hard size cap.
+- **Nested rewinds are refused, not replaced.**
+  - A rewind while a summary runs shows a warning, and Esc cancels the
+    summary.
+  - This keeps queued work from running against an abandoned range,
+    without the hold-transfer plumbing in decision 5. That is a
+    deliberate simplification of decision 5.
+
 **Success Criteria:**
 
 - [ ] **Picker precedence.** For each `prompt` setting, and for empty,
