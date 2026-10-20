@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -409,4 +410,35 @@ func TestHelpHidesTheBrowserKeyOnAFailedDiagram(t *testing.T) {
 	m.chat.SetSelected(1)
 	m.chat.list.Render()
 	require.NotContains(t, helpTexts(m.ShortHelp()), "o open in browser")
+}
+
+func TestSelectingAcrossADiagramCopiesItsSource(t *testing.T) {
+	t.Parallel()
+
+	for name, view := range map[string]chat.DiagramView{
+		"code block": {State: chat.DiagramPending},
+		"image":      {State: chat.DiagramReady, Image: "IMG1\nIMG2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			com := common.DefaultCommon(nil)
+			msg := finishedText("m", "Intro\n\n```mermaid\nA --> B\n```\n\nOutro\n")
+			c := NewChat(com)
+			c.SetSize(80, 30)
+			c.SetMessages(chat.NewAssistantMessageItems(com.Styles, msg, &switchDiagrams{view: view})...)
+			require.Len(t, c.MessageItems(), 3)
+
+			last := strings.Split(ansi.Strip(c.MessageItems()[2].(list.RawRenderable).RawRender(c.list.Width())), "\n")
+			c.mouseDown = true
+			c.mouseDownItem, c.mouseDownY, c.mouseDownX = 0, 0, chat.MessageLeftPaddingTotal
+			c.mouseDragItem, c.mouseDragY, c.mouseDragX = 2, len(last)-1, 80
+			c.list.Render()
+
+			got := c.HighlightContent()
+			require.Contains(t, got, "Intro")
+			require.Contains(t, got, "```mermaid\nA --> B\n```")
+			require.Contains(t, got, "Outro")
+			require.NotContains(t, got, "IMG", "never the image's placeholders")
+		})
+	}
 }

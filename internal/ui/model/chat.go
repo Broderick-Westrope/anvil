@@ -1026,6 +1026,9 @@ func (m *Chat) HighlightContent() string {
 // its formatting. ok is false when the item has no source or the selection
 // cannot be mapped.
 func sourceSelection(item list.Item, rendered string, area uv.Rectangle, startLine, startCol, endLine, endCol int) (string, bool) {
+	if whole, ok := item.(chat.WholeSelectable); ok {
+		return whole.SelectedText(), true
+	}
 	ss, ok := item.(list.SourceSelectable)
 	if !ok {
 		return "", false

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
@@ -50,6 +51,12 @@ type DiagramRenderer interface {
 	// Prefetch queues the chat's image of source at width, as Diagram
 	// does, for a node that will be drawn soon.
 	Prefetch(source string, width int)
+}
+
+// WholeSelectable is implemented by items that copy all of their text when
+// a selection touches them.
+type WholeSelectable interface {
+	SelectedText() string
 }
 
 // DiagramShower is implemented by items that draw a diagram, so they can be
@@ -257,6 +264,7 @@ func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message, diagrams
 type DiagramItem struct {
 	*list.Versioned
 	*focusableMessageItem
+	*highlightableMessageItem
 
 	sty      *styles.Styles
 	message  *message.Message
@@ -274,14 +282,21 @@ type DiagramItem struct {
 func NewDiagramItem(sty *styles.Styles, msg *message.Message, index int, source string, diagrams DiagramRenderer) *DiagramItem {
 	v := list.NewVersioned()
 	return &DiagramItem{
-		Versioned:            v,
-		focusableMessageItem: newFocusableMessageItem(v),
-		sty:                  sty,
-		message:              msg,
-		index:                index,
-		source:               source,
-		diagrams:             diagrams,
+		Versioned:                v,
+		focusableMessageItem:     newFocusableMessageItem(v),
+		highlightableMessageItem: defaultHighlighter(sty, v),
+		sty:                      sty,
+		message:                  msg,
+		index:                    index,
+		source:                   source,
+		diagrams:                 diagrams,
 	}
+}
+
+// SelectedText implements WholeSelectable: a selection that touches the
+// diagram copies its whole fence, since parts of an image mean nothing.
+func (d *DiagramItem) SelectedText() string {
+	return "```mermaid\n" + d.source + "```"
 }
 
 // ID implements MessageItem. A diagram that opens a message without
@@ -324,9 +339,12 @@ func (d *DiagramItem) RawRender(width int) string {
 	view := d.diagrams.Diagram(d.source, w)
 	d.failed = view.State == DiagramFailed
 	if view.State == DiagramReady {
+		// Highlighting would recolour the placeholder cells, which name
+		// the image, so an image is never highlighted.
 		return view.Image
 	}
-	return d.codeBlock.render(d.sty, d.source, w, view)
+	out := d.codeBlock.render(d.sty, d.source, w, view)
+	return d.renderHighlighted(out, w, lipgloss.Height(out))
 }
 
 // trimBlankLines drops the lines glamour pads a code block with, which hold
