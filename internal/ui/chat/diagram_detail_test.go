@@ -66,3 +66,15 @@ func TestDiagramDetailItemKeys(t *testing.T) {
 	handled, _ = item.HandleKeyEvent(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	require.False(t, handled)
 }
+
+func TestDiagramDetailItemCopiesTheSource(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	item := NewDiagramDetailItem(&sty, "A\n", fakeDiagrams{})
+	for _, key := range []string{"c", "y"} {
+		handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+		require.True(t, handled, key)
+		require.NotNil(t, cmd, key)
+	}
+}

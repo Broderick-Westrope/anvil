@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 )
@@ -56,8 +57,11 @@ func (d *DiagramDetailItem) RawRender(width int) string {
 
 // HandleKeyEvent implements KeyEventHandler.
 func (d *DiagramDetailItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if key.String() == "o" {
+	switch key.String() {
+	case "o":
 		return true, diagramOpenCmd(d.source, true)
+	case "c", "y":
+		return true, common.CopyToClipboard(d.source, "Diagram source copied to clipboard")
 	}
 	return false, nil
 }
