@@ -3,6 +3,7 @@ package model
 import (
 	"cmp"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -10,6 +11,7 @@ import (
 	"image/color"
 	"image/draw"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -206,6 +208,11 @@ type mermaidFeature struct {
 	idleTimeout time.Duration
 	cacheBudget int
 	exportDir   string
+	// palette is the theme without its background, and paletteHash its
+	// hash; see initPalette.
+	paletteOnce sync.Once
+	palette     mermaid.Theme
+	paletteHash uint64
 	// returnMemory hands memory freed by releasing the engines back to
 	// the OS; Go would otherwise keep it, and the process stays at its
 	// peak.
@@ -276,7 +283,7 @@ func (f *mermaidFeature) inlineImage(source string, width int) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := diagramKey{
-		hash: sourceHash(source, f.theme()), width: f.widths[diagramInline], kind: diagramInline,
+		hash: f.imageHash(source, f.background()), width: f.widths[diagramInline], kind: diagramInline,
 		cellW: cellW, cellH: cellH,
 	}
 	e, ok := f.entries[key]
@@ -298,30 +305,45 @@ func (f *mermaidFeature) background() string {
 // transparent image: Anvil's background, the terminal's own when the TUI
 // is transparent, or the theme's until the terminal reports it.
 func (f *mermaidFeature) theme() mermaid.Theme {
-	p := f.com.Styles.Diagram
-	return mermaid.Theme{
-		"pele-bg":           f.background(),
-		"pele-fg":           hexColor(p.Fg),
-		"pele-muted":        hexColor(p.Muted),
-		"pele-line":         hexColor(p.Line),
-		"pele-surface":      hexColor(p.Surface),
-		"pele-surface-alt":  hexColor(p.SurfaceAlt),
-		"pele-border":       hexColor(p.Border),
-		"pele-accent":       hexColor(p.Accent),
-		"pele-critical":     hexColor(p.Critical),
-		"pele-error":        hexColor(p.Error),
-		"pele-series-1":     hexColor(p.Series[0]),
-		"pele-series-2":     hexColor(p.Series[1]),
-		"pele-series-3":     hexColor(p.Series[2]),
-		"pele-series-4":     hexColor(p.Series[3]),
-		"pele-series-5":     hexColor(p.Series[4]),
-		"pele-series-6":     hexColor(p.Series[5]),
-		"pele-series-7":     hexColor(p.Series[6]),
-		"pele-series-8":     hexColor(p.Series[7]),
-		"pele-font":         "sans-serif",
-		"pele-font-mono":    "monospace",
-		"pele-title-weight": "bold",
-	}
+	f.initPalette()
+	theme := maps.Clone(f.palette)
+	theme["pele-bg"] = f.background()
+	return theme
+}
+
+// initPalette builds the background-independent part of the theme once,
+// since the styles don't change while Anvil runs.
+func (f *mermaidFeature) initPalette() {
+	f.paletteOnce.Do(func() {
+		p := f.com.Styles.Diagram
+		f.palette = mermaid.Theme{
+			"pele-fg":           hexColor(p.Fg),
+			"pele-muted":        hexColor(p.Muted),
+			"pele-line":         hexColor(p.Line),
+			"pele-surface":      hexColor(p.Surface),
+			"pele-surface-alt":  hexColor(p.SurfaceAlt),
+			"pele-border":       hexColor(p.Border),
+			"pele-accent":       hexColor(p.Accent),
+			"pele-critical":     hexColor(p.Critical),
+			"pele-error":        hexColor(p.Error),
+			"pele-series-1":     hexColor(p.Series[0]),
+			"pele-series-2":     hexColor(p.Series[1]),
+			"pele-series-3":     hexColor(p.Series[2]),
+			"pele-series-4":     hexColor(p.Series[3]),
+			"pele-series-5":     hexColor(p.Series[4]),
+			"pele-series-6":     hexColor(p.Series[5]),
+			"pele-series-7":     hexColor(p.Series[6]),
+			"pele-series-8":     hexColor(p.Series[7]),
+			"pele-font":         "sans-serif",
+			"pele-font-mono":    "monospace",
+			"pele-title-weight": "bold",
+		}
+		h := fnv.New64a()
+		for _, name := range slices.Sorted(maps.Keys(f.palette)) {
+			_, _ = h.Write([]byte(name + "=" + f.palette[name] + ";"))
+		}
+		f.paletteHash = h.Sum64()
+	})
 }
 
 func hexColor(c color.Color) string {
@@ -332,11 +354,16 @@ func hexColor(c color.Color) string {
 	return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
 }
 
-func sourceHash(source string, theme mermaid.Theme) uint64 {
+// imageHash identifies source drawn with the whole theme on background bg.
+func (f *mermaidFeature) imageHash(source, bg string) uint64 {
+	f.initPalette()
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(source))
 	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(theme["pele-bg"]))
+	_, _ = h.Write([]byte(bg))
+	var palette [8]byte
+	binary.LittleEndian.PutUint64(palette[:], f.paletteHash)
+	_, _ = h.Write(palette[:])
 	return h.Sum64()
 }
 
@@ -347,8 +374,7 @@ func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) cha
 	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
-	theme := f.theme()
-	key := diagramKey{hash: sourceHash(source, theme), width: width, kind: kind, cellW: cellW, cellH: cellH}
+	key := diagramKey{hash: f.imageHash(source, f.background()), width: width, kind: kind, cellW: cellW, cellH: cellH}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -369,7 +395,7 @@ func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) cha
 		// entry was evicted: render it again.
 		delete(f.entries, key)
 	}
-	req := diagramRequest{key: key, source: source, theme: theme, cellW: cellW, cellH: cellH, maxCols: width}
+	req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: cellW, cellH: cellH, maxCols: width}
 	if f.enqueue(req) {
 		f.entries[key] = &diagramEntry{state: diagramPending, lastUsed: f.clock}
 	}
@@ -610,7 +636,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 	if msg.External {
 		theme := f.theme()
-		req := diagramRequest{key: diagramKey{hash: sourceHash(msg.Source, theme)}, source: msg.Source, theme: theme, export: true}
+		req := diagramRequest{key: diagramKey{hash: f.imageHash(msg.Source, theme["pele-bg"])}, source: msg.Source, theme: theme, export: true}
 		if !f.enqueue(req) {
 			return util.ReportWarn("Diagram renderer is busy; try again")
 		}

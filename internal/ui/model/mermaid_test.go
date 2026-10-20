@@ -247,7 +247,7 @@ func TestMermaidFeatureThemeUsesTheBackgroundBehindTheImage(t *testing.T) {
 	require.Equal(t, "#050014", f.theme()["pele-bg"], "the terminal's background")
 
 	src := "flowchart LR\n A --> B\n"
-	require.NotEqual(t, sourceHash(src, f.theme().With("pele-bg", "#0c0e14")), sourceHash(src, f.theme()),
+	require.NotEqual(t, f.imageHash(src, "#0c0e14"), f.imageHash(src, f.background()),
 		"a new background renders the diagram again")
 }
 
@@ -541,4 +541,16 @@ func TestMermaidFeatureDrillInWithoutAnInlineImageRenders(t *testing.T) {
 	require.Equal(t, chat.DiagramPending, view.State)
 	require.Empty(t, view.Image)
 	require.Equal(t, diagramFull, waitReady(t, f).key.kind)
+}
+
+func TestMermaidFeatureImageHashCoversThePalette(t *testing.T) {
+	t.Parallel()
+
+	st := uistyles.TokyoNight()
+	plain := newMermaidFeature(&fakeDiagramHost{}, kittyCaps(), &common.Common{Styles: &st})
+	other := uistyles.TokyoNight()
+	other.Diagram.Series[7] = color.RGBA{R: 1, A: 0xff}
+	changed := newMermaidFeature(&fakeDiagramHost{}, kittyCaps(), &common.Common{Styles: &other})
+	require.NotEqual(t, plain.imageHash("A", "#000000"), changed.imageHash("A", "#000000"))
+	require.Equal(t, plain.imageHash("A", "#000000"), plain.imageHash("A", "#000000"))
 }
