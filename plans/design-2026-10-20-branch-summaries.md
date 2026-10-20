@@ -204,6 +204,16 @@ operation therefore uses `Coordinator.Hold` on the root session:
 - **A rewind while a summary is running** (nested rewind) first cancels
   and discards the running summary, then proceeds as a fresh rewind. The
   new range is computed from the leaf after that cleanup.
+  - The root hold is not released in between. It transfers from the
+    cancelled operation to the navigation, and then to the replacement
+    summary if one is chosen. Queued work therefore can't start in the
+    gap.
+  - Messages queued behind the cancelled summary are cleared, as
+    `AgentCancel` already clears a session's queue when a busy rewind
+    cancels it, so nothing runs against a range the user has just
+    abandoned. Their text is restored to the composer rather than lost.
+    The hold is released only when the new rewind settles
+    (with "No summary", or after the replacement summary).
 - **Stale completions are rejected.** On completion, the operation
   persists the message only if it is still the session's current
   operation and the session's leaf still equals the frozen target.
@@ -224,6 +234,13 @@ operation therefore uses `Coordinator.Hold` on the root session:
   - Move the leaf back to the target.
   - It is allowed only while the summary has no children, so it is
     disabled once a message has been sent after it.
+  - **It can't race an accepted send.** Discard reacquires the root hold
+    and waits for in-flight work. A send that has started may already
+    have read the leaf but not yet persisted its message. Then, in one
+    step serialised with navigation, discard checks that the summary is
+    still the session leaf and has no children. If either check fails,
+    discard is refused (the summary is already in use) and the hold is
+    released.
 - **Failure (provider error, empty output):**
   - The item shows the error with retry and dismiss.
   - Dismiss deletes the child session.
@@ -248,15 +265,25 @@ operation therefore uses `Coordinator.Hold` on the root session:
 - **Delegated subagents.** A `task` call in the range contributes its
   result text. Its child session is traversed for the ledger only (see
   below), not serialised in full.
-- **Total budget accounting.** The budget covers the agent's system
-  prompt, the task framing, the focus text, the ledger, the in-range
-  summaries, the messages and the output headroom, measured against the
-  summarizer model's context window. Overflow is handled in this order:
+- **Total budget accounting.** The budget is measured against the
+  summarizer model's context window and covers the fully assembled
+  request:
+  - The agent's system prompt.
+  - Tool schemas and MCP instructions for the tools the agent has.
+  - The task framing and the focus text.
+  - The ledger and the in-range summaries.
+  - The messages.
+  - Output headroom, plus the expected tool-loop growth if the agent has
+    tools.
+
+  If the fixed overhead alone (system prompt, tools, framing and output
+  headroom) exceeds the window, nothing is sent and the operation fails
+  with a message naming the summarizer. Otherwise, overflow is handled in
+  this order:
   1. The system prompt, framing and focus text are always included. Focus
      text is capped at 2k characters.
   2. The ledger is included, with a cap per list. The overflow is written
-     as "+N more" and the full lists are still appended to the final
-     output.
+     as "+N more".
   3. In-range compaction and branch summaries are included newest first,
      each capped. A compaction is labelled "summary of history up to this
      point, which may predate the branch" because it can describe history
@@ -290,6 +317,13 @@ operation therefore uses `Coordinator.Hold` on the root session:
 - **The file lists are also appended verbatim to `Summary`** (`<read-files>`
   and `<modified-files>`, as Pi does), so the text that reaches context is
   self-contained.
+  - The appended lists are capped (for example 50 entries each, then
+    "+N more"), so a recursive ledger can't blow out the resumed root's
+    context.
+  - The full structured ledger stays on `BranchSummaryContent` and is
+    shown on drill-in.
+  - The final `Summary` text, appended lists included, also has a hard
+    character cap. Any output beyond it is truncated with a marker.
 - **Ledger, not truth.** The prompt tells the summarizer the ledger
   records what was attempted and observed, not verified current state.
 
@@ -321,16 +355,20 @@ operation therefore uses `Coordinator.Hold` on the root session:
 - **Context.** It reaches the model through `FilterMetadataMessage`,
   using the existing "branch that this conversation came back from"
   wrapper.
-- **Compaction.**
-  - A branch summary after the latest compaction's `FirstKeptEntryID` is
-    injected as today.
-  - One before that boundary was part of the context that compaction
-    summarised, so its facts flow into the compaction summary like any
-    other message. Nothing is injected twice.
-  - The facts that must survive are already in the `Summary` text,
-    including the appended file lists.
-  - `EstimateTokens` (`message/tree.go`) counts `BranchSummaryContent`
-    text, so compaction thresholds and `ComputeFirstKeptEntryID` see it.
+- **Compaction.** Branch summaries get no special treatment; they behave
+  like any other message.
+  - Compaction summarises the whole filtered context, including the kept
+    tail.
+  - A branch summary before `FirstKeptEntryID` survives only through the
+    compaction summary.
+  - A branch summary in the kept tail appears verbatim and may also be
+    reflected in the compaction summary. That overlap is the same one
+    every retained message already has, and it is accepted.
+  - The facts that must survive are in the `Summary` text, including the
+    capped file lists.
+  - `EstimateMessageTokens` (`message/tree.go`) is extended to count
+    `BranchSummaryContent` text (today it ignores it), so compaction
+    thresholds and `ComputeFirstKeptEntryID` see it.
 
 **11. Display.**
 
@@ -405,22 +443,39 @@ operation therefore uses `Coordinator.Hold` on the root session:
       session and restores the leaf. Discard is unavailable once the
       summary has children. "Return to pre-branch" before send cancels or
       discards.
+- [ ] **Discard against a send.** A send is paused after it reads the
+      leaf but before it persists its message. A discard issued at that
+      point waits, then is refused, and the persisted chain stays
+      target, then summary, then return message.
+- [ ] **Hold across a nested rewind.** The hold transfers across a nested
+      rewind: messages queued behind the cancelled summary never run
+      against the abandoned range, and their text is restored to the
+      composer.
 - [ ] **Storage.** The `branch_summary` message records `FromID`,
       `ChildSessionID`, `Agent` and the ledger. It can be drilled into,
       and its exact `Summary` text (including the file lists) appears in
       the model input built by `FilterBranchPathForContext`.
-- [ ] **Compaction.** With summaries before, at and after a compaction's
-      kept boundary, and after two successive compactions, the model
-      input contains each summary's text exactly once, or its facts via
-      the compaction summary. `EstimateTokens` counts summary text.
+- [ ] **Compaction.** The model input matches decision 10 for each
+      case:
+      - A summary before a compaction's kept boundary: its text is absent
+        and only the compaction summary remains.
+      - A summary at or after the boundary: its text is present once,
+        verbatim.
+      - After two successive compactions, each summary's text appears
+        according to the same rules.
+
+      `EstimateMessageTokens` counts summary text.
 - [ ] **Ledger.** For fixtures with successful, failed, denied and
       background tool calls, including edits inside a delegated child
       session, the ledger records each with the correct status. It
       orders git/gh/wtp events chronologically and carries forward nested
       ledgers.
-- [ ] **Budget.** Serialisation stays within budget under the overflow
-      priorities, records omission markers, labels compaction provenance,
-      and is byte-identical across runs.
+- [ ] **Budget.** The assembled summarizer request, including tool
+      schemas and MCP instructions, stays within the window under the
+      overflow priorities. It records omission markers, labels compaction
+      provenance, and is byte-identical across runs. If the fixed
+      overhead exceeds the window, nothing is sent. The persisted
+      `Summary` respects its list and character caps.
 - [ ] **Redaction.** Synthetic secrets placed in commands, URLs, tool
       results, nested summaries and ledger entries are absent from both
       the summarizer input and the rendered output.
