@@ -62,3 +62,15 @@ func TestKittyTransmitKeepsNoPixels(t *testing.T) {
 	require.True(t, HasTransmitted(id, 2, 2))
 	require.NotEmpty(t, EncodingKitty.Render(id, 2, 2), "placeholders still render")
 }
+
+func TestKittyTransmitTwiceForOneKeySendsItOnce(t *testing.T) {
+	t.Parallel()
+
+	const id = "kitty-transmit-twice"
+	img := image.NewRGBA(image.Rect(0, 0, 20, 40))
+	cs := CellSize{Width: 10, Height: 20}
+	first := EncodingKitty.Transmit(id, img, cs, 2, 2, false)
+	second := EncodingKitty.Transmit(id, img, cs, 2, 2, false)
+	require.IsType(t, tea.RawMsg{}, first())
+	require.NotPanics(t, func() { require.Nil(t, second(), "already sent") })
+}

@@ -170,6 +170,11 @@ func (e Encoding) Transmit(id string, img image.Image, cs CellSize, cols, rows i
 		}
 
 		var buf bytes.Buffer
+		// Another command for the same key may have sent it since this
+		// one was made; the cache then holds no pixels to fit.
+		if HasTransmitted(id, cols, rows) {
+			return nil
+		}
 		img := fitImage(id, img, cs, cols, rows)
 		bounds := img.Bounds()
 		imgWidth := bounds.Dx()
