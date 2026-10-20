@@ -184,6 +184,22 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "BranchSummaryOptions": {
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "description": "Whether rewinding asks which summarizer to use (ask), always uses the default summarizer without asking (always), or never summarizes (never)",
+          "default": "ask"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Completions": {
       "properties": {
         "max_depth": {
@@ -748,6 +764,10 @@
         "background_jobs": {
           "$ref": "#/$defs/BackgroundJobsOptions",
           "description": "Background job behaviour"
+        },
+        "branch_summary": {
+          "$ref": "#/$defs/BranchSummaryOptions",
+          "description": "Summaries of the conversation branch left behind when rewinding"
         }
       },
       "additionalProperties": false,

@@ -328,6 +328,37 @@ type Options struct {
 	ExpandedTools             []string `json:"expanded_tools,omitempty" jsonschema:"description=Glob patterns for tools that should render expanded instead of compact,example=bash,example=mcp_*"`
 
 	BackgroundJobs *BackgroundJobsOptions `json:"background_jobs,omitempty" jsonschema:"description=Background job behaviour"`
+
+	BranchSummary *BranchSummaryOptions `json:"branch_summary,omitempty" jsonschema:"description=Summaries of the conversation branch left behind when rewinding"`
+}
+
+// BranchSummaryOptions configures the summary offered when the user
+// rewinds to an earlier message.
+type BranchSummaryOptions struct {
+	Prompt BranchSummaryPrompt `json:"prompt,omitempty" jsonschema:"description=Whether rewinding asks which summarizer to use (ask)\\, always uses the default summarizer without asking (always)\\, or never summarizes (never),enum=ask,enum=always,enum=never,default=ask"`
+}
+
+// BranchSummaryPrompt says whether a rewind offers a branch summary.
+type BranchSummaryPrompt string
+
+const (
+	BranchSummaryAsk    BranchSummaryPrompt = "ask"
+	BranchSummaryAlways BranchSummaryPrompt = "always"
+	BranchSummaryNever  BranchSummaryPrompt = "never"
+)
+
+// BranchSummaryPrompt returns the configured branch summary prompt mode.
+// Unset and unknown values mean ask.
+func (o *Options) BranchSummaryPrompt() BranchSummaryPrompt {
+	if o == nil || o.BranchSummary == nil {
+		return BranchSummaryAsk
+	}
+	switch o.BranchSummary.Prompt {
+	case BranchSummaryAlways, BranchSummaryNever:
+		return o.BranchSummary.Prompt
+	default:
+		return BranchSummaryAsk
+	}
 }
 
 // BackgroundJobsOptions configures how background jobs interact with
