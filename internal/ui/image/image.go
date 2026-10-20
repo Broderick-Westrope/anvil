@@ -91,14 +91,7 @@ func fitImage(id string, img image.Image, cs CellSize, cols, rows int) image.Ima
 		return cached.img
 	}
 
-	if cs.Width == 0 || cs.Height == 0 {
-		return img
-	}
-
-	maxWidth := cols * cs.Width
-	maxHeight := rows * cs.Height
-
-	img = imaging.Fit(img, maxWidth, maxHeight, imaging.Lanczos)
+	img = resizeToCells(img, cs, cols, rows)
 
 	cachedMutex.Lock()
 	cachedImages[key] = cachedImage{
@@ -109,6 +102,15 @@ func fitImage(id string, img image.Image, cs CellSize, cols, rows int) image.Ima
 	cachedMutex.Unlock()
 
 	return img
+}
+
+// resizeToCells fits img within cols x rows cells of size cs, keeping its
+// aspect ratio. An unknown cell size leaves it as it is.
+func resizeToCells(img image.Image, cs CellSize, cols, rows int) image.Image {
+	if cs.Width == 0 || cs.Height == 0 {
+		return img
+	}
+	return imaging.Fit(img, cols*cs.Width, rows*cs.Height, imaging.Lanczos)
 }
 
 // HasTransmitted checks if the image with the given ID has already been
@@ -169,13 +171,20 @@ func (e Encoding) Transmit(id string, img image.Image, cs CellSize, cols, rows i
 			return TransmittedMsg{ID: key.ID()}
 		}
 
-		var buf bytes.Buffer
-		// Another command for the same key may have sent it since this
-		// one was made; the cache then holds no pixels to fit.
-		if HasTransmitted(id, cols, rows) {
+		// Claim the key before sending, so of several commands made for
+		// one image only the first sends it. The terminal then holds the
+		// image and placeholders only need its key, so the record keeps no
+		// pixels.
+		cachedMutex.Lock()
+		if _, sent := cachedImages[key]; sent {
+			cachedMutex.Unlock()
 			return nil
 		}
-		img := fitImage(id, img, cs, cols, rows)
+		cachedImages[key] = cachedImage{cols: cols, rows: rows}
+		cachedMutex.Unlock()
+
+		var buf bytes.Buffer
+		img := resizeToCells(img, cs, cols, rows)
 		bounds := img.Bounds()
 		imgWidth := bounds.Dx()
 		imgHeight := bounds.Dy()
@@ -200,18 +209,14 @@ func (e Encoding) Transmit(id string, img image.Image, cs CellSize, cols, rows i
 			},
 		}); err != nil {
 			slog.Error("Failed to encode image for kitty graphics", "err", err)
+			cachedMutex.Lock()
+			delete(cachedImages, key)
+			cachedMutex.Unlock()
 			return util.InfoMsg{
 				Type: util.InfoTypeError,
 				Msg:  "failed to encode image",
 			}
 		}
-
-		// The terminal now holds the image and placeholders only need
-		// its key, so keep the record that it was sent but not its
-		// pixels.
-		cachedMutex.Lock()
-		cachedImages[key] = cachedImage{cols: cols, rows: rows}
-		cachedMutex.Unlock()
 
 		return tea.RawMsg{Msg: buf.String()}
 	}

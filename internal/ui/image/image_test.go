@@ -2,15 +2,18 @@ package image
 
 import (
 	"image"
+	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 )
 
+// The reset tests clear the shared cache, so they run before the parallel
+// tests that fill it.
+//
+//nolint:paralleltest // Clears the package-level cache.
 func TestResetCache(t *testing.T) {
-	t.Parallel()
-
 	cachedMutex.Lock()
 	cachedImages[imageKey{id: "a", cols: 10, rows: 10}] = cachedImage{
 		img:  image.NewRGBA(image.Rect(0, 0, 1, 1)),
@@ -33,9 +36,8 @@ func TestResetCache(t *testing.T) {
 	require.Equal(t, 0, length)
 }
 
+//nolint:paralleltest // Clears the package-level cache.
 func TestResetIdempotent(t *testing.T) {
-	t.Parallel()
-
 	// Calling Reset on an empty cache should not panic.
 	ResetCache()
 
@@ -73,4 +75,30 @@ func TestKittyTransmitTwiceForOneKeySendsItOnce(t *testing.T) {
 	second := EncodingKitty.Transmit(id, img, cs, 2, 2, false)
 	require.IsType(t, tea.RawMsg{}, first())
 	require.NotPanics(t, func() { require.Nil(t, second(), "already sent") })
+}
+
+func TestKittyTransmitConcurrentlyForOneKeySendsItOnce(t *testing.T) {
+	t.Parallel()
+
+	const id = "kitty-transmit-concurrently"
+	img := image.NewRGBA(image.Rect(0, 0, 20, 40))
+	cs := CellSize{Width: 10, Height: 20}
+	cmds := make([]tea.Cmd, 16)
+	for i := range cmds {
+		cmds[i] = EncodingKitty.Transmit(id, img, cs, 2, 2, false)
+	}
+	results := make(chan tea.Msg, len(cmds))
+	var wg sync.WaitGroup
+	for _, cmd := range cmds {
+		wg.Go(func() { results <- cmd() })
+	}
+	wg.Wait()
+	close(results)
+	sent := 0
+	for msg := range results {
+		if _, ok := msg.(tea.RawMsg); ok {
+			sent++
+		}
+	}
+	require.Equal(t, 1, sent)
 }
