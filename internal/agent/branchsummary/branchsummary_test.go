@@ -88,7 +88,7 @@ func TestWorthwhile(t *testing.T) {
 	}
 }
 
-func noChildren(message.ToolCall) []message.Message { return nil }
+func noChildren(string, message.ToolCall) []message.Message { return nil }
 
 func TestLedger_FileOperations(t *testing.T) {
 	t.Parallel()
@@ -180,7 +180,7 @@ func TestLedger_TraversesDelegatedSessions(t *testing.T) {
 		),
 		msg("t1", message.Tool, result("b1", "", false), result("task1", "done", false), result("b2", "", false)),
 	}
-	children := func(c message.ToolCall) []message.Message {
+	children := func(_ string, c message.ToolCall) []message.Message {
 		if c.ID == "task1" {
 			return child
 		}

@@ -88,6 +88,14 @@ type Coordinator interface {
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
+	// SummarizeBranch summarizes the branch a user rewound from and stores
+	// the summary under the rewind target. See BranchSummaryRequest.
+	SummarizeBranch(ctx context.Context, req BranchSummaryRequest) (message.Message, error)
+	// DiscardBranchSummary deletes an unused branch summary and moves the
+	// leaf back to its parent.
+	DiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
+	// BranchSummarizers lists the agents that can summarize branches.
+	BranchSummarizers() []string
 	IsSummarizing(sessionID string) bool
 	Cancel(sessionID string)
 	CancelAll()

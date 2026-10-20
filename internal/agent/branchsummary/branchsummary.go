@@ -70,10 +70,11 @@ var (
 )
 
 // Ledger extracts what the range's tool calls did. children returns the
-// messages of the session a tool call delegated to, or nil; their effects
+// messages of the session a tool call (in the message with messageID)
+// delegated to, or nil; their effects
 // are folded in where the call happened. Ledgers of branch summaries in
 // the range carry forward.
-func Ledger(rng []message.Message, children func(message.ToolCall) []message.Message) message.BranchLedger {
+func Ledger(rng []message.Message, children func(messageID string, call message.ToolCall) []message.Message) message.BranchLedger {
 	var b ledgerBuilder
 	b.add(rng, children)
 	return b.ledger()
@@ -84,7 +85,7 @@ type ledgerBuilder struct {
 	events         []message.LedgerEvent
 }
 
-func (b *ledgerBuilder) add(rng []message.Message, children func(message.ToolCall) []message.Message) {
+func (b *ledgerBuilder) add(rng []message.Message, children func(messageID string, call message.ToolCall) []message.Message) {
 	results := map[string]message.ToolResult{}
 	for _, m := range rng {
 		for _, r := range m.ToolResults() {
@@ -98,7 +99,7 @@ func (b *ledgerBuilder) add(rng []message.Message, children func(message.ToolCal
 		}
 		for _, call := range m.ToolCalls() {
 			res, hasResult := results[call.ID]
-			b.addCall(call, res, hasResult, children)
+			b.addCall(m.ID, call, res, hasResult, children)
 		}
 	}
 }
@@ -115,7 +116,7 @@ func (b *ledgerBuilder) carryForward(m message.Message) {
 }
 
 // addCall records one tool call's effect, by tool.
-func (b *ledgerBuilder) addCall(call message.ToolCall, res message.ToolResult, hasResult bool, children func(message.ToolCall) []message.Message) {
+func (b *ledgerBuilder) addCall(messageID string, call message.ToolCall, res message.ToolResult, hasResult bool, children func(messageID string, call message.ToolCall) []message.Message) {
 	succeeded := hasResult && !res.IsError
 	switch call.Name {
 	case tools.ViewToolName:
@@ -137,7 +138,7 @@ func (b *ledgerBuilder) addCall(call message.ToolCall, res message.ToolResult, h
 			})
 		}
 	default:
-		if child := children(call); child != nil {
+		if child := children(messageID, call); child != nil {
 			b.add(child, children)
 		}
 	}

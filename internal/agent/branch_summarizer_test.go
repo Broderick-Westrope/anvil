@@ -23,3 +23,14 @@ func TestOrchestratorBlocksOmitBranchSummarizers(t *testing.T) {
 	require.NotContains(t, agents, "summarizer")
 	require.NotContains(t, workflow, "summarizer")
 }
+
+func TestBuiltinBranchSummarizer(t *testing.T) {
+	t.Parallel()
+
+	mds, err := discoverAgentMDs(agentMDFS, nil, nil)
+	require.NoError(t, err)
+
+	md, ok := mds[BuiltinBranchSummarizer]
+	require.True(t, ok)
+	require.True(t, md.BranchSummarizer)
+}
