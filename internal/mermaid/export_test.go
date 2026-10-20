@@ -14,7 +14,7 @@ func TestHTMLDocument(t *testing.T) {
 
 	r, err := NewRenderer()
 	require.NoError(t, err)
-	res, err := r.Render(spikeDiagrams["nested"], Options{})
+	res, err := r.Render(sampleDiagrams["nested"], Options{})
 	require.NoError(t, err)
 
 	doc, err := HTMLDocument(res, testTheme, "Diagram <1>")
@@ -25,7 +25,7 @@ func TestHTMLDocument(t *testing.T) {
 	require.Contains(t, doc, `<svg xmlns="http://www.w3.org/2000/svg" class="pele`)
 	require.NotContains(t, doc, "var(--pele-", "theme colours are resolved")
 
-	if dir := os.Getenv("MERMAID_SPIKE_OUT"); dir != "" {
+	if dir := os.Getenv("MERMAID_TEST_OUT"); dir != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "nested.html"), []byte(doc), 0o644))
 	}
 }

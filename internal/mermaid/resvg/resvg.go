@@ -7,6 +7,11 @@
 // instance, and Close frees all of it. Upstream keeps a package-level
 // runtime for the life of the process and pools instances in a sync.Pool
 // while also tracking them for Close, so every GC leaks an instance.
+//
+// The fonts are compiled into resvg.wasm, so changing them means rebuilding
+// it from the Rust crate in the go-resvg repository at v0.0.2 for the
+// wasm32-wasip1 target and replacing resvg.wasm. Keep the fonts in step
+// with ../fonts, which Pele measures labels with.
 package resvg
 
 import (

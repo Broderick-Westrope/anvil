@@ -37,7 +37,7 @@ func TestRenderFlowchart(t *testing.T) {
 	require.Contains(t, res.SVG, "<svg")
 	require.Equal(t, "flowchart", res.Type)
 
-	if dir := os.Getenv("MERMAID_SPIKE_OUT"); dir != "" {
+	if dir := os.Getenv("MERMAID_TEST_OUT"); dir != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "flowchart.svg"), []byte(res.SVG), 0o644))
 	}
 }

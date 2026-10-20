@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var spikeDiagrams = map[string]string{
+var sampleDiagrams = map[string]string{
 	"flowchart": sampleFlowchart,
 	"sequence": `sequenceDiagram
   participant U as User
@@ -58,7 +58,7 @@ var spikeDiagrams = map[string]string{
 	"gantt": `gantt
   title Mermaid rendering
   dateFormat YYYY-MM-DD
-  section Spike
+  section Build
   Pele in goja      :done, a1, 2026-10-20, 1d
   resvg via wazero  :done, a2, after a1, 1d
   section Build
@@ -78,8 +78,8 @@ func TestRasterizeDiagrams(t *testing.T) {
 	t.Cleanup(func() { _ = rast.Close() })
 	t.Logf("resvg init: %s", time.Since(start))
 
-	out := os.Getenv("MERMAID_SPIKE_OUT")
-	for name, src := range spikeDiagrams {
+	out := os.Getenv("MERMAID_TEST_OUT")
+	for name, src := range sampleDiagrams {
 		start := time.Now()
 		res, err := r.Render(src, Options{MaxWidth: 900})
 		require.NoError(t, err, name)
