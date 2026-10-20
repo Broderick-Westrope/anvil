@@ -32,7 +32,12 @@ const (
 	maxStoredChars  = 16_000
 	// maxEntryChars caps one ledger entry: a path or a command.
 	maxEntryChars = 300
-	charsPerToken = 4
+	// maxMessageChars caps one serialised message, so a long final report
+	// can't crowd out the rest of the conversation.
+	maxMessageChars = 8_000
+	// charsPerToken is a conservative estimate: code and paths run under
+	// four characters a token.
+	charsPerToken = 3
 )
 
 // Abandoned returns the messages on fromPath after its deepest common
@@ -68,7 +73,11 @@ var (
 		`\bgit` + gitOptions + `\s+(commit|push|merge|rebase|reset|cherry-pick|tag|checkout\s+-b|switch\s+-c)\b` +
 			`|\bgh\s+pr\s+(create|edit|merge|comment|close|ready)\b` +
 			`|\bwtp\s+(add|remove)\b`)
-	gitDirOption = regexp.MustCompile(`-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))`)
+	// compoundCommand matches a command that runs more than one step;
+	// looseChain one whose exit status can hide a failed step.
+	compoundCommand = regexp.MustCompile(`&&|\|\||;|\||\n`)
+	looseChain      = regexp.MustCompile(`\|\||;|\||\n`)
+	gitDirOption    = regexp.MustCompile(`-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))`)
 )
 
 var (
@@ -147,7 +156,7 @@ func (b *ledgerBuilder) addCall(messageID string, call message.ToolCall, res mes
 				Tool:    call.Name,
 				Command: truncate(redact(command), maxEntryChars),
 				Dir:     commandDir(command, inputField(call, "working_dir")),
-				Status:  status(res, hasResult),
+				Status:  commandStatus(command, res, hasResult),
 				Refs:    refs(res.Content),
 			})
 		}
@@ -186,6 +195,24 @@ func commandDir(command, workingDir string) string {
 		return d[1] + d[2] + d[3]
 	}
 	return workingDir
+}
+
+// commandStatus is status for a single command. A shell's exit status
+// covers its whole chain, so it can't say how one git step in a compound
+// command went: such a command is unknown unless an && chain succeeded
+// as a whole.
+func commandStatus(command string, res message.ToolResult, hasResult bool) message.LedgerStatus {
+	st := status(res, hasResult)
+	if !compoundCommand.MatchString(command) {
+		return st
+	}
+	if st == message.LedgerSucceeded && !looseChain.MatchString(command) {
+		return st
+	}
+	if st == message.LedgerDenied {
+		return st
+	}
+	return message.LedgerUnknown
 }
 
 func status(res message.ToolResult, hasResult bool) message.LedgerStatus {
@@ -247,16 +274,20 @@ func inputField(call message.ToolCall, field string) string {
 // then earlier summaries, newest first; then messages, newest first.
 // Secrets are redacted on a best-effort basis.
 func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, budget int) string {
+	// Every piece is redacted whole before it's cut to size, so a cut can't
+	// split a secret the patterns would have matched.
+	keep := ledgerRefs(ledger)
+	clean := func(s string) string { return redactKeeping(s, keep) }
 	var summaries, conversation []string
 	for _, m := range rng {
 		switch m.MessageType {
 		case message.MessageTypeCompaction, message.MessageTypeBranchSummary:
-			if s := earlierSummary(m); s != "" {
+			if s := earlierSummary(m, clean); s != "" {
 				summaries = append(summaries, s)
 			}
 		case message.MessageTypeMessage, "":
-			if s := serialise(m); s != "" {
-				conversation = append(conversation, s)
+			if s := serialise(m, clean); s != "" {
+				conversation = append(conversation, endLine(truncate(s, maxMessageChars)))
 			}
 		}
 	}
@@ -270,7 +301,7 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 	// always gets the rest.
 	sb.WriteString(truncate(ledgerText.String(), budget*charsPerToken/2))
 	if focus = strings.TrimSpace(focus); focus != "" {
-		fmt.Fprintf(&sb, "<focus>\n%s\n</focus>\n\n", truncate(focus, maxFocusChars))
+		fmt.Fprintf(&sb, "<focus>\n%s\n</focus>\n\n", truncate(clean(focus), maxFocusChars))
 	}
 	remaining := budget*charsPerToken - sb.Len()
 
@@ -297,6 +328,11 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 		first--
 		remaining -= len(conversation[first])
 	}
+	if first == len(conversation) && first > 0 && remaining > 0 {
+		// Even the newest message doesn't fit whole; keep its start.
+		first--
+		conversation[first] = endLine(truncate(conversation[first], remaining))
+	}
 	sb.WriteString("<conversation>\n")
 	if first > 0 {
 		fmt.Fprintf(&sb, omittedMarker, first)
@@ -305,7 +341,7 @@ func Prompt(rng []message.Message, ledger message.BranchLedger, focus string, bu
 		sb.WriteString(s)
 	}
 	sb.WriteString("</conversation>\n")
-	return redactKeeping(sb.String(), ledgerRefs(ledger))
+	return clean(sb.String())
 }
 
 func writeLedger(sb *strings.Builder, l message.BranchLedger) {
@@ -349,21 +385,21 @@ func writeList(sb *strings.Builder, title string, items []string) {
 	}
 }
 
-func earlierSummary(m message.Message) string {
+func earlierSummary(m message.Message, clean func(string) string) string {
 	for _, p := range m.Parts {
 		switch s := p.(type) {
 		case message.CompactionContent:
 			return fmt.Sprintf("<summary source=\"compaction of history up to this point, which may predate the branch\">\n%s\n</summary>\n",
-				truncate(s.Summary, maxEarlierSummaryChars))
+				truncate(clean(s.Summary), maxEarlierSummaryChars))
 		case message.BranchSummaryContent:
 			return fmt.Sprintf("<summary source=\"an earlier branch this branch came back from\">\n%s\n</summary>\n",
-				truncate(s.Summary, maxEarlierSummaryChars))
+				truncate(clean(s.Summary), maxEarlierSummaryChars))
 		}
 	}
 	return ""
 }
 
-func serialise(m message.Message) string {
+func serialise(m message.Message, clean func(string) string) string {
 	var sb strings.Builder
 	for _, p := range m.Parts {
 		switch p := p.(type) {
@@ -375,15 +411,15 @@ func serialise(m message.Message) string {
 			if m.Role == message.User {
 				role = "User"
 			}
-			fmt.Fprintf(&sb, "[%s]: %s\n", role, p.Text)
+			fmt.Fprintf(&sb, "[%s]: %s\n", role, clean(p.Text))
 		case message.ToolCall:
-			fmt.Fprintf(&sb, "[Tool call] %s: %s\n", p.Name, truncate(redactedInput(p.Input), maxToolInputChars))
+			fmt.Fprintf(&sb, "[Tool call] %s: %s\n", p.Name, truncate(redactedInput(p.Input, clean), maxToolInputChars))
 		case message.ToolResult:
 			label := "Tool result"
 			if p.IsError {
 				label = "Tool error"
 			}
-			fmt.Fprintf(&sb, "[%s] %s\n", label, truncate(p.Content, maxToolResultChars))
+			fmt.Fprintf(&sb, "[%s] %s\n", label, truncate(clean(p.Content), maxToolResultChars))
 		}
 	}
 	return sb.String()
@@ -392,32 +428,39 @@ func serialise(m message.Message) string {
 // redactedInput redacts a tool input's decoded string values, where
 // quoting can't hide a secret from the patterns, and re-encodes it with
 // sorted keys, so the same call serialises to the same bytes.
-func redactedInput(input string) string {
+func redactedInput(input string, clean func(string) string) string {
 	var v any
 	if json.Unmarshal([]byte(input), &v) != nil {
-		return redact(input)
+		return clean(input)
 	}
-	b, err := json.Marshal(redactValues(v))
+	b, err := json.Marshal(redactValues(v, clean))
 	if err != nil {
-		return redact(input)
+		return clean(input)
 	}
 	return string(b)
 }
 
-func redactValues(v any) any {
+func redactValues(v any, clean func(string) string) any {
 	switch v := v.(type) {
 	case string:
-		return redact(v)
+		return clean(v)
 	case map[string]any:
 		for k, item := range v {
-			v[k] = redactValues(item)
+			v[k] = redactValues(item, clean)
 		}
 	case []any:
 		for i, item := range v {
-			v[i] = redactValues(item)
+			v[i] = redactValues(item, clean)
 		}
 	}
 	return v
+}
+
+func endLine(s string) string {
+	if strings.HasSuffix(s, "\n") {
+		return s
+	}
+	return s + "\n"
 }
 
 func truncate(s string, maxChars int) string {

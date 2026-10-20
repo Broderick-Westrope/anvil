@@ -251,7 +251,7 @@ func TestPrompt_KeepsNewestMessagesWithinBudget(t *testing.T) {
 
 	var rng []message.Message
 	for i := range 50 {
-		rng = append(rng, msg(fmt.Sprint(i), message.User, text(fmt.Sprintf("message-%02d %s", i, strings.Repeat("x", 400)))))
+		rng = append(rng, msg(fmt.Sprint(i), message.User, text(fmt.Sprintf("message-%02d %s", i, strings.Repeat("x ", 200)))))
 	}
 
 	got := branchsummary.Prompt(rng, message.BranchLedger{}, "", 2_000)
@@ -259,7 +259,7 @@ func TestPrompt_KeepsNewestMessagesWithinBudget(t *testing.T) {
 	require.Contains(t, got, "message-49")
 	require.NotContains(t, got, "message-00")
 	require.Contains(t, got, "earlier messages omitted")
-	require.LessOrEqual(t, len(got)/4, 2_000)
+	require.LessOrEqual(t, len(got)/3, 2_000)
 }
 
 func TestPrompt_AlwaysIncludesEarlierSummaries(t *testing.T) {
@@ -272,7 +272,7 @@ func TestPrompt_AlwaysIncludesEarlierSummaries(t *testing.T) {
 		},
 	}
 	for i := range 50 {
-		rng = append(rng, msg(fmt.Sprint(i), message.User, text(strings.Repeat("y", 400))))
+		rng = append(rng, msg(fmt.Sprint(i), message.User, text(strings.Repeat("y ", 200))))
 	}
 
 	got := branchsummary.Prompt(rng, message.BranchLedger{}, "", 2_000)
@@ -514,4 +514,73 @@ func TestPrompt_KeepsTheNewestCommandsWhenThereAreTooMany(t *testing.T) {
 	require.NotContains(t, got, "step-00")
 	require.Contains(t, got, "11 earlier commands omitted")
 	require.Less(t, strings.Index(got, "step-50"), strings.Index(got, "git merge feat"))
+}
+
+func TestPrompt_RedactsBeforeTruncating(t *testing.T) {
+	t.Parallel()
+
+	output := strings.Repeat("x ", 992) + "x" + `TOKEN="hunter2hunter2"`
+	rng := []message.Message{
+		msg("a1", message.Assistant, call("c", "bash", map[string]string{"command": "env"})),
+		msg("t1", message.Tool, result("c", output, false)),
+	}
+
+	got := branchsummary.Prompt(rng, message.BranchLedger{}, "", 10_000)
+
+	require.NotContains(t, got, "hunter2")
+}
+
+func TestPrompt_AnOversizedNewestMessageDoesNotHideTheRest(t *testing.T) {
+	t.Parallel()
+
+	rng := []message.Message{
+		msg("u1", message.User, text("EARLIER-CONTEXT")),
+		msg("a1", message.Assistant, text("FINAL-REPORT "+strings.Repeat("word ", 20_000))),
+	}
+
+	got := branchsummary.Prompt(rng, message.BranchLedger{}, "", 6_000)
+
+	require.Contains(t, got, "FINAL-REPORT")
+	require.Contains(t, got, "EARLIER-CONTEXT")
+	require.LessOrEqual(t, len(got)/3, 6_000)
+}
+
+func TestLedger_CompoundCommandOutcomeIsUnknown(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		command string
+		result  message.ToolResult
+		want    message.LedgerStatus
+	}{
+		"failed chain": {
+			command: "git commit -m x && git push",
+			result:  message.ToolResult{Content: "[main 1a2b3c4] x\nrejected\nExit code 1", Metadata: `{"exit_code":1}`},
+			want:    message.LedgerUnknown,
+		},
+		"status hidden by a later command": {
+			command: "git push; true",
+			result:  message.ToolResult{Content: "rejected", Metadata: `{}`},
+			want:    message.LedgerUnknown,
+		},
+		"whole chain succeeded": {
+			command: "git add . && git commit -m x",
+			result:  message.ToolResult{Content: "[main 1a2b3c4] x", Metadata: `{}`},
+			want:    message.LedgerSucceeded,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tc.result.ToolCallID = "c"
+			rng := []message.Message{
+				msg("a1", message.Assistant, call("c", "bash", map[string]string{"command": tc.command})),
+				msg("t1", message.Tool, tc.result),
+			}
+
+			got := branchsummary.Ledger(rng, noChildren)
+
+			require.Equal(t, tc.want, got.Events[0].Status)
+		})
+	}
 }
