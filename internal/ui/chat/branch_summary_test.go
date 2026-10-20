@@ -3,6 +3,9 @@ package chat
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -41,4 +44,8 @@ func TestBranchSummaryMessageItem(t *testing.T) {
 	require.Contains(t, ansi.Strip(item.Render(100)), "docs updated")
 
 	require.Equal(t, "child-1", item.AgentDrillIn())
+
+	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.True(t, handled)
+	require.Equal(t, util.AgentDrillInMsg{SessionID: "child-1", Label: "Branch summary"}, cmd())
 }

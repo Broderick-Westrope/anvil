@@ -3,10 +3,12 @@ package chat
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -33,6 +35,7 @@ type BranchSummaryMessageItem struct {
 var (
 	_ Expandable          = (*BranchSummaryMessageItem)(nil)
 	_ AgentDrillInHandler = (*BranchSummaryMessageItem)(nil)
+	_ KeyEventHandler     = (*BranchSummaryMessageItem)(nil)
 )
 
 // NewBranchSummaryMessageItem creates a BranchSummaryMessageItem.
@@ -73,6 +76,17 @@ func (b *BranchSummaryMessageItem) AgentDrillIn() string { return b.summary.Chil
 
 // AgentDrillInLabel implements AgentDrillInHandler.
 func (b *BranchSummaryMessageItem) AgentDrillInLabel() string { return "Branch summary" }
+
+// HandleKeyEvent implements KeyEventHandler: →/l drill into the
+// summarizer's session, as for agent items.
+func (b *BranchSummaryMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
+	if k := key.String(); (k == "right" || k == "l") && b.summary.ChildSessionID != "" {
+		return true, func() tea.Msg {
+			return util.AgentDrillInMsg{SessionID: b.summary.ChildSessionID, Label: b.AgentDrillInLabel()}
+		}
+	}
+	return false, nil
+}
 
 // SelectionSource implements [list.SourceSelectable].
 func (b *BranchSummaryMessageItem) SelectionSource() string { return b.summary.Summary }
