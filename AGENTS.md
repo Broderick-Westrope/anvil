@@ -146,6 +146,15 @@ Terms with a specific meaning in this codebase are defined in
   `lsp_idle_timeout` minutes of inactivity (default 15, `0` disables) and
   restart on demand. Any code path that reads a client must call
   `Manager.Touch(name)` so active clients are never reaped.
+- **Memory across instances**: people run many Anvil instances at once,
+  so anything a feature holds per instance is multiplied. Share it through
+  the first of these that meets a measured need, and say in the design
+  why earlier steps don't: (1) load on first use and release when idle;
+  (2) let the OS share it (memory-map read-only data; on-disk caches only
+  cut load time and peaks); (3) use the resource's own sharing mode, built
+  in the resource when we own it; (4) a shared process Anvil manages,
+  which doesn't exist yet and needs its own ADR. See
+  `docs/adr/0005-cross-instance-sharing.md`.
 - **Herdr reporting**: inside a Herdr pane the interactive TUI reports
   `idle`/`working`/`blocked` and names its tab via the `herdr` CLI
   (`internal/herdr`, wired in `internal/cmd/root.go`). The UI snapshots
