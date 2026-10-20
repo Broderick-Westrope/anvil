@@ -41,11 +41,20 @@ func (h *fakeDiagramHost) PushDrillIn(c *Chat, label string) {
 
 func (h *fakeDiagramHost) DrillInOpen(c *Chat) bool { return slices.Contains(h.drills, c) }
 
+// engineSlots caps how many tests run render engines at once. Each worker
+// loads its own Pele and resvg, and under the race detector a few dozen at
+// once starve each other past their deadlines.
+var engineSlots = make(chan struct{}, 4)
+
 func newTestMermaidFeature(t *testing.T, host *fakeDiagramHost, caps *common.Capabilities) *mermaidFeature {
 	t.Helper()
+	engineSlots <- struct{}{}
+	t.Cleanup(func() { <-engineSlots })
 	st := uistyles.TokyoNight()
 	f := newMermaidFeature(host, caps, &common.Common{Styles: &st})
 	f.exportDir = t.TempDir()
+	// Free the engines soon after a test stops using them.
+	f.idleTimeout = 200 * time.Millisecond
 	// Tests read results straight off the channel, so Observe mustn't
 	// hand back the blocking listen command.
 	f.listening = true
@@ -61,7 +70,7 @@ func waitResult(t *testing.T, f *mermaidFeature) tea.Msg {
 	select {
 	case msg := <-f.results:
 		return msg
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("the worker never answered")
 		return nil
 	}
@@ -182,23 +191,25 @@ func TestMermaidFeatureReportsFailures(t *testing.T) {
 func TestMermaidFeatureReleasesEnginesWhenIdle(t *testing.T) {
 	t.Parallel()
 
+	st := uistyles.TokyoNight()
+	require.Equal(t, 20*time.Second, newMermaidFeature(&fakeDiagramHost{}, kittyCaps(), &common.Common{Styles: &st}).idleTimeout)
+
 	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
-	require.Equal(t, 20*time.Second, f.idleTimeout)
 	f.idleTimeout = 50 * time.Millisecond
-	var returned atomic.Int32
-	f.returnMemory = func() { returned.Add(1) }
-	require.False(t, f.enginesLoaded.Load(), "nothing loads before the first diagram")
+	var released atomic.Int32
+	f.returnMemory = func() { released.Add(1) }
+	time.Sleep(100 * time.Millisecond)
+	require.Zero(t, released.Load(), "nothing loads, so nothing is released, before the first diagram")
 
 	f.Diagram("flowchart LR\n A --> B\n", 80)
 	waitReady(t, f)
-	require.True(t, f.enginesLoaded.Load())
-	require.Eventually(t, func() bool { return !f.enginesLoaded.Load() }, 5*time.Second, 10*time.Millisecond)
-	require.Eventually(t, func() bool { return returned.Load() == 1 }, 5*time.Second, 10*time.Millisecond,
-		"the freed memory is handed back to the OS")
+	require.Eventually(t, func() bool { return released.Load() == 1 }, 5*time.Second, 10*time.Millisecond,
+		"idle engines are dropped and their memory handed back to the OS")
 
 	f.Diagram("flowchart LR\n C --> D\n", 80)
 	waitReady(t, f)
-	require.True(t, f.enginesLoaded.Load(), "the engines load again on demand")
+	require.Eventually(t, func() bool { return released.Load() == 2 }, 5*time.Second, 10*time.Millisecond,
+		"the engines load again on demand, and are dropped again")
 }
 
 func TestMermaidFeatureEvictsOtherWidthsOnResize(t *testing.T) {

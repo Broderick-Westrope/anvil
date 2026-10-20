@@ -107,7 +107,6 @@ func (f *mermaidFeature) work() {
 					continue
 				}
 				engines = &diagramEngines{pele: pele}
-				f.enginesLoaded.Store(true)
 			}
 			msg, ok := f.runRequest(engines, req)
 			if !ok {
@@ -115,7 +114,6 @@ func (f *mermaidFeature) work() {
 				// request from fresh ones.
 				engines.close()
 				engines = nil
-				f.enginesLoaded.Store(false)
 			}
 			f.results <- msg
 			idle.Reset(f.idleTimeout)
@@ -123,7 +121,6 @@ func (f *mermaidFeature) work() {
 			if engines != nil {
 				engines.close()
 				engines = nil
-				f.enginesLoaded.Store(false)
 				f.returnMemory()
 			}
 		}

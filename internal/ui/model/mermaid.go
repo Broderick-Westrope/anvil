@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -167,9 +166,7 @@ type mermaidFeature struct {
 	// the OS; Go would otherwise keep it, and the process stays at its
 	// peak.
 	returnMemory func()
-	// enginesLoaded reports whether the worker holds the render engines.
-	enginesLoaded atomic.Bool
-	listening     bool
+	listening    bool
 	// drawn is what diagrams were last drawn under.
 	drawn drawConditions
 }
