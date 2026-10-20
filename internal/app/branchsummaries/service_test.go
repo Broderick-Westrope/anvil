@@ -117,8 +117,7 @@ func TestStart_StoresAndReleases(t *testing.T) {
 	require.Equal(t, branchsummaries.StateStored, stored.State)
 	require.Equal(t, "summary-1", stored.SummaryID)
 	require.Equal(t, runID, stored.RunID)
-	require.False(t, svc.Running("s"))
-	require.Eventually(t, func() bool { return fc.reservations("s") == 0 }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return !svc.Running("s") && fc.reservations("s") == 0 }, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestStart_OneRunPerSession(t *testing.T) {
@@ -147,7 +146,7 @@ func TestCancel(t *testing.T) {
 	require.True(t, svc.Cancel("s"))
 
 	require.Equal(t, branchsummaries.StateCancelled, next(t, events).State)
-	require.False(t, svc.Running("s"))
+	require.Eventually(t, func() bool { return !svc.Running("s") }, 5*time.Second, 10*time.Millisecond)
 	require.False(t, svc.Cancel("s"))
 }
 
@@ -179,5 +178,64 @@ func TestOutcomes(t *testing.T) {
 				require.ErrorIs(t, ev.Err, tc.err)
 			}
 		})
+	}
+}
+
+func TestShutdown_CancelsRunningSummaries(t *testing.T) {
+	t.Parallel()
+	svc, fc, events := setup(t)
+	_, err := svc.Start(request())
+	require.NoError(t, err)
+	next(t, events)
+	<-fc.requests
+
+	done := make(chan struct{})
+	go func() {
+		svc.Shutdown()
+		close(done)
+	}()
+
+	require.Equal(t, branchsummaries.StateCancelled, next(t, events).State)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not return")
+	}
+	require.False(t, svc.Running("s"))
+	require.Zero(t, fc.reservations("s"))
+}
+
+func TestStart_RunsUntilItsReservationIsReleased(t *testing.T) {
+	t.Parallel()
+	fc := newFakeCoordinator()
+	var svc *branchsummaries.Service
+	runningAtRelease := make(chan bool, 1)
+	svc = branchsummaries.New(t.Context(), func() branchsummaries.Coordinator {
+		return releaseObserver{fakeCoordinator: fc, observe: func() { runningAtRelease <- svc.Running("s") }}
+	})
+	t.Cleanup(svc.Shutdown)
+	events := svc.Subscribe(t.Context())
+	_, err := svc.Start(request())
+	require.NoError(t, err)
+	next(t, events)
+	<-fc.requests
+
+	fc.results <- result{summary: message.Message{ID: "summary-1"}}
+
+	require.Equal(t, branchsummaries.StateStored, next(t, events).State)
+	require.False(t, <-runningAtRelease, "the run ends before the session is released")
+}
+
+// releaseObserver calls observe as it releases a reservation.
+type releaseObserver struct {
+	*fakeCoordinator
+	observe func()
+}
+
+func (r releaseObserver) ReserveSession(id string) func() {
+	release := r.fakeCoordinator.ReserveSession(id)
+	return func() {
+		r.observe()
+		release()
 	}
 }

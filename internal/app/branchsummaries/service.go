@@ -102,20 +102,23 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 	s.mu.Unlock()
 
 	base := Event{SessionID: req.SessionID, RunID: r.id, Agent: req.Agent}
-	running := base
-	running.State = StateRunning
-	s.events.PublishMustDeliver(s.ctx, pubsub.UpdatedEvent, running)
-
 	s.wg.Go(func() {
 		defer cancel()
-		summary, err := c.SummarizeBranch(ctx, req)
-		s.mu.Lock()
-		delete(s.runs, req.SessionID)
-		s.mu.Unlock()
 		// Sends queued behind the summary start only after its outcome is
-		// published.
+		// published, and the run ends with its reservation.
 		defer release()
+		defer func() {
+			s.mu.Lock()
+			delete(s.runs, req.SessionID)
+			s.mu.Unlock()
+		}()
 
+		// Published here, so it can't arrive after the run's end.
+		running := base
+		running.State = StateRunning
+		s.events.PublishMustDeliver(s.ctx, pubsub.UpdatedEvent, running)
+
+		summary, err := c.SummarizeBranch(ctx, req)
 		end := base
 		switch {
 		case err == nil:
