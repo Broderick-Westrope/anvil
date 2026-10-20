@@ -63,8 +63,9 @@ Out:
 - Mutation CI must pass on changed lines (see `AGENTS.md` "Merge Gates").
   Avoid `make` capacity hints and map-ordered output in new code.
 - Nothing loads (Pele, resvg) until the first diagram renders, and nothing
-  loads at all when the option is off. Engines release after 2 minutes
-  idle, as in the spike.
+  loads at all when the option is off. Engines release after idle: the
+  spike used 2 minutes; the build uses 20 seconds, since reloading them
+  costs about 370 ms and diagrams near the view are rendered ahead.
 - `assistant.go` stays as close to upstream shape as the spike left it.
 - Licences ship with the vendored code: `PELE_LICENSE` (MIT),
   `resvg/LICENSE` (Apache-2.0), DejaVu font licence.
