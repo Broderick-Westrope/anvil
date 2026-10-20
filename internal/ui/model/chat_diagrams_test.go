@@ -442,3 +442,31 @@ func TestSelectingAcrossADiagramCopiesItsSource(t *testing.T) {
 		})
 	}
 }
+
+func TestChatPrefetchesOnlyWhenTheViewMoves(t *testing.T) {
+	t.Parallel()
+
+	com := common.DefaultCommon(nil)
+	diagrams := &countingDiagrams{}
+	msg := &message.Message{ID: "m", Role: message.Assistant}
+	c := NewChat(com)
+	c.SetSize(80, 5)
+	c.SetPrefetch(true)
+	c.SetMessages(
+		chat.NewAssistantMessageItem(com.Styles, finishedText("m", strings.Repeat("line\n\n", 5))),
+		chat.NewDiagramItem(com.Styles, msg, 1, "A\n", diagrams),
+		chat.NewAssistantMessageItem(com.Styles, finishedText("n", strings.Repeat("more\n\n", 5))),
+	)
+	c.ScrollToTop()
+	diagrams.asked = 0
+	c.prefetchNearby()
+	first := diagrams.asked
+	require.Positive(t, first)
+
+	c.prefetchNearby()
+	require.Equal(t, first, diagrams.asked, "an unchanged view isn't walked again")
+
+	c.ScrollBy(1)
+	c.prefetchNearby()
+	require.Greater(t, diagrams.asked, first, "scrolling looks again")
+}

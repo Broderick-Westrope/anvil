@@ -226,6 +226,10 @@ func (l *List) Overflows(height int) bool {
 	return false
 }
 
+// ScrollPosition is the first visible item and the line within it, which
+// is cheaper to read than Offset.
+func (l *List) ScrollPosition() (idx, line int) { return l.offsetIdx, l.offsetLine }
+
 // Offset returns the current scroll offset in lines from the top.
 func (l *List) Offset() int {
 	offset := 0
