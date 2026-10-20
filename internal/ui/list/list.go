@@ -658,6 +658,43 @@ func (l *List) AppendItems(items ...Item) {
 	l.totalHeightValid = false
 }
 
+// SpliceItems replaces the n items starting at idx with items. A selection
+// or view anchored inside the replaced run moves to its first new item;
+// one after it shifts with it.
+func (l *List) SpliceItems(idx, n int, items ...Item) {
+	if idx < 0 || n < 0 || idx+n > len(l.items) {
+		return
+	}
+	for _, removed := range l.items[idx : idx+n] {
+		delete(l.cache, removed)
+		delete(l.freezeSuppressed, removed)
+	}
+	tail := append([]Item(nil), l.items[idx+n:]...)
+	l.items = append(append(l.items[:idx], items...), tail...)
+
+	shift := func(i int) int {
+		switch {
+		case i < idx:
+			return i
+		case i < idx+n:
+			if len(items) == 0 {
+				return min(idx, len(l.items)-1)
+			}
+			return idx
+		default:
+			return i - n + len(items)
+		}
+	}
+	if l.selectedIdx >= 0 {
+		l.selectedIdx = shift(l.selectedIdx)
+	}
+	if l.offsetIdx >= idx && l.offsetIdx < idx+n {
+		l.offsetLine = 0
+	}
+	l.offsetIdx = max(0, shift(l.offsetIdx))
+	l.totalHeightValid = false
+}
+
 // RemoveItem removes the item at the given index from the list.
 func (l *List) RemoveItem(idx int) {
 	if idx < 0 || idx >= len(l.items) {

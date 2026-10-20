@@ -30,20 +30,49 @@ flowchart LR
   `internal/ui/image` Kitty path. Once the terminal has it, the feature
   invalidates the chat. The worker loads the engines on the first diagram
   and drops them after 2 minutes idle.
-- `internal/ui/chat/diagrams.go`: when a finished assistant message has a
-  diagram ready, it is rendered in segments with the image in place of the
-  fence. Any other case keeps the normal render, so the code block stays.
+- `internal/ui/chat/diagrams.go`: a finished assistant message with
+  top-level diagrams is shown as several chat nodes. The message itself
+  stays one `message.Message`. See "Diagrams as nodes" below.
+
+## Diagrams as nodes
+
+The UI shows one message as several nodes, as it already does for a
+message's tool calls (`chat.ExtractMessageItems`):
+
+- **Order:** `chat.NewAssistantMessageItems` cuts the text at each
+  top-level ```` ```mermaid ```` fence and returns a head, then text
+  (`AssistantMessageItem` with a `segment`) and diagram (`DiagramItem`)
+  nodes in document order, ahead of the message's tool calls. Blank text
+  between adjacent diagrams makes no node.
+- **IDs:** the head keeps the message ID, so every `MessageItem(msg.ID)`
+  lookup still finds it, and it keeps the "Thought for" line. The others
+  are `<id>#<n>`. The head can end up with no text of its own when the
+  message opens with a diagram.
+- **When:** only a message that finished normally is split. While it
+  streams it is one node, so nodes never appear or vanish mid-stream.
+  Canceled and failed messages stay one node with their footer.
+  `Chat.SyncAssistantSegments` (called from `updateSessionMessageToChat`)
+  swaps the node for its split when the message finishes, through a new
+  `List.SpliceItems`, and rebuilds the ID index. A split is rebuilt only
+  when its nodes' text or sources change. History loads split already.
+  `RemoveMessage` also removes the nodes after the head.
+- **Nested fences:** fences indented into a list item or quoted in a
+  blockquote aren't split, since cutting there would break the list or
+  quote in two. They stay code blocks.
+- **Diagram node keys:** `→`/`l`/`v` and clicks open the full-size view,
+  `o` the browser, `c`/`y` copy the source. Branching from any node
+  branches from its message (`SourceMessage`).
 
 ## Viewing a diagram full size
 
-- **Drill-in:** click a diagram, or press `v` on a focused message (first
-  diagram). A new drill-in type (`chat.DiagramDetailItem`) shows it at
+- **Drill-in:** click a diagram node, or press `→`/`l` on it. A new
+  drill-in type (`chat.DiagramDetailItem`) shows it at
   chat-text size with no row cap, up to the 297 rows a Kitty placeholder can
   address and 64 MB of pixels. Each placeholder cell names its image row,
   so the list scrolls it like any other lines and the image is sent once.
   The feature opens it through `featureHost.PushDrillIn` rather than a case
   in `ui.go`. The image is freed when the drill-in closes.
-- **Browser:** `o` on a focused message or in the drill-in writes a
+- **Browser:** `o` on a diagram node or in the drill-in writes a
   standalone HTML page to `$TMPDIR/anvil-diagrams` and opens it with
   `browser.OpenURL`. The page embeds DejaVu Sans, so labels fit the boxes
   Pele measured. It keeps an opaque background. Without Kitty support,

@@ -1,11 +1,15 @@
 package chat
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/glamour/v2"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // DiagramRenderer turns Mermaid source into terminal output that stands in
@@ -17,31 +21,74 @@ type DiagramRenderer interface {
 	Diagram(source string, width int) (string, bool)
 }
 
-// Diagrams renders Mermaid fences in finished assistant messages. Nil
-// leaves them as code blocks.
+// Diagrams renders Mermaid diagrams in the chat. Nil leaves them as code
+// blocks.
 //
 // SPIKE: a package-level hook keeps the experiment out of the item
 // constructors. A real implementation would thread it through
 // NewAssistantMessageItem.
 var Diagrams DiagramRenderer
 
+// ClickDrillInHandler is implemented by items whose handled click opens a
+// drill-in.
+type ClickDrillInHandler interface {
+	ClickDrillIn() tea.Cmd
+}
+
+// SegmentKeyed is implemented by the nodes a message is split into, so an
+// unchanged split isn't rebuilt.
+type SegmentKeyed interface {
+	SegmentKey() string
+}
+
+// DiagramOpenMsg asks to show a diagram at full size: in a drill-in, or in
+// the browser when External is set or the terminal can't show images.
+type DiagramOpenMsg struct {
+	Source   string
+	External bool
+}
+
+func diagramOpenCmd(source string, external bool) tea.Cmd {
+	return func() tea.Msg { return DiagramOpenMsg{Source: source, External: external} }
+}
+
+// segmentID is the ID of a message's index-th node after its head.
+func segmentID(messageID string, index int) string {
+	return fmt.Sprintf("%s#%d", messageID, index)
+}
+
+// IsSegmentOf reports whether id names one of messageID's nodes after its
+// head.
+func IsSegmentOf(id, messageID string) bool {
+	return strings.HasPrefix(id, messageID+"#")
+}
+
 type markdownSegment struct {
 	text    string
 	mermaid bool
 }
 
-// splitMermaid cuts content at every closed ```mermaid fence. Mermaid
-// segments hold the diagram source without the fence lines.
+// isFenceClose reports whether line closes a backtick fence at the top
+// level.
+func isFenceClose(line string) bool {
+	trimmed := strings.TrimRight(line, " \t\r\n")
+	return strings.HasPrefix(trimmed, "```") && strings.Trim(trimmed, "`") == ""
+}
+
+// splitMermaid cuts content at every closed ```mermaid fence that starts a
+// line at the top level. Fences indented into a list item or quoted in a
+// blockquote stay in the text, since cutting there would break the list or
+// quote in two. Mermaid segments hold the diagram source without the fence
+// lines.
 func splitMermaid(content string) []markdownSegment {
 	var segs []markdownSegment
 	var text, diagram strings.Builder
 	inMermaid := false
 	inOtherFence := false
 	for line := range strings.SplitAfterSeq(content, "\n") {
-		trimmed := strings.TrimSpace(line)
 		switch {
 		case inMermaid:
-			if strings.HasPrefix(trimmed, "```") && strings.Trim(trimmed, "`") == "" {
+			if isFenceClose(line) {
 				if text.Len() > 0 {
 					segs = append(segs, markdownSegment{text: text.String()})
 					text.Reset()
@@ -54,12 +101,12 @@ func splitMermaid(content string) []markdownSegment {
 			diagram.WriteString(line)
 		case inOtherFence:
 			text.WriteString(line)
-			if strings.HasPrefix(trimmed, "```") && strings.Trim(trimmed, "`") == "" {
+			if isFenceClose(line) {
 				inOtherFence = false
 			}
-		case strings.HasPrefix(trimmed, "```mermaid"):
+		case strings.HasPrefix(line, "```mermaid"):
 			inMermaid = true
-		case strings.HasPrefix(trimmed, "```"):
+		case strings.HasPrefix(line, "```"):
 			inOtherFence = true
 			text.WriteString(line)
 		default:
@@ -76,96 +123,165 @@ func splitMermaid(content string) []markdownSegment {
 	return segs
 }
 
-// diagramSpan is the lines a rendered diagram covers in a message's content.
-type diagramSpan struct {
-	start, end int // [start, end) lines from the top of the content.
-	source     string
+// splittable reports whether msg is shown as several nodes. Only a message
+// that finished normally is split: while it streams it stays one node, so
+// nodes never appear or vanish mid-stream, and canceled or failed messages
+// keep their footer on the one node.
+func splittable(msg *message.Message) bool {
+	if !msg.IsFinished() || msg.IsErrorLike() || msg.FinishReason() == message.FinishReasonCanceled {
+		return false
+	}
+	return strings.Contains(msg.Content().Text, "```mermaid")
 }
 
-// DiagramSources returns the source of every closed Mermaid fence in
-// content, in order.
-func DiagramSources(content string) []string {
-	if !strings.Contains(content, "```mermaid") {
-		return nil
+// NewAssistantMessageItems returns the nodes an assistant message is shown
+// as: one item, or, once it has finished with top-level diagrams, a head
+// followed by text and diagram nodes in document order. The head keeps the
+// message's ID; the others are "<id>#<n>".
+func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message) []MessageItem {
+	head := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
+	if !splittable(msg) {
+		return []MessageItem{head}
 	}
-	var out []string
-	for _, s := range splitMermaid(content) {
-		if s.mermaid {
-			out = append(out, s.text)
+	segs := splitMermaid(msg.Content().Text)
+	hasDiagram := false
+	for _, s := range segs {
+		hasDiagram = hasDiagram || s.mermaid
+	}
+	if !hasDiagram {
+		return []MessageItem{head}
+	}
+
+	head.segment = &assistantSegment{}
+	items := []MessageItem{head}
+	next := 1
+	for i, s := range segs {
+		switch {
+		case s.mermaid:
+			items = append(items, NewDiagramItem(sty, msg, next, s.text))
+			next++
+		case strings.TrimSpace(s.text) == "":
+		case i == 0:
+			// Text before the first diagram goes in the head, with the
+			// "Thought for" line.
+			head.segment.text = s.text
+		default:
+			seg := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
+			seg.segment = &assistantSegment{index: next, text: s.text}
+			items = append(items, seg)
+			next++
 		}
 	}
-	return out
+	return items
 }
 
-// renderWithDiagrams renders content as markdown with each Mermaid fence
-// replaced by its diagram, when one is ready, and reports the lines each
-// diagram covers. It returns false when no diagram is ready.
-func renderWithDiagrams(content string, width int, renderer *glamour.TermRenderer) (string, []diagramSpan, bool) {
-	if Diagrams == nil || !strings.Contains(content, "```mermaid") {
-		return "", nil, false
-	}
-	segs := splitMermaid(content)
-	diagrams := make([]string, len(segs))
-	anyReady := false
-	for i, s := range segs {
-		if !s.mermaid {
-			continue
-		}
-		if out, ok := Diagrams.Diagram(s.text, width); ok {
-			diagrams[i] = out
-			anyReady = true
-		}
-	}
-	if !anyReady {
-		// Keep the monolithic render until there's something to show.
-		return "", nil, false
-	}
+// DiagramItem is one Mermaid diagram from an assistant message, shown as its
+// own node: the image where the terminal can show it, otherwise the code
+// block.
+type DiagramItem struct {
+	*list.Versioned
+	*focusableMessageItem
 
-	mu := common.LockMarkdownRenderer(renderer)
-	mu.Lock()
-	defer mu.Unlock()
+	sty     *styles.Styles
+	message *message.Message
+	index   int
+	source  string
 
-	var parts []string
-	var spans []diagramSpan
-	line := 0
-	add := func(part string) {
-		if len(parts) > 0 {
-			line++ // The blank line joining parts.
-		}
-		parts = append(parts, part)
-		line += strings.Count(part, "\n") + 1
+	// fallback caches the code-block render, which goes through glamour.
+	fallback      string
+	fallbackWidth int
+}
+
+// NewDiagramItem creates the node for a message's index-th segment.
+func NewDiagramItem(sty *styles.Styles, msg *message.Message, index int, source string) *DiagramItem {
+	v := list.NewVersioned()
+	return &DiagramItem{
+		Versioned:            v,
+		focusableMessageItem: newFocusableMessageItem(v),
+		sty:                  sty,
+		message:              msg,
+		index:                index,
+		source:               source,
 	}
-	for i, s := range segs {
-		if diagrams[i] != "" {
-			start := line
-			if len(parts) > 0 {
-				start++
-			}
-			add(diagrams[i])
-			spans = append(spans, diagramSpan{start: start, end: line, source: s.text})
-			continue
+}
+
+// ID implements MessageItem.
+func (d *DiagramItem) ID() string { return segmentID(d.message.ID, d.index) }
+
+// Source is the diagram's Mermaid source.
+func (d *DiagramItem) Source() string { return d.source }
+
+// SegmentKey implements SegmentKeyed.
+func (d *DiagramItem) SegmentKey() string { return "diagram:" + d.source }
+
+// SourceMessage implements SourceMessageProvider, so actions on the
+// message, like branching, work from any of its nodes.
+func (d *DiagramItem) SourceMessage() message.Message { return d.message.Clone() }
+
+// Finished implements list.Item. The node changes when its image arrives,
+// so it is never frozen.
+func (d *DiagramItem) Finished() bool { return false }
+
+// RawRender implements list.RawRenderable.
+func (d *DiagramItem) RawRender(width int) string {
+	w := cappedMessageWidth(width)
+	if Diagrams != nil {
+		if out, ok := Diagrams.Diagram(d.source, w); ok {
+			return out
 		}
-		if s.mermaid {
-			s.text = "```mermaid\n" + s.text + "```\n"
-		}
-		out, err := renderer.Render(s.text)
+	}
+	if d.fallback == "" || d.fallbackWidth != w {
+		renderer := common.MarkdownRenderer(d.sty, w)
+		mu := common.LockMarkdownRenderer(renderer)
+		mu.Lock()
+		out, err := renderer.Render("```mermaid\n" + d.source + "```\n")
+		mu.Unlock()
 		if err != nil {
-			out = s.text
+			out = d.source
 		}
-		if out = trimGlamourMargins(out); out != "" {
-			add(out)
-		}
+		d.fallback, d.fallbackWidth = trimGlamourMargins(out), w
 	}
-	return strings.Join(parts, "\n\n"), spans, true
+	return d.fallback
 }
 
-// DiagramOpenMsg asks to show a diagram at full size: in a drill-in, or in
-// the browser when External is set or the terminal can't show images.
-type DiagramOpenMsg struct {
-	Source   string
-	External bool
+// Render implements list.Item, with the same focus prefix as assistant
+// messages.
+func (d *DiagramItem) Render(width int) string {
+	prefix := d.sty.Messages.AssistantBlurred.Render()
+	if d.focused {
+		prefix = d.sty.Messages.AssistantFocused.Render()
+	}
+	lines := strings.Split(d.RawRender(width), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
 
-func diagramOpenCmd(source string, external bool) tea.Cmd {
-	return func() tea.Msg { return DiagramOpenMsg{Source: source, External: external} }
+// HandleMouseClick implements list.MouseClickable: a left click anywhere
+// on the diagram opens it.
+func (d *DiagramItem) HandleMouseClick(btn ansi.MouseButton, _, _ int) bool {
+	return btn == ansi.MouseLeft
 }
+
+// ClickDrillIn implements ClickDrillInHandler.
+func (d *DiagramItem) ClickDrillIn() tea.Cmd { return diagramOpenCmd(d.source, false) }
+
+// HandleKeyEvent implements KeyEventHandler. →/l open the full-size view,
+// as they drill into tools and agents; o opens the browser; c/y copy the
+// source.
+func (d *DiagramItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
+	switch key.String() {
+	case "right", "l", "v":
+		return true, diagramOpenCmd(d.source, false)
+	case "o":
+		return true, diagramOpenCmd(d.source, true)
+	case "c", "y":
+		return true, common.CopyToClipboard(d.source, "Diagram source copied to clipboard")
+	}
+	return false, nil
+}
+
+// clearCache implements cacheClearable. The image is looked up on every
+// render, so only the version bump that follows matters.
+func (d *DiagramItem) clearCache() { d.fallback = "" }

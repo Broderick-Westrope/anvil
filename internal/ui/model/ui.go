@@ -1890,6 +1890,9 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		// A message that just finished with diagrams becomes several
+		// nodes; see chat.NewAssistantMessageItems.
+		c.SyncAssistantSegments(m.com.Styles, &msg)
 	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)

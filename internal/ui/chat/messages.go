@@ -408,7 +408,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 	case message.Assistant:
 		var items []MessageItem
 		if ShouldRenderAssistantMessage(msg) {
-			items = append(items, NewAssistantMessageItem(sty, msg))
+			items = append(items, NewAssistantMessageItems(sty, msg)...)
 		}
 		for _, tc := range msg.ToolCalls() {
 			var result *message.ToolResult

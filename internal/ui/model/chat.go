@@ -698,6 +698,16 @@ func (m *Chat) RemoveMessage(id string) {
 	// Remove from index map
 	delete(m.idInxMap, id)
 
+	// Remove the nodes a split message shows after its head.
+	for idx < m.list.Len() {
+		item, ok := m.list.ItemAt(idx).(chat.MessageItem)
+		if !ok || !chat.IsSegmentOf(item.ID(), id) {
+			break
+		}
+		m.list.RemoveItem(idx)
+		delete(m.idInxMap, item.ID())
+	}
+
 	// Rebuild index map for all items after the removed one
 	for i := idx; i < m.list.Len(); i++ {
 		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
@@ -868,10 +878,10 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 
 	if clickable, ok := selectedItem.(list.MouseClickable); ok {
 		handled := clickable.HandleMouseClick(ansi.MouseButton1, msg.X, msg.Y)
-		// A handled click on an assistant message is on its "Thought for"
-		// line or a diagram, which open their drill-ins.
-		if assistant, ok := selectedItem.(*chat.AssistantMessageItem); ok && handled {
-			return true, assistant.ClickDrillIn()
+		// A handled click on an assistant message's "Thought for" line or
+		// on a diagram opens its drill-in.
+		if driller, ok := selectedItem.(chat.ClickDrillInHandler); ok && handled {
+			return true, driller.ClickDrillIn()
 		}
 		// Toggle expansion only when the item signalled it handled the
 		// click, so clicks outside an item's expandable region (such as a
