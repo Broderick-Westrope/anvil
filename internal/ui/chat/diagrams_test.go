@@ -37,14 +37,25 @@ func TestRenderWithDiagrams(t *testing.T) {
 	t.Cleanup(func() { Diagrams = prev })
 
 	Diagrams = fakeDiagrams{}
-	_, ok := renderWithDiagrams(content, 80, renderer)
+	_, _, ok := renderWithDiagrams(content, 80, renderer)
 	require.False(t, ok, "no diagram ready keeps the monolithic render")
 
-	Diagrams = fakeDiagrams{"A\n": "[[IMAGE A]]"}
-	out, ok := renderWithDiagrams(content, 80, renderer)
+	Diagrams = fakeDiagrams{"A\n": "[[IMAGE A]]\n[[ROW 2]]"}
+	out, spans, ok := renderWithDiagrams(content, 80, renderer)
 	require.True(t, ok)
+	lines := strings.Split(out, "\n")
+	require.Len(t, spans, 1)
+	require.Equal(t, "A\n", spans[0].source)
+	require.Equal(t, []string{"[[IMAGE A]]", "[[ROW 2]]"}, lines[spans[0].start:spans[0].end])
 	require.Contains(t, out, "[[IMAGE A]]")
 	require.Contains(t, out, "B", "a diagram that isn't ready stays a code block")
 	require.Less(t, strings.Index(out, "Before"), strings.Index(out, "[[IMAGE A]]"))
 	require.Less(t, strings.Index(out, "[[IMAGE A]]"), strings.Index(out, "After"))
+}
+
+func TestDiagramSources(t *testing.T) {
+	t.Parallel()
+
+	require.Nil(t, DiagramSources("no diagrams"))
+	require.Equal(t, []string{"A\n", "B\n"}, DiagramSources("```mermaid\nA\n```\ntext\n```mermaid\nB\n```\n```mermaid\nopen"))
 }

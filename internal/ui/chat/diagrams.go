@@ -3,6 +3,7 @@ package chat
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 )
@@ -75,12 +76,33 @@ func splitMermaid(content string) []markdownSegment {
 	return segs
 }
 
+// diagramSpan is the lines a rendered diagram covers in a message's content.
+type diagramSpan struct {
+	start, end int // [start, end) lines from the top of the content.
+	source     string
+}
+
+// DiagramSources returns the source of every closed Mermaid fence in
+// content, in order.
+func DiagramSources(content string) []string {
+	if !strings.Contains(content, "```mermaid") {
+		return nil
+	}
+	var out []string
+	for _, s := range splitMermaid(content) {
+		if s.mermaid {
+			out = append(out, s.text)
+		}
+	}
+	return out
+}
+
 // renderWithDiagrams renders content as markdown with each Mermaid fence
-// replaced by its diagram, when one is ready. It returns false when content
-// has no Mermaid fence.
-func renderWithDiagrams(content string, width int, renderer *glamour.TermRenderer) (string, bool) {
+// replaced by its diagram, when one is ready, and reports the lines each
+// diagram covers. It returns false when no diagram is ready.
+func renderWithDiagrams(content string, width int, renderer *glamour.TermRenderer) (string, []diagramSpan, bool) {
 	if Diagrams == nil || !strings.Contains(content, "```mermaid") {
-		return "", false
+		return "", nil, false
 	}
 	segs := splitMermaid(content)
 	diagrams := make([]string, len(segs))
@@ -96,7 +118,7 @@ func renderWithDiagrams(content string, width int, renderer *glamour.TermRendere
 	}
 	if !anyReady {
 		// Keep the monolithic render until there's something to show.
-		return "", false
+		return "", nil, false
 	}
 
 	mu := common.LockMarkdownRenderer(renderer)
@@ -104,9 +126,23 @@ func renderWithDiagrams(content string, width int, renderer *glamour.TermRendere
 	defer mu.Unlock()
 
 	var parts []string
+	var spans []diagramSpan
+	line := 0
+	add := func(part string) {
+		if len(parts) > 0 {
+			line++ // The blank line joining parts.
+		}
+		parts = append(parts, part)
+		line += strings.Count(part, "\n") + 1
+	}
 	for i, s := range segs {
 		if diagrams[i] != "" {
-			parts = append(parts, diagrams[i])
+			start := line
+			if len(parts) > 0 {
+				start++
+			}
+			add(diagrams[i])
+			spans = append(spans, diagramSpan{start: start, end: line, source: s.text})
 			continue
 		}
 		if s.mermaid {
@@ -117,8 +153,19 @@ func renderWithDiagrams(content string, width int, renderer *glamour.TermRendere
 			out = s.text
 		}
 		if out = trimGlamourMargins(out); out != "" {
-			parts = append(parts, out)
+			add(out)
 		}
 	}
-	return strings.Join(parts, "\n\n"), true
+	return strings.Join(parts, "\n\n"), spans, true
+}
+
+// DiagramOpenMsg asks to show a diagram at full size: in a drill-in, or in
+// the browser when External is set or the terminal can't show images.
+type DiagramOpenMsg struct {
+	Source   string
+	External bool
+}
+
+func diagramOpenCmd(source string, external bool) tea.Cmd {
+	return func() tea.Msg { return DiagramOpenMsg{Source: source, External: external} }
 }

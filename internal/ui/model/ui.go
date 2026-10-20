@@ -476,7 +476,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
-	diagrams := newMermaidFeature(uiHost{ui}, &ui.caps)
+	diagrams := newMermaidFeature(uiHost{ui}, &ui.caps, com)
 	ui.features.register(diagrams)
 	chat.Diagrams = diagrams
 

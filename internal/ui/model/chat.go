@@ -869,9 +869,9 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 	if clickable, ok := selectedItem.(list.MouseClickable); ok {
 		handled := clickable.HandleMouseClick(ansi.MouseButton1, msg.X, msg.Y)
 		// A handled click on an assistant message is on its "Thought for"
-		// line, which opens the thinking drill-in.
+		// line or a diagram, which open their drill-ins.
 		if assistant, ok := selectedItem.(*chat.AssistantMessageItem); ok && handled {
-			return true, assistant.ThinkingDrillIn()
+			return true, assistant.ClickDrillIn()
 		}
 		// Toggle expansion only when the item signalled it handled the
 		// click, so clicks outside an item's expandable region (such as a

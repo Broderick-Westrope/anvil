@@ -123,6 +123,15 @@ type AssistantMessageItem struct {
 	// docs/notes/2026-05-12-chat-rendering-perf.md. See
 	// streaming_markdown.go for the full algorithm.
 	streamingContent streamingMarkdown
+
+	// diagramSpans are the lines each rendered diagram covers in the
+	// content, and contentOffset is where the content starts in the item,
+	// so a click can tell which diagram it landed on.
+	diagramSpans  []diagramSpan
+	contentOffset int
+	// clickedDiagram is the source of the diagram the last handled click
+	// landed on, or "" for the "Thought for" line.
+	clickedDiagram string
 }
 
 // NewAssistantMessageItem creates a new AssistantMessageItem.
@@ -323,8 +332,10 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	}
 
 	if content != "" {
+		a.contentOffset = 0
 		if footer != "" {
 			messageParts = append(messageParts, "")
+			a.contentOffset = a.thinkingFooterHeight + 1
 		}
 		messageParts = append(messageParts, a.cachedContent(width))
 	}
@@ -476,10 +487,12 @@ func (a *AssistantMessageItem) thinkingFinished() bool {
 func (a *AssistantMessageItem) renderMarkdown(content string, width int) string {
 	renderer := common.MarkdownRenderer(a.sty, width)
 	if a.message.IsFinished() {
-		if out, ok := renderWithDiagrams(content, width, renderer); ok {
+		if out, spans, ok := renderWithDiagrams(content, width, renderer); ok {
 			a.streamingContent.Reset()
+			a.diagramSpans = spans
 			return out
 		}
+		a.diagramSpans = nil
 		// Stream complete: take the definitive render so any
 		// force-advanced (seamed) streaming output is replaced.
 		return a.streamingContent.RenderFinal(content, width, renderer)
@@ -580,13 +593,34 @@ func (a *AssistantMessageItem) clearCache() {
 }
 
 // HandleMouseClick implements MouseClickable. It reports whether a left
-// click landed on the "Thought for" line, which the caller turns into a
-// thinking drill-in. The rest of the message isn't clickable.
+// click landed on the "Thought for" line or on a rendered diagram, which
+// the caller turns into a drill-in with ClickDrillIn. The rest of the
+// message isn't clickable.
 func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) bool {
 	if btn != ansi.MouseLeft {
 		return false
 	}
-	return y < a.thinkingFooterHeight
+	a.clickedDiagram = ""
+	if y < a.thinkingFooterHeight {
+		return true
+	}
+	line := y - a.contentOffset
+	for _, span := range a.diagramSpans {
+		if line >= span.start && line < span.end {
+			a.clickedDiagram = span.source
+			return true
+		}
+	}
+	return false
+}
+
+// ClickDrillIn returns the drill-in for the last handled click: the
+// diagram it landed on, or the thinking.
+func (a *AssistantMessageItem) ClickDrillIn() tea.Cmd {
+	if a.clickedDiagram != "" {
+		return diagramOpenCmd(a.clickedDiagram, false)
+	}
+	return a.ThinkingDrillIn()
 }
 
 // ThinkingDrillIn returns a command that opens the thinking text in a
@@ -610,6 +644,11 @@ func (a *AssistantMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 		// Drill into the thinking, matching the tool and agent →/l pattern.
 		if cmd := a.ThinkingDrillIn(); cmd != nil {
 			return true, cmd
+		}
+	case "v", "o":
+		// View the first diagram full size, or open it in the browser.
+		if sources := DiagramSources(a.message.Content().Text); len(sources) > 0 {
+			return true, diagramOpenCmd(sources[0], key.String() == "o")
 		}
 	}
 	return false, nil

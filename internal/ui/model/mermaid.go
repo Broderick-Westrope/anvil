@@ -3,12 +3,16 @@ package model
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"image"
+	"image/color"
 	"image/draw"
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -16,31 +20,76 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/pkg/browser"
 )
 
 // SPIKE: renders ```mermaid fences in finished assistant messages as Kitty
-// graphics. See internal/mermaid.
+// graphics, shows one full size in a drill-in, and opens one in the
+// browser. See internal/mermaid.
 
 // diagramHost is what the mermaid feature needs from UI.
 type diagramHost interface {
-	// InvalidateChat drops every chat item's render cache so diagrams
-	// that just became ready replace their code blocks.
+	// InvalidateChat drops every chat item's render cache, in the root
+	// chat and every drill-in, so diagrams that just became ready replace
+	// their placeholders.
 	InvalidateChat()
+	// AppBackground is the background Anvil paints the terminal with, or
+	// nil when the TUI is transparent and the terminal's own shows.
+	AppBackground() color.Color
+	// PushDrillIn opens c as a drill-in labelled label, focuses it and
+	// blurs the editor, as the tool and thinking drill-ins do.
+	PushDrillIn(c *Chat, label string)
+	// DrillInOpen reports whether c is still on the drill-in stack.
+	DrillInOpen(c *Chat) bool
 }
 
 func (h uiHost) InvalidateChat() {
 	if h.m.chat != nil {
 		h.m.chat.InvalidateRenderCaches()
 	}
+	for _, entry := range h.m.drillStack {
+		if entry.chat != nil {
+			entry.chat.InvalidateRenderCaches()
+		}
+	}
+}
+
+func (h uiHost) AppBackground() color.Color {
+	if h.m.isTransparent {
+		return nil
+	}
+	return h.m.com.Styles.Background
+}
+
+func (h uiHost) PushDrillIn(c *Chat, label string) {
+	c.SetFollow(false)
+	c.Focus()
+	h.m.drillStack = append(h.m.drillStack, drillInEntry{chat: c, label: label})
+	h.m.textarea.Blur()
+	h.m.focus = uiFocusMain
+	h.m.updateLayoutAndSize()
+	// Sizing a new chat pins it to the bottom; start at the top.
+	c.ScrollToTop()
+}
+
+func (h uiHost) DrillInOpen(c *Chat) bool {
+	return slices.ContainsFunc(h.m.drillStack, func(e drillInEntry) bool { return e.chat == c })
 }
 
 const (
-	// diagramMaxRows caps a diagram's height so one diagram can't take
-	// over the chat.
+	// diagramMaxRows caps a diagram's height in the chat so one diagram
+	// can't take over. The drill-in shows it uncapped.
 	diagramMaxRows = 40
+	// diagramMaxFullRows is the most rows a Kitty placeholder can address.
+	diagramMaxFullRows = 297
+	// diagramFullMaxPixels caps a drill-in image (64 MB of RGBA). There's
+	// only ever one, and it's freed when the drill-in closes.
+	diagramFullMaxPixels = 16 << 20
 	// diagramTextCellRatio is the height of Pele's 16px label text as a
 	// fraction of a terminal cell, so diagram text reads like the chat's.
 	diagramTextCellRatio = 0.8
@@ -54,12 +103,21 @@ const (
 	diagramCacheBudget = 32 << 20
 )
 
+// diagramKind is where a diagram is drawn.
+type diagramKind int
+
+const (
+	diagramInline diagramKind = iota
+	diagramFull
+)
+
 type diagramKey struct {
 	hash  uint64
 	width int
+	kind  diagramKind
 }
 
-func (k diagramKey) id() string { return fmt.Sprintf("mermaid-%x-%d", k.hash, k.width) }
+func (k diagramKey) id() string { return fmt.Sprintf("mermaid-%x-%d-%d", k.hash, k.width, k.kind) }
 
 type diagramState int
 
@@ -82,8 +140,12 @@ type diagramEntry struct {
 type diagramRequest struct {
 	key          diagramKey
 	source       string
+	theme        mermaid.Theme
 	cellW, cellH int
 	maxCols      int
+	// export writes the diagram as a page to open in the browser instead
+	// of rasterizing it.
+	export bool
 }
 
 type diagramReadyMsg struct {
@@ -97,43 +159,97 @@ type diagramReadyMsg struct {
 
 type diagramShownMsg struct{ key diagramKey }
 
+type diagramExportedMsg struct {
+	path string
+	err  error
+}
+
 type mermaidFeature struct {
 	host diagramHost
 	caps *common.Capabilities
+	com  *common.Common
 
 	mu      sync.Mutex
 	entries map[diagramKey]*diagramEntry
-	// width is the chat width diagrams were last drawn at. Entries for
+	// widths are the widths each kind was last drawn at. Entries for
 	// other widths are stale after a resize.
-	width int
-	clock uint64
+	widths [2]int
+	clock  uint64
+	// termBg is the terminal's own background, for when the TUI is
+	// transparent.
+	termBg string
+
+	// drill is the open diagram drill-in's chat, or nil.
+	drill *Chat
 
 	requests    chan diagramRequest
-	results     chan diagramReadyMsg
+	results     chan tea.Msg
 	startOnce   sync.Once
 	idleTimeout time.Duration
 	cacheBudget int
+	exportDir   string
 	// enginesLoaded reports whether the worker holds the render engines.
 	enginesLoaded atomic.Bool
 	listening     bool
 	supported     bool
 }
 
-func newMermaidFeature(host diagramHost, caps *common.Capabilities) *mermaidFeature {
+func newMermaidFeature(host diagramHost, caps *common.Capabilities, com *common.Common) *mermaidFeature {
 	return &mermaidFeature{
 		host:        host,
 		caps:        caps,
+		com:         com,
 		entries:     map[diagramKey]*diagramEntry{},
 		requests:    make(chan diagramRequest, 64),
-		results:     make(chan diagramReadyMsg, 64),
+		results:     make(chan tea.Msg, 64),
 		idleTimeout: diagramIdleTimeout,
 		cacheBudget: diagramCacheBudget,
+		exportDir:   filepath.Join(os.TempDir(), "anvil-diagrams"),
 	}
 }
 
-// Diagram implements chat.DiagramRenderer. It runs during rendering, so it
-// only touches the feature's own state and queues work.
+// Diagram implements chat.DiagramRenderer for diagrams in the chat.
 func (f *mermaidFeature) Diagram(source string, width int) (string, bool) {
+	return f.diagram(source, width, diagramInline)
+}
+
+// FullDiagram renders a diagram for the drill-in.
+func (f *mermaidFeature) FullDiagram(source string, width int) (string, bool) {
+	return f.diagram(source, width, diagramFull)
+}
+
+// theme is the palette diagrams draw with. pele-bg fills the boxes behind
+// edge labels, so it has to be the colour around the transparent image.
+func (f *mermaidFeature) theme() mermaid.Theme {
+	bg := hexColor(f.host.AppBackground())
+	if bg == "" {
+		bg = f.termBg
+	}
+	if bg == "" {
+		return mermaid.TokyoNight
+	}
+	return mermaid.TokyoNight.With("pele-bg", bg)
+}
+
+func hexColor(c color.Color) string {
+	if c == nil {
+		return ""
+	}
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
+}
+
+func sourceHash(source string, theme mermaid.Theme) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(source))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(theme["pele-bg"]))
+	return h.Sum64()
+}
+
+// diagram runs during rendering, so it only touches the feature's own state
+// and queues work.
+func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) (string, bool) {
 	if !f.caps.SupportsKittyGraphics() {
 		return "", false
 	}
@@ -141,13 +257,12 @@ func (f *mermaidFeature) Diagram(source string, width int) (string, bool) {
 	if cellW == 0 || cellH == 0 || width <= 0 {
 		return "", false
 	}
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(source))
-	key := diagramKey{hash: h.Sum64(), width: width}
+	theme := f.theme()
+	key := diagramKey{hash: sourceHash(source, theme), width: width, kind: kind}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.width = width
+	f.widths[kind] = width
 	f.clock++
 	if e, ok := f.entries[key]; ok {
 		e.lastUsed = f.clock
@@ -161,33 +276,48 @@ func (f *mermaidFeature) Diagram(source string, width int) (string, bool) {
 		// entry was evicted: render it again.
 		delete(f.entries, key)
 	}
-	select {
-	case f.requests <- diagramRequest{key: key, source: source, cellW: cellW, cellH: cellH, maxCols: width}:
+	req := diagramRequest{key: key, source: source, theme: theme, cellW: cellW, cellH: cellH, maxCols: width}
+	if f.enqueue(req) {
 		f.entries[key] = &diagramEntry{state: diagramPending, lastUsed: f.clock}
-		f.startOnce.Do(func() { go f.work() })
-	default:
-		// Queue full: try again on a later render.
 	}
 	return "", false
 }
 
+// enqueue hands req to the worker, starting it if needed, and reports false
+// when the queue is full.
+func (f *mermaidFeature) enqueue(req diagramRequest) bool {
+	select {
+	case f.requests <- req:
+		f.startOnce.Do(func() { go f.work() })
+		return true
+	default:
+		return false
+	}
+}
+
 // diagramEngines is everything a render needs. The worker owns it alone,
-// since neither engine is safe for concurrent use.
+// since neither engine is safe for concurrent use. The rasterizer loads on
+// the first image, so exporting alone doesn't compile resvg.
 type diagramEngines struct {
 	pele   *mermaid.Renderer
 	raster *mermaid.Rasterizer
 }
 
-func loadDiagramEngines() (*diagramEngines, error) {
-	pele, err := mermaid.NewRenderer()
-	if err != nil {
-		return nil, err
+func (e *diagramEngines) rasterizer() (*mermaid.Rasterizer, error) {
+	if e.raster == nil {
+		r, err := mermaid.NewRasterizer(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		e.raster = r
 	}
-	raster, err := mermaid.NewRasterizer(context.Background())
-	if err != nil {
-		return nil, err
+	return e.raster, nil
+}
+
+func (e *diagramEngines) close() {
+	if e.raster != nil {
+		_ = e.raster.Close()
 	}
-	return &diagramEngines{pele: pele, raster: raster}, nil
 }
 
 // work renders diagrams one at a time. It loads the engines on the first
@@ -201,18 +331,23 @@ func (f *mermaidFeature) work() {
 		select {
 		case req := <-f.requests:
 			if engines == nil {
-				var err error
-				if engines, err = loadDiagramEngines(); err != nil {
-					f.results <- diagramReadyMsg{key: req.key, err: err}
+				pele, err := mermaid.NewRenderer()
+				if err != nil {
+					f.results <- f.failure(req, err)
 					continue
 				}
+				engines = &diagramEngines{pele: pele}
 				f.enginesLoaded.Store(true)
 			}
-			f.results <- renderDiagram(engines, req)
+			if req.export {
+				f.results <- f.export(engines, req)
+			} else {
+				f.results <- renderDiagram(engines, req)
+			}
 			idle.Reset(f.idleTimeout)
 		case <-idle.C:
 			if engines != nil {
-				_ = engines.raster.Close()
+				engines.close()
 				engines = nil
 				f.enginesLoaded.Store(false)
 			}
@@ -220,8 +355,38 @@ func (f *mermaidFeature) work() {
 	}
 }
 
+func (f *mermaidFeature) failure(req diagramRequest, err error) tea.Msg {
+	if req.export {
+		return diagramExportedMsg{err: err}
+	}
+	return diagramReadyMsg{key: req.key, err: err}
+}
+
+func (f *mermaidFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
+	res, err := e.pele.Render(req.source, mermaid.Options{})
+	if err != nil {
+		return diagramExportedMsg{err: err}
+	}
+	doc, err := mermaid.HTMLDocument(res, req.theme, "Anvil diagram")
+	if err != nil {
+		return diagramExportedMsg{err: err}
+	}
+	if err := os.MkdirAll(f.exportDir, 0o700); err != nil {
+		return diagramExportedMsg{err: err}
+	}
+	path := filepath.Join(f.exportDir, fmt.Sprintf("%x.html", req.key.hash))
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		return diagramExportedMsg{err: err}
+	}
+	return diagramExportedMsg{path: path}
+}
+
 func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	fail := func(err error) diagramReadyMsg { return diagramReadyMsg{key: req.key, err: err} }
+	raster, err := e.rasterizer()
+	if err != nil {
+		return fail(err)
+	}
 	cw, ch := float64(req.cellW), float64(req.cellH)
 	maxPx := float64(req.maxCols) * cw
 	scale := diagramTextCellRatio * ch / peleBaseFontPx
@@ -231,12 +396,17 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 		return fail(err)
 	}
 	if res.Width <= 0 || res.Height <= 0 {
-		return fail(fmt.Errorf("empty diagram"))
+		return fail(errors.New("empty diagram"))
 	}
 	scale = math.Min(scale, maxPx/res.Width)
-	scale = math.Min(scale, diagramMaxRows*ch/res.Height)
+	maxRows, maxPixels := diagramMaxRows, mermaid.MaxPixels
+	if req.key.kind == diagramFull {
+		maxRows, maxPixels = diagramMaxFullRows, diagramFullMaxPixels
+	}
+	scale = math.Min(scale, float64(maxRows)*ch/res.Height)
+	scale = math.Min(scale, math.Sqrt(float64(maxPixels)/(res.Width*res.Height)))
 
-	img, err := e.raster.Rasterize(res, mermaid.TokyoNight, scale)
+	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: scale, MaxPixels: maxPixels})
 	if err != nil {
 		return fail(err)
 	}
@@ -245,7 +415,8 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	rows := int(math.Ceil(float64(b.Dy()) / ch))
 
 	// Pad to whole cells so the image fills its placeholder grid exactly
-	// and terminals that stretch to the grid (Herdr) keep the aspect.
+	// and terminals that stretch to the grid (Herdr) keep the aspect. The
+	// padding is transparent, like the diagram's background.
 	padded := image.NewRGBA(image.Rect(0, 0, cols*req.cellW, rows*req.cellH))
 	draw.Draw(padded, b, img, b.Min, draw.Src)
 	return diagramReadyMsg{key: req.key, img: padded, cols: cols, rows: rows, cellW: req.cellW, cellH: req.cellH}
@@ -253,24 +424,41 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 
 func (f *mermaidFeature) listen() tea.Msg { return <-f.results }
 
-// Observe starts listening for rendered diagrams, and re-renders the chat
-// when Kitty graphics support is first detected.
-func (f *mermaidFeature) Observe(tea.Msg) tea.Cmd {
+// Observe starts listening for rendered diagrams, asks the terminal for its
+// background, re-renders the chat when Kitty graphics support is first
+// detected, and frees the full-size image once its drill-in closes.
+func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
+	if bg, ok := msg.(tea.BackgroundColorMsg); ok {
+		f.termBg = hexColor(bg.Color)
+	}
 	if supported := f.caps.SupportsKittyGraphics(); supported != f.supported {
 		f.supported = supported
 		if supported {
 			f.host.InvalidateChat()
 		}
 	}
-	if f.listening {
-		return nil
+	var cmds []tea.Cmd
+	if f.drill != nil && !f.host.DrillInOpen(f.drill) {
+		f.drill = nil
+		cmds = append(cmds, f.forgetKind(diagramFull))
 	}
-	f.listening = true
-	return f.listen
+	if !f.listening {
+		f.listening = true
+		cmds = append(cmds, f.listen, tea.RequestBackgroundColor)
+	}
+	return tea.Batch(cmds...)
 }
 
 func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
+	case chat.DiagramOpenMsg:
+		return f.open(msg), true
+	case diagramExportedMsg:
+		if msg.err != nil {
+			slog.Warn("Failed to export mermaid diagram", "err", msg.err)
+			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("open diagram: %w", msg.err))), true
+		}
+		return tea.Batch(f.listen, openInBrowser(msg.path)), true
 	case diagramReadyMsg:
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -280,7 +468,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 			return f.listen, true
 		}
 		e := f.entries[msg.key]
-		if e == nil || msg.key.width != f.width {
+		if e == nil || msg.key.width != f.widths[msg.key.kind] {
 			// Resized while it rendered; it would be evicted at once.
 			delete(f.entries, msg.key)
 			return f.listen, true
@@ -307,14 +495,48 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	return nil, false
 }
 
+// open shows a diagram in a drill-in, or in the browser when asked to or
+// when the terminal can't show images.
+func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
+	if msg.External || !f.caps.SupportsKittyGraphics() {
+		theme := f.theme()
+		req := diagramRequest{key: diagramKey{hash: sourceHash(msg.Source, theme)}, source: msg.Source, theme: theme, export: true}
+		if !f.enqueue(req) {
+			return util.ReportWarn("Diagram renderer is busy; try again")
+		}
+		return util.ReportInfo("Opening diagram in browser")
+	}
+	c := NewChat(f.com)
+	c.SetMessages(chat.NewDiagramDetailItem(f.com.Styles, msg.Source, f.FullDiagram))
+	c.SelectLast()
+	f.host.PushDrillIn(c, "Diagram")
+	var cmd tea.Cmd
+	if f.drill != nil {
+		// Replacing one diagram drill-in with another.
+		cmd = f.forgetKind(diagramFull)
+	}
+	f.drill = c
+	return cmd
+}
+
+func openInBrowser(path string) tea.Cmd {
+	return func() tea.Msg {
+		if err := browser.OpenURL("file://" + path); err != nil {
+			return util.NewErrorMsg(fmt.Errorf("open diagram: %w", err))
+		}
+		return util.NewInfoMsg("Opened diagram in browser")
+	}
+}
+
 func (f *mermaidFeature) tmux() bool {
 	_, ok := f.caps.Env.LookupEnv("TMUX")
 	return ok
 }
 
-// evictLocked drops transmitted diagrams drawn at another width, then the
-// least recently drawn until the rest fit cacheBudget. keep is never
-// dropped. It returns the commands that free them in the terminal.
+// evictLocked drops transmitted diagrams drawn at a width their kind no
+// longer uses, then the least recently drawn until the rest fit
+// cacheBudget. keep is never dropped. It returns the commands that free
+// them in the terminal.
 func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 	var held []diagramKey
 	total := 0
@@ -323,7 +545,7 @@ func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 		if e.bytes == 0 {
 			continue
 		}
-		if key.width != f.width && key != keep {
+		if key.width != f.widths[key.kind] && key != keep {
 			cmds = append(cmds, f.forgetLocked(key))
 			continue
 		}
@@ -346,9 +568,30 @@ func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// forgetKind drops every diagram of kind.
+func (f *mermaidFeature) forgetKind(kind diagramKind) tea.Cmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var keys []diagramKey
+	for key := range f.entries {
+		if key.kind == kind {
+			keys = append(keys, key)
+		}
+	}
+	slices.SortFunc(keys, func(a, b diagramKey) int { return cmp.Compare(a.hash, b.hash) })
+	var cmds []tea.Cmd
+	for _, key := range keys {
+		cmds = append(cmds, f.forgetLocked(key))
+	}
+	return tea.Batch(cmds...)
+}
+
 func (f *mermaidFeature) forgetLocked(key diagramKey) tea.Cmd {
 	e := f.entries[key]
 	delete(f.entries, key)
+	if e.bytes == 0 {
+		return nil
+	}
 	return fimage.EncodingKitty.Forget(key.id(), e.cols, e.rows, f.tmux())
 }
 

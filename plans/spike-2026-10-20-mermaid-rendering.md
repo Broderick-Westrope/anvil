@@ -34,6 +34,21 @@ flowchart LR
   diagram ready, it is rendered in segments with the image in place of the
   fence. Any other case keeps the normal render, so the code block stays.
 
+## Viewing a diagram full size
+
+- **Drill-in:** click a diagram, or press `v` on a focused message (first
+  diagram). A new drill-in type (`chat.DiagramDetailItem`) shows it at
+  chat-text size with no row cap, up to the 297 rows a Kitty placeholder can
+  address and 64 MB of pixels. Each placeholder cell names its image row,
+  so the list scrolls it like any other lines and the image is sent once.
+  The feature opens it through `featureHost.PushDrillIn` rather than a case
+  in `ui.go`. The image is freed when the drill-in closes.
+- **Browser:** `o` on a focused message or in the drill-in writes a
+  standalone HTML page to `$TMPDIR/anvil-diagrams` and opens it with
+  `browser.OpenURL`. The page embeds DejaVu Sans, so labels fit the boxes
+  Pele measured. It keeps an opaque background. Without Kitty support,
+  `v` and clicks open the browser instead.
+
 ## Measurements (M-series Mac)
 
 | Step | Cost |
@@ -85,8 +100,12 @@ Nothing loads until the first diagram renders.
   12px. The spike adds an explicit `font-size` to the root element.
 - **resvg can't parse `color-mix(in srgb, ...)`,** which Pele uses for
   nested cluster titles. The spike evaluates it in Go.
-- **Translucent subgraph fills** picked up white from the transparent canvas.
-  The spike paints the theme background behind the diagram first.
+- **The edge-label boxes need the colour around the image.** Chat images
+  are transparent, so the terminal shows through, but Pele masks lines
+  behind edge labels with `--pele-bg`. The feature sets it to Anvil's
+  background (`Styles.Background`), or, with a transparent TUI, to the
+  terminal's own as reported by `tea.RequestBackgroundColor`. The
+  background is part of the cache key, so changing it renders again.
 - **Pele's default width table made labels overflow their boxes** in
   DejaVu. Passing a `measurer` backed by the same font fixes it.
 - **Herdr stretches Unicode-placeholder images to their grid**
@@ -95,14 +114,12 @@ Nothing loads until the first diagram renders.
 
 ## Not verified
 
-- **Seeing the image in a real Kitty-capable terminal.** The terminal MCP's
-  emulator can't draw images. It confirmed the fallback: without Kitty
-  support the code block renders as before. A model test checks the Kitty
-  path with faked capabilities, but it only goes as far as the placeholder
-  output. Run `/tmp/anvil-spike` in Ghostty and inside Herdr and ask for a
-  diagram.
+- **The drill-in and the transparent images on a real screen.** Inline
+  images were confirmed in Ghostty and Herdr. The terminal MCP's emulator
+  can't draw images, so the drill-in and transparency are covered only by
+  model tests with faked capabilities.
 - **Behaviour on resize** (it should re-render per width; the cache key
-  includes width), scrolling, compact mode and selection over an image.
+  includes width), compact mode and selection over an image.
 
 ## If this goes ahead
 
@@ -112,7 +129,9 @@ Nothing loads until the first diagram renders.
   map.
 - Reconsider resvg's fonts: they are fixed at build time in the vendored
   wasm. Rebuilding it from `go-resvg`'s Rust crate would let us supply
-  our own.- Decide what happens with large diagrams. They are currently scaled down to
-  40 rows. A drill-in at full size or "open SVG in browser" may be better.
+  our own.
+- Add `+`/`-` zoom and horizontal panning to the drill-in, if opening in
+  the browser isn't enough.
+- Show the `v`/`o` keys in the help bar when a message has a diagram.
 - Check how `gocognit`, `depguard` and mutation testing treat the new
   package before building on it.
