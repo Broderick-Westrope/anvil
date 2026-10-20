@@ -470,3 +470,18 @@ func TestMermaidFeatureIgnoresAResultForTheOldCellSize(t *testing.T) {
 	require.NotEqual(t, stale.key, fresh.key)
 	require.Equal(t, diagramPending, f.entries[fresh.key].state)
 }
+
+func TestMermaidFeatureRedrawsWhenTheBackgroundChanges(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	f.Observe(nil)
+	before := host.invalidations
+	f.Observe(nil)
+	require.Equal(t, before, host.invalidations, "nothing changed")
+
+	host.bg = nil // Transparency toggled on: the terminal's own background shows.
+	f.Observe(tea.BackgroundColorMsg{Color: color.RGBA{R: 0x05, G: 0x00, B: 0x14, A: 0xff}})
+	require.Equal(t, before+1, host.invalidations, "diagrams redraw against the new background")
+}

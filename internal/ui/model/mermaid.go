@@ -203,24 +203,26 @@ type mermaidFeature struct {
 	// enginesLoaded reports whether the worker holds the render engines.
 	enginesLoaded atomic.Bool
 	listening     bool
-	// drawn is what the terminal could show when the chat was last
-	// invalidated for it.
-	drawn diagramCaps
+	// drawn is what diagrams were last drawn under.
+	drawn drawConditions
 }
 
-// diagramCaps is what decides whether and how big diagrams draw.
-type diagramCaps struct {
+// drawConditions are what decide whether diagrams draw, how big, and
+// against which background. The chat caches its renders, so it has to be
+// invalidated when any of them change.
+type drawConditions struct {
 	kitty        bool
 	cellW, cellH int
+	bg           string
 }
 
-func (f *mermaidFeature) currentCaps() diagramCaps {
+func (f *mermaidFeature) conditions() drawConditions {
 	cellW, cellH := f.caps.CellSize()
-	return diagramCaps{kitty: f.caps.SupportsKittyGraphics(), cellW: cellW, cellH: cellH}
+	return drawConditions{kitty: f.caps.SupportsKittyGraphics(), cellW: cellW, cellH: cellH, bg: f.background()}
 }
 
 // usable reports whether diagrams can be drawn at all.
-func (c diagramCaps) usable() bool { return c.kitty && c.cellW > 0 && c.cellH > 0 }
+func (c drawConditions) usable() bool { return c.kitty && c.cellW > 0 && c.cellH > 0 }
 
 func newMermaidFeature(host diagramHost, caps *common.Capabilities, com *common.Common) *mermaidFeature {
 	return &mermaidFeature{
@@ -246,15 +248,19 @@ func (f *mermaidFeature) FullDiagram(source string, width int) chat.DiagramView 
 	return f.diagram(source, width, diagramFull)
 }
 
+// background is the colour around a transparent diagram image.
+func (f *mermaidFeature) background() string {
+	return cmp.Or(hexColor(f.host.AppBackground()), f.termBg, hexColor(f.com.Styles.Background))
+}
+
 // theme is the palette diagrams draw with, from the styles. pele-bg fills
 // the boxes behind edge labels, so it has to be the colour around the
 // transparent image: Anvil's background, the terminal's own when the TUI
 // is transparent, or the theme's until the terminal reports it.
 func (f *mermaidFeature) theme() mermaid.Theme {
 	p := f.com.Styles.Diagram
-	bg := cmp.Or(hexColor(f.host.AppBackground()), f.termBg, hexColor(f.com.Styles.Background))
 	return mermaid.Theme{
-		"pele-bg":           bg,
+		"pele-bg":           f.background(),
 		"pele-fg":           hexColor(p.Fg),
 		"pele-muted":        hexColor(p.Muted),
 		"pele-line":         hexColor(p.Line),
@@ -297,11 +303,10 @@ func sourceHash(source string, theme mermaid.Theme) uint64 {
 // diagram runs during rendering, so it only touches the feature's own state
 // and queues work.
 func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) chat.DiagramView {
-	caps := f.currentCaps()
-	if !caps.usable() || width <= 0 {
+	cellW, cellH := f.caps.CellSize()
+	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
-	cellW, cellH := caps.cellW, caps.cellH
 	theme := f.theme()
 	key := diagramKey{hash: sourceHash(source, theme), width: width, kind: kind, cellW: cellW, cellH: cellH}
 
@@ -480,11 +485,11 @@ func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
 		f.termBg = hexColor(bg.Color)
 	}
 	var cmds []tea.Cmd
-	if now := f.currentCaps(); now != f.drawn {
+	if now := f.conditions(); now != f.drawn {
 		if f.drawn.usable() {
-			// Images sized for the old cells would draw at the wrong
-			// size; results still rendering for them are dropped when
-			// they arrive, as their entries are gone.
+			// Images for the old cells or background would draw wrong;
+			// results still rendering for them are dropped when they
+			// arrive, as their entries are gone.
 			cmds = append(cmds, f.forgetAll())
 		}
 		f.drawn = now
