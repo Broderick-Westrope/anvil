@@ -160,6 +160,7 @@ func TestNewlineBefore(t *testing.T) {
 
 	require.Equal(t, -1, newlineBefore("abc\ndef", 0))
 	require.Equal(t, -1, newlineBefore("abcdef", 6))
+	require.Equal(t, 1, newlineBefore("\nabc", 4), "a newline at offset 0 still counts")
 	require.Equal(t, 4, newlineBefore("abc\ndef", 7))
 	require.Equal(t, 4, newlineBefore("abc\ndef\n", 8-1))
 	require.Equal(t, 8, newlineBefore("abc\ndef\n", 8))
