@@ -1,14 +1,16 @@
-// Package mermaid renders Mermaid diagram source to SVG with Pele running in
-// goja, and rasterizes that SVG for terminal display.
+// Package mermaid renders Mermaid diagram source to SVG with pele-go, a Go
+// port of Pele, and rasterizes that SVG for terminal display.
 package mermaid
 
 import (
-	_ "embed"
+	"context"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/dop251/goja"
+	pele "github.com/Broderick-Westrope/pele-go"
+	_ "github.com/Broderick-Westrope/pele-go/all"
+	"github.com/Broderick-Westrope/pele-go/fontmeasure"
 )
 
 // MaxSourceBytes is the largest diagram source Render accepts.
@@ -24,12 +26,9 @@ var (
 	ErrRenderTimeout = errors.New("diagram took too long to lay out")
 )
 
-//go:embed pele.global.js
-var peleSource string
-
 // Options controls Pele's layout.
 type Options struct {
-	// MaxWidth is the available width in pixels; zero leaves it unset.
+	// MaxWidth is the available width in pixels.
 	MaxWidth int
 }
 
@@ -40,81 +39,45 @@ type Result struct {
 	Height float64
 }
 
-// Renderer owns one goja runtime with Pele loaded. It is not safe for
-// concurrent use. Nothing is shared between Renderers, so dropping one
-// frees all of it.
+// Renderer lays diagrams out with labels measured in the embedded DejaVu
+// Sans. It is safe for concurrent use.
 type Renderer struct {
-	vm       *goja.Runtime
-	render   goja.Callable
-	measurer goja.Value
-	// afterFunc schedules the layout deadline; tests replace it.
-	afterFunc func(time.Duration, func()) *time.Timer
+	measurer pele.TextMeasurer
 }
 
-// NewRenderer loads Pele into a fresh goja runtime.
+// NewRenderer parses the embedded fonts.
 func NewRenderer() (*Renderer, error) {
-	return newRenderer(peleSource)
-}
-
-func newRenderer(source string) (*Renderer, error) {
-	prog, err := goja.Compile("pele.global.js", source, true)
-	if err != nil {
-		return nil, fmt.Errorf("compile pele: %w", err)
-	}
-	vm := goja.New()
-	if _, err := vm.RunProgram(prog); err != nil {
-		return nil, fmt.Errorf("load pele: %w", err)
-	}
-	pele := vm.Get("pele")
-	if pele == nil || goja.IsUndefined(pele) {
-		return nil, errors.New("pele global not defined")
-	}
-	render, ok := goja.AssertFunction(pele.ToObject(vm).Get("render"))
-	if !ok {
-		return nil, errors.New("pele.render is not a function")
-	}
-	m, err := newMeasurer()
+	m, err := fontmeasure.New(fontRegular, fontBold, fontItalic, fontBoldItalic)
 	if err != nil {
 		return nil, fmt.Errorf("load fonts: %w", err)
 	}
-	jsMeasurer := vm.NewObject()
-	if err := jsMeasurer.Set("width", m.width); err != nil {
-		return nil, fmt.Errorf("set measurer: %w", err)
-	}
-	return &Renderer{vm: vm, render: render, measurer: jsMeasurer, afterFunc: time.AfterFunc}, nil
+	return &Renderer{measurer: m}, nil
 }
 
-// Render converts Mermaid source into SVG.
-func (r *Renderer) Render(source string, opts Options) (Result, error) {
+// Render converts Mermaid source into SVG. It returns ErrRenderTimeout when
+// layout runs past its own deadline or ctx's.
+func (r *Renderer) Render(ctx context.Context, source string, opts Options) (Result, error) {
 	if len(source) > MaxSourceBytes {
 		return Result{}, ErrSourceTooLarge
 	}
-	// Images are off because the source is model-written and the exported
-	// page is opened in a browser, which would fetch every image href.
-	// Pele treats a maxWidth of 0 as unset.
-	jsOpts := map[string]any{"responsive": false, "images": false, "measurer": r.measurer, "maxWidth": opts.MaxWidth}
-	fired := make(chan struct{})
-	timer := r.afterFunc(renderTimeout, func() {
-		r.vm.Interrupt(ErrRenderTimeout)
-		close(fired)
+	ctx, cancel := context.WithTimeout(ctx, renderTimeout)
+	defer cancel()
+	res, err := pele.Render(ctx, source, pele.Options{
+		Measurer:   r.measurer,
+		Responsive: pele.Ptr(false),
+		// Images are off because the source is model-written and the
+		// exported page is opened in a browser, which would fetch every
+		// image href.
+		Images: pele.Ptr(false),
+		// Set even when 0, as it was for Pele in JavaScript, so diagrams
+		// lay out as they did there.
+		MaxWidth: pele.Ptr(float64(opts.MaxWidth)),
 	})
-	val, err := r.render(goja.Undefined(), r.vm.ToValue(source), r.vm.ToValue(jsOpts))
-	if !timer.Stop() {
-		// The deadline has fired or is firing: wait for its interrupt,
-		// then clear it, or it would stop the next render.
-		<-fired
-	}
-	r.vm.ClearInterrupt()
-	if interrupted, ok := errors.AsType[*goja.InterruptedError](err); ok && interrupted.Value() == ErrRenderTimeout {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return Result{}, ErrRenderTimeout
 	}
 	if err != nil {
 		return Result{}, fmt.Errorf("pele render: %w", err)
 	}
-	obj := val.ToObject(r.vm)
-	return Result{
-		SVG:    obj.Get("svg").String(),
-		Width:  obj.Get("width").ToFloat(),
-		Height: obj.Get("height").ToFloat(),
-	}, nil
+	return Result{SVG: res.SVG, Width: res.Width, Height: res.Height}, nil
 }

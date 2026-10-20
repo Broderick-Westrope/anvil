@@ -38,8 +38,9 @@ const (
 	// fraction of a terminal cell, so diagram text reads like the chat's.
 	diagramTextCellRatio = 0.8
 	peleBaseFontPx       = 16
-	// diagramIdleTimeout is how long the render engines (about 30 MB of
-	// process memory together) stay loaded after the last render.
+	// diagramIdleTimeout is how long the render engines (about 22 MB of
+	// process memory, nearly all of it resvg) stay loaded after the last
+	// render.
 	// Reloading them costs about 90 ms once resvg is in the compile
 	// cache, 370 ms before.
 	diagramIdleTimeout = 20 * time.Second
