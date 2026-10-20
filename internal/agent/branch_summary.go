@@ -77,20 +77,11 @@ func (c *coordinator) BranchSummarizers() []string {
 		}
 		names = append(names, name)
 	}
-	slices.SortFunc(names, func(a, b string) int {
-		return cmp.Or(
-			-cmp.Compare(boolInt(a == BuiltinBranchSummarizer), boolInt(b == BuiltinBranchSummarizer)),
-			strings.Compare(a, b),
-		)
-	})
-	return names
-}
-
-func boolInt(b bool) int {
-	if b {
-		return 1
+	slices.Sort(names)
+	if i := slices.Index(names, BuiltinBranchSummarizer); i > 0 {
+		names = slices.Insert(slices.Delete(names, i, i+1), 0, BuiltinBranchSummarizer)
 	}
-	return 0
+	return names
 }
 
 // SummarizeBranch runs a summarizer agent over the branch between
