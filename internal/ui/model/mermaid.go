@@ -128,7 +128,7 @@ const (
 )
 
 type diagramEntry struct {
-	state      diagramState
+	state diagramState
 	// err is why the render failed.
 	err        string
 	cols, rows int

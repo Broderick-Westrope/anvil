@@ -4,10 +4,10 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/key"
-	"github.com/Broderick-Westrope/anvil/internal/session"
-	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/stretchr/testify/require"
 )
