@@ -689,12 +689,12 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 	}
 }
 
-func TestMermaidFeaturePrefetchQueuesAndKeepsDiagrams(t *testing.T) {
+func TestMermaidFeatureInViewQueuesAndKeepsDiagrams(t *testing.T) {
 	t.Parallel()
 
 	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
 	const src = "flowchart LR\n Prefetched --> Early\n"
-	f.Prefetch(src, 80)
+	f.InView([]string{src}, 80)
 	ready := waitReady(t, f)
 	require.Equal(t, diagramInline, ready.key.kind, "the chat's image is queued")
 	f.HandleMsg(ready)
@@ -702,13 +702,38 @@ func TestMermaidFeaturePrefetchQueuesAndKeepsDiagrams(t *testing.T) {
 	f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
 
 	used := f.entries[ready.key].lastUsed
-	f.Prefetch(src, 80)
-	require.Greater(t, f.entries[ready.key].lastUsed, used, "a nearby diagram counts as drawn for eviction")
+	f.InView([]string{src}, 80)
+	require.Greater(t, f.entries[ready.key].lastUsed, used, "a diagram in view counts as drawn for eviction")
 	select {
 	case msg := <-f.results:
 		t.Fatalf("a ready diagram was queued again: %T", msg)
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+// On a HiDPI screen two or three diagrams can fill the budget. Evicting one
+// that's on screen made it fall back to its code block, render again and
+// evict the next, so diagrams flickered while scrolling.
+func TestMermaidFeatureNeverEvictsDiagramsInView(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	srcA, srcB := "flowchart LR\n InViewA --> X\n", "flowchart LR\n InViewB --> Y\n"
+	a, _ := showDiagram(t, f, srcA, 80)
+	b, _ := showDiagram(t, f, srcB, 80)
+	f.cacheBudget = f.entries[a.key].bytes // Room for one.
+	f.InView([]string{srcA, srcB}, 80)
+
+	c, evict := showDiagram(t, f, "flowchart LR\n Elsewhere --> Z\n", 80)
+	require.Empty(t, rawMsgs(evict), "nothing in view is deleted, though over budget")
+	require.Contains(t, f.entries, a.key)
+	require.Contains(t, f.entries, b.key)
+	require.Contains(t, f.entries, c.key)
+
+	f.InView(nil, 80)
+	_, evict = showDiagram(t, f, "flowchart LR\n Later --> W\n", 80)
+	require.Len(t, rawMsgs(evict), 3, "once out of view, the oldest go")
+	require.NotContains(t, f.entries, a.key)
 }
 
 func TestMermaidFeatureRetriesATransientFailureOnce(t *testing.T) {
@@ -756,7 +781,7 @@ func TestMermaidDiagramLimits(t *testing.T) {
 	t.Parallel()
 
 	require.Equal(t, 16_777_216, diagramFullMaxPixels)
-	require.Equal(t, 33_554_432, diagramCacheBudget)
+	require.Equal(t, 134_217_728, diagramCacheBudget)
 	require.Equal(t, 20*time.Second, diagramIdleTimeout)
 	require.Equal(t, 24*time.Hour, diagramExportMaxAge)
 }
@@ -1107,5 +1132,28 @@ func TestMermaidFeatureReportsEnginesThatWontLoad(t *testing.T) {
 	case msg := <-f.results:
 		t.Fatalf("one failure per request, got another %T", msg)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestMermaidFeatureInViewHoldsNothingWhenDiagramsCantDraw(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		caps  *common.Capabilities
+		width int
+	}{
+		"no kitty":       {caps: &common.Capabilities{Columns: 100, Rows: 40, PixelX: 1000, PixelY: 800}, width: 80},
+		"no cell width":  {caps: &common.Capabilities{KittyGraphics: true, Columns: 100, Rows: 40, PixelY: 800}, width: 80},
+		"no cell height": {caps: &common.Capabilities{KittyGraphics: true, Columns: 100, Rows: 40, PixelX: 1000}, width: 80},
+		"no width":       {caps: kittyCaps(), width: 0},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newIdleMermaidFeature(&fakeDiagramHost{}, tc.caps)
+			f.InView([]string{"flowchart LR\n A --> B\n"}, tc.width)
+			require.Empty(t, f.inView)
+			require.Empty(t, f.entries, "nothing is queued")
+		})
 	}
 }

@@ -115,9 +115,9 @@ type Chat struct {
 	// bottom on new messages.
 	follow bool
 
-	// prefetch starts slow work for items near the view when it moves;
-	// prefetchedView is the view it last did so for.
-	prefetch       bool
+	// diagrams, when set, is told which diagrams are on or near the view
+	// whenever it moves; prefetchedView is the view it was last told for.
+	diagrams       chat.DiagramRenderer
 	prefetchedView prefetchView
 
 	// drawCache memoizes the decoded form of the last list.Render output so
@@ -207,15 +207,15 @@ type prefetchView struct {
 	idx, line, items, width, height int
 }
 
-// SetPrefetch sets whether drawing starts the slow work for items near the
-// view (see prefetchNearby). Only chats that can hold such items need it.
-func (m *Chat) SetPrefetch(on bool) { m.prefetch = on }
+// SetDiagrams sets the renderer told which diagrams are on or near the
+// view (see prefetchNearby). Only chats that show diagrams need it.
+func (m *Chat) SetDiagrams(diagrams chat.DiagramRenderer) { m.diagrams = diagrams }
 
-// prefetchNearby starts the slow work, such as rendering diagrams, for
-// items within a screen above or below the view, so they are ready when
-// scrolled to.
+// prefetchNearby tells the diagram renderer which diagrams are on screen or
+// within a screen above or below it, so they render before they're
+// scrolled to and are never evicted while in view.
 func (m *Chat) prefetchNearby() {
-	if !m.prefetch {
+	if m.diagrams == nil {
 		return
 	}
 	idx, line := m.list.ScrollPosition()
@@ -224,11 +224,15 @@ func (m *Chat) prefetchNearby() {
 		return
 	}
 	m.prefetchedView = view
-	for _, item := range m.list.NearbyItems(m.list.Height()) {
-		if diagram, ok := item.(*chat.DiagramItem); ok {
-			diagram.Prefetch(m.list.Width())
+	var items []list.Item
+	start, end := m.list.VisibleItemIndices()
+	for i := start; i <= end; i++ {
+		if item := m.list.ItemAt(i); item != nil {
+			items = append(items, item)
 		}
 	}
+	items = append(items, m.list.NearbyItems(m.list.Height())...)
+	chat.ReportDiagramsInView(m.diagrams, items, m.list.Width())
 }
 
 // newChatDrawCache builds a chatDrawCache for the given rendered string by

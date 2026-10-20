@@ -213,12 +213,14 @@ Terms with a specific meaning in this codebase are defined in
   Unicode placeholders. Items get the renderer through their constructors
   as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
   code block shows while pending, without Kitty support, or (with a note)
-  after a failure. Drawing a chat starts renders for diagrams within a
-  screen of the view when the view moves (`Chat.SetPrefetch`,
-  `chat.DiagramRenderer.Prefetch`). An image arriving re-renders
+  after a failure. When the view moves, the chat tells the renderer which
+  diagrams are on or within a screen of it (`Chat.SetDiagrams`,
+  `chat.DiagramRenderer.InView`), which renders them ahead and never
+  evicts them while they stay there. An image arriving re-renders
   only diagram items (`Chat.InvalidateDiagrams`), which keeps the scroll
   position. The terminal holds the pixels; Anvil keeps none once sent, and
-  deletes the least recently drawn images past 32 MB. The engines load on
+  deletes the least recently drawn images out of view past 128 MB (a wide
+  diagram on a HiDPI screen is ~17 MB). The engines load on
   the first diagram and drop after 20 seconds idle. Colours come from
   `Styles.Diagram`. `options.tui.diagrams` (default on) needs a restart:
   `ConfigStore.DiagramsEnabled` reads the startup snapshot, and both the

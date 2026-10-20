@@ -95,8 +95,8 @@ Diagrams are the one exception that touches upstream-shaped code
 directly, because chat items are built in `UI` (`ExtractMessageItems`):
 
 - `UI` holds the feature's `chat.DiagramRenderer` in `m.diagrams`, set in
-  `New` (nil when `options.tui.diagrams` is off, when `New` also skips
-  `Chat.SetPrefetch`), and passes it to every `ExtractMessageItems` call
+  `New` (nil when `options.tui.diagrams` is off), gives it to the root chat
+  with `Chat.SetDiagrams`, and passes it to every `ExtractMessageItems` call
   except `loadNestedToolCalls`, whose assistant text is never shown.
 - `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
 - `selectedItemBindings` adds the diagram node's help entry.
