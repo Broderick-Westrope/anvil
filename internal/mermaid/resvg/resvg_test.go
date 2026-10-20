@@ -121,9 +121,13 @@ func TestNewIsSafeToCallConcurrently(t *testing.T) {
 	t.Parallel()
 
 	var wg sync.WaitGroup
-	for range 4 {
+	for i := range 4 {
+		cacheDir := ""
+		if i%2 == 0 {
+			cacheDir = t.TempDir()
+		}
 		wg.Go(func() {
-			e, err := New(t.Context(), "")
+			e, err := New(t.Context(), cacheDir)
 			if assert.NoError(t, err) {
 				_ = e.Close()
 			}

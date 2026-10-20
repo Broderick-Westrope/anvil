@@ -103,8 +103,9 @@ func New(ctx context.Context, cacheDir string) (*Engine, error) {
 	return newWithLimits(ctx, defaultLimits, cacheDir)
 }
 
-// newRuntimeMu serialises creating runtimes: wazero v1.12 sets a package
-// global on first use without synchronising it, so two at once race.
+// newRuntimeMu serialises creating runtimes and caches: wazero v1.12 sets
+// a package global on first use of either without synchronising it, so two
+// at once race.
 var newRuntimeMu sync.Mutex
 
 func newWithLimits(ctx context.Context, limits renderLimits, cacheDir string) (*Engine, error) {
@@ -123,15 +124,16 @@ func compile(ctx context.Context, limits renderLimits, cacheDir string) (*Engine
 		WithMemoryLimitPages(limits.Memory / wasmPageSize).
 		WithCloseOnContextDone(true)
 	e := &Engine{ctx: ctx, maxMemory: defaultMaxMemory, limits: limits}
+	newRuntimeMu.Lock()
 	if cacheDir != "" {
 		cache, err := wazero.NewCompilationCacheWithDir(cacheDir)
 		if err != nil {
+			newRuntimeMu.Unlock()
 			return nil, fmt.Errorf("resvg: cache %s: %w", cacheDir, err)
 		}
 		e.cache = cache
 		cfg = cfg.WithCompilationCache(cache)
 	}
-	newRuntimeMu.Lock()
 	e.rt = wazero.NewRuntimeWithConfig(ctx, cfg)
 	newRuntimeMu.Unlock()
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, e.rt); err != nil {
