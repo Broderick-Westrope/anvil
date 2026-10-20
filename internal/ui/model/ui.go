@@ -337,9 +337,6 @@ type UI struct {
 
 	// features are the fork features routed to from the dispatchers.
 	features features
-	// branchSummary is also registered in features; UI asks it whether a
-	// summary is running before it rewinds again.
-	branchSummary *branchSummaryFeature
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -479,8 +476,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
-	ui.branchSummary = newBranchSummaryFeature(uiHost{ui}, com, com.Workspace)
-	ui.features.register(ui.branchSummary)
+	ui.features.register(newBranchSummaryFeature(uiHost{ui}, com, com.Workspace))
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -2584,10 +2580,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort && !m.isAgentBusy() {
 			ws := m.com.Workspace
 			sid := m.session.ID
+			leafID := m.session.LeafMessageID
 			effort := msg.Effort
 			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					MessageType: message.MessageTypeThinkingLevelChange,
+					ParentMessageID: leafID,
+					MessageType:     message.MessageTypeThinkingLevelChange,
 					Parts: []message.ContentPart{
 						message.ThinkingLevelChangeContent{ThinkingLevel: effort},
 					},
@@ -2737,11 +2735,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.session != nil && m.session.LeafMessageID != "" {
 			ws := m.com.Workspace
 			sid := m.session.ID
+			leafID := m.session.LeafMessageID
 			serverName := msg.ServerName
 			enabled := msg.Enabled
 			cmds = append(cmds, func() tea.Msg {
 				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					MessageType: message.MessageTypeMCPToggle,
+					ParentMessageID: leafID,
+					MessageType:     message.MessageTypeMCPToggle,
 					Parts: []message.ContentPart{
 						message.MCPToggleContent{ServerName: serverName, Enabled: enabled},
 					},
@@ -2836,11 +2836,13 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
 				ws := m.com.Workspace
 				sid := m.session.ID
+				leafID := m.session.LeafMessageID
 				provider := msg.Model.Provider
 				modelID := msg.Model.Model
 				cmds = append(cmds, func() tea.Msg {
 					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-						MessageType: message.MessageTypeModelChange,
+						ParentMessageID: leafID,
+						MessageType:     message.MessageTypeModelChange,
 						Parts: []message.ContentPart{
 							message.ModelChangeContent{Provider: provider, ModelID: modelID},
 						},
@@ -3004,10 +3006,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				return tea.Batch(cmds...)
 			}
 			// Priority 4: Cancel streaming agent (immediate, bypasses
-			// two-phase Esc behavior). A branch summary comes first: its
-			// summarizer makes the app busy, but cancelling the root
-			// session would drop the sends queued behind the summary.
-			if cmd := m.cancelBranchSummaryFirst(); cmd != nil {
+			// two-phase Esc behavior).
+			if cmd, ok := m.features.cancel(); ok {
 				return tea.Batch(append(cmds, cmd)...)
 			}
 			if m.isAgentBusy() && m.hasSession() {
@@ -3033,7 +3033,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
-		if cmd := m.cancelBranchSummaryFirst(); cmd != nil {
+		if cmd, ok := m.features.cancel(); ok {
 			return tea.Batch(append(cmds, cmd)...)
 		}
 		if m.isAgentBusy() {
@@ -5237,8 +5237,8 @@ func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	if m.branchNavigation != nil || m.branchRestoring {
 		return util.ReportWarn("Please wait for navigation to finish.")
 	}
-	if m.branchSummary != nil && m.branchSummary.Busy(m.session.ID) {
-		return util.ReportWarn("Wait for the branch summary, or cancel it with esc, before rewinding again.")
+	if cmd := m.features.blockNavigation(); cmd != nil {
+		return cmd
 	}
 	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
 		return util.ReportWarn("Return to pre-branch conversation, then send or clear its draft before branching again.")

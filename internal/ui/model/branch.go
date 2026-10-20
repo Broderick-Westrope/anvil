@@ -81,9 +81,6 @@ func (m *UI) beginBranchReturn(pending bool) tea.Cmd {
 	if m.branchNavigation != nil || m.branchRestoring {
 		return util.ReportWarn("Please wait for navigation to finish.")
 	}
-	if m.branchSummary != nil && m.hasSession() && m.branchSummary.Busy(m.session.ID) {
-		return m.branchSummary.Cancel(m.session.ID)
-	}
 	snapshot := m.branchReturn
 	if pending {
 		snapshot = m.pendingBranch
@@ -104,17 +101,4 @@ func (m *UI) clearBranchState() {
 	m.branchNavigation = nil
 	m.branchRestoreSnapshot = nil
 	m.branchRestoring = false
-}
-
-// cancelBranchSummaryFirst cancels the root session's running branch
-// summary when nothing else is running in that session, and returns nil
-// otherwise, so cancel keys reach the summary before the busy agent.
-func (m *UI) cancelBranchSummaryFirst() tea.Cmd {
-	if m.branchSummary == nil || !m.hasSession() || m.isDrilledIn() {
-		return nil
-	}
-	if !m.branchSummary.Busy(m.session.ID) || m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
-		return nil
-	}
-	return m.branchSummary.Cancel(m.session.ID)
 }

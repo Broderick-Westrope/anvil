@@ -63,6 +63,22 @@ type paletteFeature interface {
 	PaletteEntries() []*dialog.CommandItem
 }
 
+// cancelFeature can claim the cancel keys (esc, and ctrl+c on an empty
+// composer) before UI cancels a busy agent, for work of its own that
+// makes the agent look busy.
+type cancelFeature interface {
+	// Cancel cancels the feature's work and reports true, or reports
+	// false when it has nothing to cancel.
+	Cancel() (tea.Cmd, bool)
+}
+
+// navigationGuard can refuse a rewind (a move of the session's leaf).
+type navigationGuard interface {
+	// BlockNavigation returns the command that explains why the rewind
+	// is refused, or nil to allow it.
+	BlockNavigation() tea.Cmd
+}
+
 // features is UI's ordered registry of features. Order is precedence:
 // the first feature to claim a message, key or action wins.
 type features struct {
@@ -70,6 +86,8 @@ type features struct {
 	commands []commandFeature
 	panels   []panelFeature
 	palettes []paletteFeature
+	cancels  []cancelFeature
+	guards   []navigationGuard
 }
 
 // register adds f, and the optional surfaces it implements, after the
@@ -85,6 +103,34 @@ func (fs *features) register(f feature) {
 	if p, ok := f.(paletteFeature); ok {
 		fs.palettes = append(fs.palettes, p)
 	}
+	if c, ok := f.(cancelFeature); ok {
+		fs.cancels = append(fs.cancels, c)
+	}
+	if g, ok := f.(navigationGuard); ok {
+		fs.guards = append(fs.guards, g)
+	}
+}
+
+// cancel offers the cancel keys to the features; the first to claim
+// them wins.
+func (fs *features) cancel() (tea.Cmd, bool) {
+	for _, f := range fs.cancels {
+		if cmd, ok := f.Cancel(); ok {
+			return cmd, true
+		}
+	}
+	return nil, false
+}
+
+// blockNavigation returns the first feature's refusal of a rewind, or
+// nil.
+func (fs *features) blockNavigation() tea.Cmd {
+	for _, f := range fs.guards {
+		if cmd := f.BlockNavigation(); cmd != nil {
+			return cmd
+		}
+	}
+	return nil
 }
 
 // isInput reports whether msg is keyboard, paste or mouse input, which

@@ -14,6 +14,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -368,4 +369,59 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 			u.features.handleMsg(msg)
 		}
 	}
+}
+
+// guardFeature claims cancel keys and refuses navigation while armed.
+type guardFeature struct {
+	fakeFeature
+	armed     bool
+	cancelled int
+}
+
+type guardCancelledMsg struct{}
+
+func (g *guardFeature) Cancel() (tea.Cmd, bool) {
+	if !g.armed {
+		return nil, false
+	}
+	g.cancelled++
+	return func() tea.Msg { return guardCancelledMsg{} }, true
+}
+
+func (g *guardFeature) BlockNavigation() tea.Cmd {
+	if !g.armed {
+		return nil
+	}
+	return util.ReportWarn("guarded")
+}
+
+func newGuardTestUI(t *testing.T) (*UI, *guardFeature) {
+	t.Helper()
+	u, _ := newFeatureTestUI(t)
+	g := &guardFeature{fakeFeature: fakeFeature{u: u}, armed: true}
+	u.features.register(g)
+	return u, g
+}
+
+func TestCancelFeatureClaimsTheCancelKeyFirst(t *testing.T) {
+	t.Parallel()
+	u, g := newGuardTestUI(t)
+	u.focus = uiFocusEditor
+
+	_, cmd := u.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	require.Equal(t, 1, g.cancelled)
+	require.Contains(t, cmdMsgs(cmd), tea.Msg(guardCancelledMsg{}))
+}
+
+func TestNavigationGuardRefusesARewind(t *testing.T) {
+	t.Parallel()
+	u, _ := newGuardTestUI(t)
+
+	cmd := u.handleNavigateTree(dialog.ActionNavigateTree{MessageID: "m"})
+
+	require.Nil(t, u.branchNavigation, "nothing is snapshotted for a refused rewind")
+	msgs := cmdMsgs(cmd)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "guarded", msgs[0].(util.InfoMsg).Msg)
 }

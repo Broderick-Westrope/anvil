@@ -85,6 +85,8 @@ func (w *branchSummaryTestWorkspace) AgentDiscardBranchSummary(_ context.Context
 
 func (w *branchSummaryTestWorkspace) AgentBranchSummarizers() []string { return w.agents }
 
+func (*branchSummaryTestWorkspace) AgentIsSessionBusy(string) bool { return false }
+
 func (w *branchSummaryTestWorkspace) Config() *config.Config { return w.cfg }
 
 type branchSummaryFixture struct {

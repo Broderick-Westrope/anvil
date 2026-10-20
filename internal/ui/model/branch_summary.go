@@ -27,6 +27,7 @@ type branchSummaryWorkspace interface {
 	AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error)
 	AgentCancelBranchSummary(sessionID string)
 	AgentBranchSummaryRunning(sessionID string) bool
+	AgentIsSessionBusy(sessionID string) bool
 	AgentDiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
 	AgentBranchSummarizers() []string
 	Config() *config.Config
@@ -60,6 +61,14 @@ type actionBranchSummaryCancel struct{}
 // failed one, from the palette.
 type actionBranchSummaryDismiss struct{}
 
+var (
+	_ feature         = (*branchSummaryFeature)(nil)
+	_ panelFeature    = (*branchSummaryFeature)(nil)
+	_ paletteFeature  = (*branchSummaryFeature)(nil)
+	_ cancelFeature   = (*branchSummaryFeature)(nil)
+	_ navigationGuard = (*branchSummaryFeature)(nil)
+)
+
 // branchSummaryFeature offers to summarize the branch a rewind left
 // behind, starts the chosen summarizer, and shows the runs the
 // branchsummaries service reports, with controls to cancel a running
@@ -87,8 +96,29 @@ func (b *branchSummaryFeature) Busy(sessionID string) bool {
 	return b.ws.AgentBranchSummaryRunning(sessionID)
 }
 
-// Cancel cancels sessionID's running summary. The rewind stays.
-func (b *branchSummaryFeature) Cancel(sessionID string) tea.Cmd {
+// Cancel implements cancelFeature. It claims the cancel keys while the
+// root session's summary runs and nothing else runs in that session: the
+// summarizer makes the app busy, but cancelling the root session would
+// drop the sends queued behind the summary.
+func (b *branchSummaryFeature) Cancel() (tea.Cmd, bool) {
+	sessionID := b.host.SessionID()
+	if !b.Busy(sessionID) || b.ws.AgentIsSessionBusy(sessionID) {
+		return nil, false
+	}
+	return b.cancelSession(sessionID), true
+}
+
+// BlockNavigation implements navigationGuard: no rewind while the
+// summary of the last one runs.
+func (b *branchSummaryFeature) BlockNavigation() tea.Cmd {
+	if !b.Busy(b.host.SessionID()) {
+		return nil
+	}
+	return util.ReportWarn("Wait for the branch summary, or cancel it with esc, before rewinding again.")
+}
+
+// cancelSession cancels sessionID's running summary. The rewind stays.
+func (b *branchSummaryFeature) cancelSession(sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		b.ws.AgentCancelBranchSummary(sessionID)
 		return util.NewInfoMsg("Cancelling branch summary...")
@@ -173,7 +203,7 @@ func (b *branchSummaryFeature) drop(sessionID string) tea.Cmd {
 	case r == nil:
 		return nil
 	case r.state == branchsummaries.StateRunning:
-		return b.Cancel(sessionID)
+		return b.cancelSession(sessionID)
 	default:
 		return b.dismiss(sessionID)
 	}
@@ -269,7 +299,7 @@ func (b *branchSummaryFeature) HandleAction(action dialog.Action) (tea.Cmd, bool
 		return nil, false
 	case actionBranchSummaryCancel:
 		b.host.Dialogs().CloseDialog(dialog.CommandsID)
-		return b.Cancel(b.host.SessionID()), true
+		return b.cancelSession(b.host.SessionID()), true
 	case actionBranchSummaryDismiss:
 		b.host.Dialogs().CloseDialog(dialog.CommandsID)
 		return b.dismiss(b.host.SessionID()), true

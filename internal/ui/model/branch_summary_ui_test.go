@@ -49,8 +49,7 @@ func branchSummaryUI(t *testing.T) (*UI, *runningSummaryWorkspace) {
 	require.NoError(t, f.Workspace.MoveLeaf(f.Context, m.session.ID, reply.ID))
 	m.session.LeafMessageID = reply.ID
 	ws := &runningSummaryWorkspace{branchSummaryWorkspace: m.com.Workspace, running: map[string]bool{}}
-	m.branchSummary = newBranchSummaryFeature(uiHost{m}, m.com, ws)
-	m.features.register(m.branchSummary)
+	m.features.register(newBranchSummaryFeature(uiHost{m}, m.com, ws))
 	return m, ws
 }
 
