@@ -86,13 +86,39 @@ func TestNewAssistantMessageItemsSplitsInDocumentOrder(t *testing.T) {
 	}, nodeSummary(items), "blank text between adjacent diagrams makes no node")
 }
 
-func TestNewAssistantMessageItemsHeadWhenADiagramComesFirst(t *testing.T) {
+func TestNewAssistantMessageItemsHead(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	items := NewAssistantMessageItems(&sty, finishedMessage("m", message.TextContent{Text: "```mermaid\nA\n```\n\nAfter\n"}))
-	require.Equal(t, []string{"m text:", "m#1 diagram:A", "m#2 text:After"}, nodeSummary(items),
-		"the head keeps the message ID even with no text of its own")
+	reasoning := message.ReasoningContent{Thinking: "hmm", StartedAt: testStartedAt, FinishedAt: testFinishedAt}
+	tests := map[string]struct {
+		parts []message.ContentPart
+		want  []string
+	}{
+		"text first": {
+			parts: []message.ContentPart{message.TextContent{Text: "Before\n\n```mermaid\nA\n```\n"}},
+			want:  []string{"m text:Before", "m#1 diagram:A"},
+		},
+		"diagram first, no thinking": {
+			parts: []message.ContentPart{message.TextContent{Text: "```mermaid\nA\n```\n\nAfter\n"}},
+			want:  []string{"m diagram:A", "m#1 text:After"},
+		},
+		"blank lines, then a diagram": {
+			parts: []message.ContentPart{message.TextContent{Text: "\n\n```mermaid\nA\n```\n"}},
+			want:  []string{"m diagram:A"},
+		},
+		"diagram first, with thinking": {
+			parts: []message.ContentPart{reasoning, message.TextContent{Text: "```mermaid\nA\n```\n"}},
+			want:  []string{"m text:", "m#1 diagram:A"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			items := NewAssistantMessageItems(&sty, finishedMessage("m", tc.parts...))
+			require.Equal(t, tc.want, nodeSummary(items))
+		})
+	}
 }
 
 func TestNewAssistantMessageItemsKeepsOneNode(t *testing.T) {

@@ -110,3 +110,19 @@ func TestRemoveMessageRemovesItsNodes(t *testing.T) {
 	require.Equal(t, []string{"tool-1"}, chatIDs(m.chat))
 	requireIndexed(t, m.chat)
 }
+
+func TestADiagramHeadReturnsToOneNode(t *testing.T) {
+	t.Parallel()
+
+	m := newSplitTestUI()
+	m.appendSessionMessage(assistantWithTool("```mermaid\nA\n```\n\nAfter\n", message.FinishReasonToolUse))
+	require.Equal(t, []string{"m", "m#1", "tool-1"}, chatIDs(m.chat))
+	_, ok := m.chat.MessageItem("m").(*chat.DiagramItem)
+	require.True(t, ok, "the opening diagram is the head, with no empty node above it")
+
+	m.updateSessionMessage(assistantWithTool("No diagrams now", message.FinishReasonToolUse))
+	require.Equal(t, []string{"m", "tool-1"}, chatIDs(m.chat))
+	_, ok = m.chat.MessageItem("m").(*chat.AssistantMessageItem)
+	require.True(t, ok)
+	requireIndexed(t, m.chat)
+}

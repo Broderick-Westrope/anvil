@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -135,9 +136,11 @@ func splittable(msg *message.Message) bool {
 }
 
 // NewAssistantMessageItems returns the nodes an assistant message is shown
-// as: one item, or, once it has finished with top-level diagrams, a head
-// followed by text and diagram nodes in document order. The head keeps the
-// message's ID; the others are "<id>#<n>".
+// as: one item, or, once it has finished with top-level diagrams, text and
+// diagram nodes in document order. The first node is the head: it keeps the
+// message's ID, and the others are "<id>#<n>". The head is a text node
+// holding the "Thought for" line and any text before the first diagram,
+// unless it would be empty, in which case the first diagram is the head.
 func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message) []MessageItem {
 	head := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
 	if !splittable(msg) {
@@ -152,25 +155,33 @@ func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message) []Messag
 		return []MessageItem{head}
 	}
 
-	head.segment = &assistantSegment{}
-	items := []MessageItem{head}
-	next := 1
-	for i, s := range segs {
-		switch {
-		case s.mermaid:
+	// Blank text between nodes makes no node.
+	segs = slices.DeleteFunc(segs, func(s markdownSegment) bool {
+		return !s.mermaid && strings.TrimSpace(s.text) == ""
+	})
+
+	var items []MessageItem
+	next := 0
+	switch {
+	case !segs[0].mermaid:
+		// Text before the first diagram goes in the head, with the
+		// "Thought for" line.
+		head.segment = &assistantSegment{text: segs[0].text}
+		items, segs, next = append(items, head), segs[1:], 1
+	case head.hasThinking():
+		// The "Thought for" line needs a node before the first diagram.
+		head.segment = &assistantSegment{}
+		items, next = append(items, head), 1
+	}
+	for _, s := range segs {
+		if s.mermaid {
 			items = append(items, NewDiagramItem(sty, msg, next, s.text))
-			next++
-		case strings.TrimSpace(s.text) == "":
-		case i == 0:
-			// Text before the first diagram goes in the head, with the
-			// "Thought for" line.
-			head.segment.text = s.text
-		default:
+		} else {
 			seg := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
 			seg.segment = &assistantSegment{index: next, text: s.text}
 			items = append(items, seg)
-			next++
 		}
+		next++
 	}
 	return items
 }
@@ -205,8 +216,14 @@ func NewDiagramItem(sty *styles.Styles, msg *message.Message, index int, source 
 	}
 }
 
-// ID implements MessageItem.
-func (d *DiagramItem) ID() string { return segmentID(d.message.ID, d.index) }
+// ID implements MessageItem. A diagram that opens a message without
+// thinking is its head and keeps the message's ID.
+func (d *DiagramItem) ID() string {
+	if d.index == 0 {
+		return d.message.ID
+	}
+	return segmentID(d.message.ID, d.index)
+}
 
 // Source is the diagram's Mermaid source.
 func (d *DiagramItem) Source() string { return d.source }

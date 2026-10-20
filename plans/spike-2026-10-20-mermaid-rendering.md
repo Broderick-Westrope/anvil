@@ -44,10 +44,11 @@ message's tool calls (`chat.ExtractMessageItems`):
   (`AssistantMessageItem` with a `segment`) and diagram (`DiagramItem`)
   nodes in document order, ahead of the message's tool calls. Blank text
   between adjacent diagrams makes no node.
-- **IDs:** the head keeps the message ID, so every `MessageItem(msg.ID)`
-  lookup still finds it, and it keeps the "Thought for" line. The others
-  are `<id>#<n>`. The head can end up with no text of its own when the
-  message opens with a diagram.
+- **IDs:** the first node is the head and keeps the message ID, so every
+  `MessageItem(msg.ID)` lookup still finds it. The others are `<id>#<n>`.
+  The head is a text node with the "Thought for" line and the text before
+  the first diagram. When a message opens with a diagram and has no
+  thinking, the diagram is the head, so there's no empty node above it.
 - **When:** only a message that finished normally is split. While it
   streams it is one node, so nodes never appear or vanish mid-stream.
   Canceled and failed messages stay one node with their footer.

@@ -17,7 +17,9 @@ func (m *Chat) SyncAssistantSegments(sty *styles.Styles, msg *message.Message) b
 	if !ok {
 		return false
 	}
-	if _, ok := m.list.ItemAt(idx).(*chat.AssistantMessageItem); !ok {
+	// The head is the message's first node: text, or a diagram when the
+	// message opens with one.
+	if _, ok := m.list.ItemAt(idx).(chat.SegmentKeyed); !ok {
 		return false
 	}
 	n := 1
