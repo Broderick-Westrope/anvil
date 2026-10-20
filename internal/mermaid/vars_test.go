@@ -1,6 +1,7 @@
 package mermaid
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -97,4 +98,22 @@ func TestVarResolverAllowsAValueExactlyAtTheLimit(t *testing.T) {
 
 	_, err = newResolver(4).substitute("var(--a)")
 	require.ErrorIs(t, err, errVarsTooLarge)
+}
+
+func TestResolveVarsRejectsDeepChains(t *testing.T) {
+	t.Parallel()
+
+	chain := func(links int) string {
+		var decls strings.Builder
+		for i := range links {
+			fmt.Fprintf(&decls, "--v%d:var(--v%d);", i, i+1)
+		}
+		return fmt.Sprintf(`<svg fill="var(--v0)" style="%s--v%d:red"/>`, decls.String(), links)
+	}
+	got, err := resolveVarsWithin(t, chain(maxVarDepth-1), nil)
+	require.NoError(t, err)
+	require.Contains(t, got, `fill="red"`)
+
+	_, err = resolveVarsWithin(t, chain(maxVarDepth), nil)
+	require.ErrorIs(t, err, errVarsTooDeep)
 }

@@ -12,6 +12,14 @@ type Theme map[string]string
 
 var errVarsTooLarge = errors.New("css variables expand too large")
 
+// errVarsTooDeep is returned when variables refer to each other more than
+// maxVarDepth deep. Pele's nest two or three deep.
+var errVarsTooDeep = errors.New("css variables nest too deep")
+
+// maxVarDepth bounds how deep variables may refer to each other, so a
+// cycle the resolver misses can't recurse without bound.
+const maxVarDepth = 32
+
 // minVarsLimit is the least output resolveVars allows, so small diagrams
 // can use theme values longer than the var() they replace.
 const minVarsLimit = 1 << 20
@@ -50,11 +58,12 @@ func resolveVars(svg string, theme Theme, post ...func(string) string) (string, 
 	var out strings.Builder
 	inTag := false
 	for svg != "" {
+		// Every path consumes some of svg, so the loop always ends.
 		if !inTag {
 			i := strings.IndexByte(svg, '<')
 			if i < 0 {
 				out.WriteString(svg)
-				break
+				return out.String(), nil
 			}
 			out.WriteString(svg[:i+1])
 			svg, inTag = svg[i+1:], true
@@ -63,7 +72,7 @@ func resolveVars(svg string, theme Theme, post ...func(string) string) (string, 
 		i := strings.IndexAny(svg, `>"'`)
 		if i < 0 {
 			out.WriteString(svg)
-			break
+			return out.String(), nil
 		}
 		out.WriteString(svg[:i+1])
 		quote := svg[i]
@@ -75,7 +84,7 @@ func resolveVars(svg string, theme Theme, post ...func(string) string) (string, 
 		end := strings.IndexByte(svg, quote)
 		if end < 0 {
 			out.WriteString(svg)
-			break
+			return out.String(), nil
 		}
 		value, err := r.substitute(svg[:end])
 		if err != nil {
@@ -130,14 +139,14 @@ func (r *varResolver) substitute(s string) (string, error) {
 		idx := strings.Index(s, "var(")
 		if idx < 0 {
 			out.WriteString(s)
-			break
+			return out.String(), nil
 		}
-		out.WriteString(s[:idx])
 		body, rest, ok := matchParen(s[idx+len("var("):])
 		if !ok {
-			out.WriteString(s[idx:])
-			break
+			out.WriteString(s)
+			return out.String(), nil
 		}
+		out.WriteString(s[:idx])
 		name, fallback, _ := strings.Cut(body, ",")
 		value, err := r.lookup(strings.TrimPrefix(strings.TrimSpace(name), "--"), strings.TrimSpace(fallback))
 		if err != nil {
@@ -149,7 +158,6 @@ func (r *varResolver) substitute(s string) (string, error) {
 		}
 		s = rest
 	}
-	return out.String(), nil
 }
 
 func (r *varResolver) lookup(name, fallback string) (string, error) {
@@ -159,6 +167,9 @@ func (r *varResolver) lookup(name, fallback string) (string, error) {
 	raw, ok := r.defs[name]
 	if !ok || r.resolving[name] {
 		return r.substitute(fallback)
+	}
+	if len(r.resolving) >= maxVarDepth {
+		return "", errVarsTooDeep
 	}
 	r.resolving[name] = true
 	value, err := r.substitute(raw)
