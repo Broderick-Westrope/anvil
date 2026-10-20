@@ -1,6 +1,7 @@
 package list
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -92,4 +93,36 @@ func TestList_ClampOffsetAfterAnItemShrinks(t *testing.T) {
 
 	l.ClampOffset()
 	require.Zero(t, l.offsetLine, "an offset already inside is kept")
+}
+
+func TestList_NearbyItems(t *testing.T) {
+	t.Parallel()
+
+	// Ten three-line items in a six-line viewport with no gap.
+	items := make([]Item, 10)
+	for i := range items {
+		items[i] = newTrackedItem(strconv.Itoa(i), "a\nb\nc", false)
+	}
+	l := NewList(items...)
+	l.SetSize(40, 6)
+	l.ScrollToIndex(4) // Items 4 and 5 fill the viewport.
+	start, end := l.VisibleItemIndices()
+	require.Equal(t, [2]int{4, 5}, [2]int{start, end})
+
+	ids := func(items []Item) []string {
+		out := make([]string, len(items))
+		for i, item := range items {
+			out[i] = item.(*trackedItem).id
+		}
+		return out
+	}
+	require.Equal(t, []string{"6", "3", "7", "2"}, ids(l.NearbyItems(6)), "nearest first, alternating below and above")
+	require.Empty(t, l.NearbyItems(0))
+
+	l.ScrollBy(2) // Two lines of item 4 are now above the viewport.
+	require.Equal(t, []string{"7"}, ids(l.NearbyItems(2)), "the hidden part of the first item counts toward the margin")
+
+	l.ScrollToTop()
+	require.Equal(t, []string{"2", "3"}, ids(l.NearbyItems(6)), "nothing above the top")
+	require.Empty(t, NewList().NearbyItems(6))
 }

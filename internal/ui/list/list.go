@@ -545,6 +545,35 @@ func (l *List) VisibleItemIndices() (startIdx, endIdx int) {
 	return startIdx, endIdx
 }
 
+// NearbyItems returns the items outside the viewport that start within
+// margin lines of it, nearest first, alternating below and above. It
+// renders them to measure them, as scrolling would.
+func (l *List) NearbyItems(margin int) []Item {
+	if len(l.items) == 0 {
+		return nil
+	}
+	start, end := l.VisibleItemIndices()
+	var below, above []Item
+	for idx, lines := end+1, 0; idx < len(l.items) && lines < margin; idx++ {
+		below = append(below, l.items[idx])
+		lines += l.getItem(idx).height + l.gap
+	}
+	for idx, lines := start-1, l.offsetLine; idx >= 0 && lines < margin; idx-- {
+		above = append(above, l.items[idx])
+		lines += l.getItem(idx).height + l.gap
+	}
+	var nearby []Item
+	for i := range max(len(below), len(above)) {
+		if i < len(below) {
+			nearby = append(nearby, below[i])
+		}
+		if i < len(above) {
+			nearby = append(nearby, above[i])
+		}
+	}
+	return nearby
+}
+
 // Render renders the list and returns the visible lines.
 //
 // F7: per-item slicing is bounded by the remaining viewport budget so

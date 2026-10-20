@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -248,4 +249,42 @@ func TestChatOpenedAtTheTopStaysThereWhenADiagramGrows(t *testing.T) {
 	diagrams.view = chat.DiagramView{State: chat.DiagramReady, Image: strings.TrimSuffix(strings.Repeat("ROW\n", 30), "\n")}
 	c.InvalidateRenderCaches()
 	require.Zero(t, c.list.Offset(), "the drill-in still starts at the top of the diagram")
+}
+
+// recordingDiagrams records which sources the chat asked for.
+type recordingDiagrams struct{ asked []string }
+
+func (r *recordingDiagrams) Diagram(source string, _ int) chat.DiagramView {
+	r.asked = append(r.asked, source)
+	return chat.DiagramView{}
+}
+
+func (r *recordingDiagrams) FullDiagram(string, int) chat.DiagramView { return chat.DiagramView{} }
+
+func TestChatDrawAsksForDiagramsWithinAScreenOfTheView(t *testing.T) {
+	t.Parallel()
+
+	com := common.DefaultCommon(nil)
+	diagrams := &recordingDiagrams{}
+	msg := &message.Message{ID: "m", Role: message.Assistant, Parts: []message.ContentPart{
+		message.TextContent{Text: "Intro"}, message.Finish{Reason: message.FinishReasonEndTurn},
+	}}
+	filler := func(id string) chat.MessageItem {
+		return chat.NewAssistantMessageItem(com.Styles, &message.Message{ID: id, Role: message.Assistant, Parts: []message.ContentPart{
+			message.TextContent{Text: strings.Repeat("filler\n\n", 3)}, message.Finish{Reason: message.FinishReasonEndTurn},
+		}})
+	}
+	near := chat.NewDiagramItem(com.Styles, msg, 1, "near\n", diagrams)
+	far := chat.NewDiagramItem(com.Styles, msg, 2, "far\n", diagrams)
+	c := NewChat(com)
+	c.SetSize(80, 10)
+	c.SetMessages(filler("a"), filler("b"), near, filler("c"), filler("d"), filler("e"), far)
+	c.ScrollToTop()
+	// Sizing measured the items at the bottom; only count what Draw asks.
+	diagrams.asked = nil
+
+	scr := uv.NewScreenBuffer(80, 10)
+	c.Draw(scr, scr.Bounds())
+	require.Contains(t, diagrams.asked, "near\n", "within a screen below the view")
+	require.NotContains(t, diagrams.asked, "far\n", "further away")
 }

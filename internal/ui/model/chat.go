@@ -179,6 +179,7 @@ func (m *Chat) Height() int {
 // invalidate it.
 func (m *Chat) Draw(scr uv.Screen, area uv.Rectangle) {
 	rendered := m.list.Render()
+	m.prefetchNearby()
 	method, ok := scr.WidthMethod().(ansi.Method)
 	if !ok {
 		// Width method isn't an ansi.Method (unlikely in practice — both
@@ -193,6 +194,17 @@ func (m *Chat) Draw(scr uv.Screen, area uv.Rectangle) {
 		m.drawCache = newChatDrawCache(rendered, method)
 	}
 	drawCachedBuffer(scr, area, m.drawCache.buf)
+}
+
+// prefetchNearby starts the slow work, such as rendering diagrams, for
+// items within a screen above or below the view, so they are ready when
+// scrolled to.
+func (m *Chat) prefetchNearby() {
+	for _, item := range m.list.NearbyItems(m.list.Height()) {
+		if p, ok := item.(chat.Prefetcher); ok {
+			p.Prefetch(m.list.Width())
+		}
+	}
 }
 
 // newChatDrawCache builds a chatDrawCache for the given rendered string by
