@@ -2,7 +2,7 @@
 
 Turns the `spike/mermaid-render` branch into a shipped feature. The spike's
 findings (pipeline, measurements, memory, resvg fixes, node ID rules) are in
-`plans/spike-2026-10-20-mermaid-rendering.md`; this spec records only what
+`plans/completed/spike-2026-10-20-mermaid-rendering.md`; this spec records only what
 the feature adds to, removes from, or changes about the spike. Where this
 spec is silent, the spike's behaviour stands.
 
@@ -222,7 +222,7 @@ Out:
 
 **Context Files:**
 
-- `plans/spike-2026-10-20-mermaid-rendering.md`: spike findings, the
+- `plans/completed/spike-2026-10-20-mermaid-rendering.md`: spike findings, the
   baseline for this spec.
 - `internal/mermaid/` (`pele.go`, `measure.go`, `vars.go`, `raster.go`,
   `export.go`, `resvg/`).

@@ -46,6 +46,7 @@ internal/
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
+  mermaid/                         Mermaid to pixels: Pele in goja, resvg in wazero (vendored)
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -200,6 +201,24 @@ Terms with a specific meaning in this codebase are defined in
   tool restriction, pinned model and a `submit_result` tool for schemas.
   Startup marks runs of dead instances interrupted and prunes run
   directories older than 14 days (`Store.PruneRunDirs`).
+- **Mermaid diagrams**: when an assistant message finishes, each top-level
+  ```` ```mermaid ```` fence becomes its own chat node
+  (`chat.NewAssistantMessageItems`, spliced in by
+  `Chat.SyncAssistantSegments`); the head keeps the message ID and the
+  rest are `<id>#<n>`. `mermaidFeature` (`internal/ui/model/mermaid.go`)
+  renders them on one worker goroutine with `internal/mermaid` (Pele in
+  goja for SVG, the vendored resvg in wazero for pixels) and sends Kitty
+  graphics with Unicode placeholders. Items get the renderer through
+  their constructors as a `chat.DiagramRenderer`, which reports a
+  `chat.DiagramState`: the code block shows while pending, without Kitty
+  support, or (with a note) after a failure. The engines load on the
+  first diagram and drop after 2 minutes idle. Colours come from
+  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a restart:
+  `ConfigStore.DiagramsEnabled` reads the startup snapshot, and both the
+  UI (a nil renderer means no split) and the system prompt line gate on
+  it. Design: `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  measurements and resvg workarounds:
+  `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
