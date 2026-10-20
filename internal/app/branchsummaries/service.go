@@ -110,9 +110,9 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 	r := &run{id: uuid.NewString(), cancel: cancel}
 	s.runs[req.SessionID] = r
 	release := c.ReserveSession(req.SessionID)
-	s.mu.Unlock()
-
 	base := Event{SessionID: req.SessionID, RunID: r.id, Agent: req.Agent}
+	// Started under the lock, so Shutdown, which sets closed under the same
+	// lock, either refuses this run or waits for it.
 	s.wg.Go(func() {
 		defer cancel()
 		// Sends queued behind the summary start only after its outcome is
@@ -146,6 +146,7 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 		}
 		s.events.PublishMustDeliver(s.ctx, pubsub.UpdatedEvent, end)
 	})
+	s.mu.Unlock()
 	return r.id, nil
 }
 
