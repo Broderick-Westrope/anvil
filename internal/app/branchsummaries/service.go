@@ -116,7 +116,9 @@ func (s *Service) Start(req agent.BranchSummaryRequest) (string, error) {
 		s.mu.Lock()
 		delete(s.runs, req.SessionID)
 		s.mu.Unlock()
-		release()
+		// Sends queued behind the summary start only after its outcome is
+		// published.
+		defer release()
 
 		end := base
 		switch {

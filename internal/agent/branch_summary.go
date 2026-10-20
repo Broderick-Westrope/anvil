@@ -171,41 +171,28 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 
 // DiscardBranchSummary deletes a branch summary and its child session.
 // When the summary is the session's leaf, the leaf moves back to the
-// summary's parent. It is refused once a message has been sent after the
-// summary.
+// summary's parent in the same transaction. It is refused once a message
+// has been sent after the summary.
 func (c *coordinator) DiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error {
 	// Holding waits out a send that has read the leaf but not yet stored
-	// its message, so the checks below see it.
+	// its message, so the delete sees it as a child.
 	release, err := c.Hold(ctx, []string{sessionID})
 	if err != nil {
 		return err
 	}
 	defer release()
 
-	sess, err := c.sessions.Get(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("get session %s: %w", sessionID, err)
-	}
-	children, err := c.messages.GetChildren(ctx, summaryID)
-	if err != nil {
-		return fmt.Errorf("get children of %s: %w", summaryID, err)
-	}
-	if len(children) > 0 {
-		return ErrBranchSummaryInUse
-	}
 	summary, err := c.messages.Get(ctx, summaryID)
 	if err != nil {
 		return fmt.Errorf("get branch summary %s: %w", summaryID, err)
 	}
-	if summary.MessageType != message.MessageTypeBranchSummary {
-		return fmt.Errorf("message %s is not a branch summary", summaryID)
+	if summary.MessageType != message.MessageTypeBranchSummary || summary.SessionID != sessionID {
+		return fmt.Errorf("message %s is not a branch summary in session %s", summaryID, sessionID)
 	}
-	if sess.LeafMessageID == summaryID {
-		if err := c.sessions.MoveLeaf(ctx, sessionID, summary.ParentMessageID); err != nil {
-			return fmt.Errorf("move leaf: %w", err)
+	if err := c.messages.DeleteChildless(ctx, sessionID, summaryID); err != nil {
+		if errors.Is(err, message.ErrHasChildren) {
+			return ErrBranchSummaryInUse
 		}
-	}
-	if err := c.messages.Delete(ctx, summaryID); err != nil {
 		return fmt.Errorf("delete branch summary %s: %w", summaryID, err)
 	}
 	for _, p := range summary.Parts {

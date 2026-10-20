@@ -42,6 +42,10 @@ type branchSummaryRun struct {
 	state     branchsummaries.State
 	summaryID string
 	err       error
+	// used is set when a user message is created while the run is
+	// running. Sends queue behind the summary, so that message follows
+	// it, even when its event arrives before the summary's.
+	used bool
 }
 
 // branchSummaryOfferMsg says a rewind left something worth summarizing.
@@ -103,8 +107,13 @@ func (b *branchSummaryFeature) Observe(msg tea.Msg) tea.Cmd {
 		if msg.Type != pubsub.CreatedEvent {
 			return nil
 		}
-		if r := b.runs[msg.Payload.SessionID]; r != nil && r.summaryID != "" && msg.Payload.ParentMessageID == r.summaryID {
-			delete(b.runs, msg.Payload.SessionID)
+		if r := b.runs[msg.Payload.SessionID]; r != nil {
+			switch {
+			case r.summaryID != "" && msg.Payload.ParentMessageID == r.summaryID:
+				delete(b.runs, msg.Payload.SessionID)
+			case r.state == branchsummaries.StateRunning && msg.Payload.Role == message.User:
+				r.used = true
+			}
 		}
 		if msg.Payload.Role == message.User && msg.Payload.SessionID == b.pending.SessionID {
 			b.pending = dialog.BranchSummaryOffer{}
@@ -229,6 +238,10 @@ func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 	}
 	switch ev.State {
 	case branchsummaries.StateStored:
+		if r.used {
+			delete(b.runs, ev.SessionID)
+			return nil
+		}
 		r.state, r.summaryID = ev.State, ev.SummaryID
 	case branchsummaries.StateFailed:
 		r.state, r.err = ev.State, ev.Err

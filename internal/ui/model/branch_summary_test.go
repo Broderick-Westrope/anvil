@@ -387,3 +387,16 @@ func TestBranchSummary_ReturnToPreBranch(t *testing.T) {
 		require.Equal(t, []string{"sess-1"}, b.ws.cancelled)
 	})
 }
+
+func TestBranchSummary_SendSeenBeforeStoredRetiresDiscard(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	b.f.Observe(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "u3", SessionID: "sess-1", Role: message.User, ParentMessageID: "summary-1",
+	}})
+	b.event(branchsummaries.StateStored, "summary-1", nil)
+
+	require.Empty(t, b.f.PaletteEntries())
+}

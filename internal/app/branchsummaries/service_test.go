@@ -119,7 +119,7 @@ func TestStart_StoresAndReleases(t *testing.T) {
 	require.Equal(t, "summary-1", stored.SummaryID)
 	require.Equal(t, runID, stored.RunID)
 	require.False(t, svc.Running("s"))
-	require.Equal(t, 0, fc.reservations("s"))
+	require.Eventually(t, func() bool { return fc.reservations("s") == 0 }, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestStart_OneRunPerSession(t *testing.T) {
