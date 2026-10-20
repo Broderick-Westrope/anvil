@@ -24,6 +24,11 @@ func TestDiagramDetailItemStates(t *testing.T) {
 			want:    []string{"Rendering diagram"},
 			wantNot: []string{"A --> B"},
 		},
+		"pending with a stand-in shows it": {
+			view:    DiagramView{State: DiagramPending, Image: "[[INLINE]]"},
+			want:    []string{"[[INLINE]]"},
+			wantNot: []string{"Rendering diagram", "A --> B"},
+		},
 		"unsupported shows the code block": {
 			view:    DiagramView{State: DiagramUnsupported},
 			want:    []string{"A --> B"},

@@ -485,3 +485,54 @@ func TestMermaidFeatureRedrawsWhenTheBackgroundChanges(t *testing.T) {
 	f.Observe(tea.BackgroundColorMsg{Color: color.RGBA{R: 0x05, G: 0x00, B: 0x14, A: 0xff}})
 	require.Equal(t, before+1, host.invalidations, "diagrams redraw against the new background")
 }
+
+func tallFlowchart(steps int) string {
+	src := "flowchart TB\n"
+	for i := range steps {
+		src += fmt.Sprintf("  n%d[Step %d] --> n%d[Step %d]\n", i, i, i+1, i+1)
+	}
+	return src
+}
+
+func TestMermaidFeatureDrillInReusesAnUnsqueezedInlineImage(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	// Sources are unique per test: the terminal image cache is shared.
+	const src = "flowchart LR\n Reused --> Inline\n"
+	inline, _ := showDiagram(t, f, src, 80)
+	require.False(t, inline.squeezed)
+
+	view := f.FullDiagram(src, 100)
+	require.Equal(t, chat.DiagramReady, view.State, "no second render")
+	require.Equal(t, f.Diagram(src, 80).Image, view.Image, "the same image")
+	select {
+	case msg := <-f.results:
+		t.Fatalf("the worker was asked for something: %T", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestMermaidFeatureDrillInShowsTheSqueezedInlineImageWhileItRenders(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	src := tallFlowchart(31)
+	inline, _ := showDiagram(t, f, src, 80)
+	require.True(t, inline.squeezed, "capped at the chat's height")
+
+	view := f.FullDiagram(src, 100)
+	require.Equal(t, chat.DiagramPending, view.State, "the full size renders")
+	require.Equal(t, f.Diagram(src, 80).Image, view.Image, "with the inline image standing in")
+	require.Equal(t, diagramFull, waitReady(t, f).key.kind)
+}
+
+func TestMermaidFeatureDrillInWithoutAnInlineImageRenders(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	view := f.FullDiagram("flowchart LR\n A --> B\n", 100)
+	require.Equal(t, chat.DiagramPending, view.State)
+	require.Empty(t, view.Image)
+	require.Equal(t, diagramFull, waitReady(t, f).key.kind)
+}

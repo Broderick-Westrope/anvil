@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"cmp"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -48,7 +49,7 @@ func (d *DiagramDetailItem) RawRender(width int) string {
 	case DiagramReady:
 		body = view.Image
 	case DiagramPending:
-		body = d.sty.Header.KeystrokeTip.Render("Rendering diagram…")
+		body = cmp.Or(view.Image, d.sty.Header.KeystrokeTip.Render("Rendering diagram…"))
 	default:
 		body = d.codeBlock.render(d.sty, d.source, width, view)
 	}

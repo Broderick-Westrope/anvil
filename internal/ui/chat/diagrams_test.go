@@ -244,6 +244,11 @@ func TestDiagramItemRender(t *testing.T) {
 			want:    []string{"A --> B"},
 			wantNot: []string{"not rendered"},
 		},
+		"pending ignores a stand-in": {
+			view:    DiagramView{State: DiagramPending, Image: "[[IMG]]"},
+			want:    []string{"A --> B"},
+			wantNot: []string{"[[IMG]]"},
+		},
 		"unsupported shows the code block without a note": {
 			view:    DiagramView{State: DiagramUnsupported},
 			want:    []string{"A --> B"},

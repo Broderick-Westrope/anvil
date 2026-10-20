@@ -31,7 +31,9 @@ const (
 // DiagramView is what a diagram shows at a given width.
 type DiagramView struct {
 	State DiagramState
-	// Image draws the diagram when State is DiagramReady.
+	// Image draws the diagram when State is DiagramReady. While it is
+	// DiagramPending it may hold a smaller image of the same diagram to
+	// show meanwhile.
 	Image string
 	// Err is why the render failed when State is DiagramFailed.
 	Err string

@@ -142,6 +142,9 @@ type diagramEntry struct {
 	bytes int
 	// lastUsed orders entries for eviction.
 	lastUsed uint64
+	// squeezed reports that a cap or the width shrank the image, so the
+	// full-size view would differ from it.
+	squeezed bool
 }
 
 type diagramRequest struct {
@@ -159,6 +162,7 @@ type diagramReadyMsg struct {
 	key        diagramKey
 	img        image.Image
 	cols, rows int
+	squeezed   bool
 	cellW      int
 	cellH      int
 	err        error
@@ -243,9 +247,38 @@ func (f *mermaidFeature) Diagram(source string, width int) chat.DiagramView {
 	return f.diagram(source, width, diagramInline)
 }
 
-// FullDiagram implements chat.DiagramRenderer.
+// FullDiagram implements chat.DiagramRenderer. When the chat's image of the
+// diagram wasn't squeezed it is already full size, so the drill-in shows
+// it; otherwise it stands in while the full-size image renders.
 func (f *mermaidFeature) FullDiagram(source string, width int) chat.DiagramView {
-	return f.diagram(source, width, diagramFull)
+	inline, squeezed := f.inlineImage(source, width)
+	if inline != "" && !squeezed {
+		return chat.DiagramView{State: chat.DiagramReady, Image: inline}
+	}
+	view := f.diagram(source, width, diagramFull)
+	if view.State == chat.DiagramPending {
+		view.Image = inline
+	}
+	return view
+}
+
+// inlineImage is the chat's image of source if it is in the terminal and
+// fits width, and whether it was squeezed.
+func (f *mermaidFeature) inlineImage(source string, width int) (string, bool) {
+	cellW, cellH := f.caps.CellSize()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := diagramKey{
+		hash: sourceHash(source, f.theme()), width: f.widths[diagramInline], kind: diagramInline,
+		cellW: cellW, cellH: cellH,
+	}
+	e, ok := f.entries[key]
+	if !ok || e.state != diagramReady || e.cols > width {
+		return "", false
+	}
+	f.clock++
+	e.lastUsed = f.clock
+	return fimage.EncodingKitty.Render(key.id(), e.cols, e.rows), e.squeezed
 }
 
 // background is the colour around a transparent diagram image.
@@ -442,9 +475,11 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	}
 	cw, ch := float64(req.cellW), float64(req.cellH)
 	maxPx := float64(req.maxCols) * cw
-	scale := diagramTextCellRatio * ch / peleBaseFontPx
+	natural := diagramTextCellRatio * ch / peleBaseFontPx
+	scale := natural
 
-	res, err := e.pele.Render(req.source, mermaid.Options{MaxWidth: int(maxPx / scale)})
+	maxWidth := int(maxPx / scale)
+	res, err := e.pele.Render(req.source, mermaid.Options{MaxWidth: maxWidth})
 	if err != nil {
 		return fail(err)
 	}
@@ -459,6 +494,10 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	scale = math.Min(scale, float64(maxRows)*ch/res.Height)
 	scale = math.Min(scale, math.Sqrt(float64(maxPixels)/(res.Width*res.Height)))
 
+	// Pele lays a diagram out narrower when it reaches MaxWidth, so one
+	// that fills it may have been rearranged to fit.
+	squeezed := scale < natural || res.Width >= float64(maxWidth-1)
+
 	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: scale, MaxPixels: maxPixels})
 	if err != nil {
 		return fail(err)
@@ -472,7 +511,7 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	// padding is transparent, like the diagram's background.
 	padded := image.NewRGBA(image.Rect(0, 0, cols*req.cellW, rows*req.cellH))
 	draw.Draw(padded, b, img, b.Min, draw.Src)
-	return diagramReadyMsg{key: req.key, img: padded, cols: cols, rows: rows, cellW: req.cellW, cellH: req.cellH}
+	return diagramReadyMsg{key: req.key, img: padded, cols: cols, rows: rows, squeezed: squeezed, cellW: req.cellW, cellH: req.cellH}
 }
 
 func (f *mermaidFeature) listen() tea.Msg { return <-f.results }
@@ -535,7 +574,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 			delete(f.entries, msg.key)
 			return f.listen, true
 		}
-		e.cols, e.rows = msg.cols, msg.rows
+		e.cols, e.rows, e.squeezed = msg.cols, msg.rows, msg.squeezed
 		e.bytes = msg.cols * msg.cellW * msg.rows * msg.cellH * 4
 		cs := fimage.CellSize{Width: msg.cellW, Height: msg.cellH}
 		transmit := fimage.EncodingKitty.Transmit(msg.key.id(), msg.img, cs, msg.cols, msg.rows, f.tmux())
