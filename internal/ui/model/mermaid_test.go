@@ -81,13 +81,21 @@ func showDiagram(t *testing.T, f *mermaidFeature, src string, width int) (diagra
 	_, handled := f.HandleMsg(ready)
 	require.True(t, handled)
 
-	cs := fimage.CellSize{Width: ready.cellW, Height: ready.cellH}
-	raw := fimage.EncodingKitty.Transmit(ready.key.id(), ready.img, cs, ready.cols, ready.rows, false)()
-	require.IsType(t, tea.RawMsg{}, raw)
+	transmit(ready)
 
 	evict, handled := f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
 	require.True(t, handled)
 	return ready, evict
+}
+
+// transmit does what the transmit command in HandleMsg's sequence does. The
+// image cache is global, so a repeat run (-count) may find it already
+// sent, and then there is nothing to do.
+func transmit(ready diagramReadyMsg) {
+	cs := fimage.CellSize{Width: ready.cellW, Height: ready.cellH}
+	if cmd := fimage.EncodingKitty.Transmit(ready.key.id(), ready.img, cs, ready.cols, ready.rows, false); cmd != nil {
+		cmd()
+	}
 }
 
 // rawMsgs runs cmd, a batch or a single command, and returns the raw
@@ -128,8 +136,7 @@ func TestMermaidFeatureRendersKittyPlaceholders(t *testing.T) {
 	require.True(t, handled)
 	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State, "not shown until the image is transmitted")
 
-	cs := fimage.CellSize{Width: ready.cellW, Height: ready.cellH}
-	fimage.EncodingKitty.Transmit(ready.key.id(), ready.img, cs, ready.cols, ready.rows, false)()
+	transmit(ready)
 	_, handled = f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
 	require.True(t, handled)
 	require.Equal(t, 1, host.invalidations)
@@ -287,8 +294,7 @@ func TestMermaidFeatureOpensDrillIn(t *testing.T) {
 
 	_, handled = f.HandleMsg(full)
 	require.True(t, handled)
-	cs := fimage.CellSize{Width: full.cellW, Height: full.cellH}
-	fimage.EncodingKitty.Transmit(full.key.id(), full.img, cs, full.cols, full.rows, false)()
+	transmit(full)
 	f.HandleMsg(diagramShownMsg{key: full.key, cols: full.cols, rows: full.rows})
 	require.Contains(t, item.RawRender(80), string(kitty.Placeholder))
 
@@ -409,8 +415,7 @@ func TestMermaidFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
 	// The drill-in closes before the transmit command runs.
 	host.drills = nil
 	f.Observe(nil)
-	cs := fimage.CellSize{Width: full.cellW, Height: full.cellH}
-	fimage.EncodingKitty.Transmit(full.key.id(), full.img, cs, full.cols, full.rows, false)()
+	transmit(full)
 	require.NotEmpty(t, fimage.EncodingKitty.Render(full.key.id(), full.cols, full.rows), "the late transmit cached it")
 
 	invalidations := host.invalidations
