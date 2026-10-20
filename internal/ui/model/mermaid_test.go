@@ -414,3 +414,59 @@ func TestMermaidFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
 	require.Empty(t, fimage.EncodingKitty.Render(full.key.id(), full.cols, full.rows), "and the cache drops it")
 	require.Equal(t, invalidations, host.invalidations, "nothing new to show")
 }
+
+func TestMermaidFeatureRedrawsWhenTheCellSizeArrivesAfterKitty(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	caps := &common.Capabilities{KittyGraphics: true}
+	f := newTestMermaidFeature(t, host, caps)
+	f.Observe(nil)
+	require.Equal(t, chat.DiagramUnsupported, f.Diagram("flowchart LR\n A --> B\n", 80).State, "no cell size yet")
+	before := host.invalidations
+
+	caps.Columns, caps.Rows, caps.PixelX, caps.PixelY = 100, 40, 1000, 800
+	f.Observe(nil)
+	require.Greater(t, host.invalidations, before, "the code blocks the chat cached are redrawn")
+}
+
+func TestMermaidFeatureDropsImagesWhenTheCellSizeChanges(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	caps := kittyCaps()
+	f := newTestMermaidFeature(t, host, caps)
+	f.Observe(nil)
+	showDiagram(t, f, "flowchart LR\n A --> B\n", 80)
+	before := host.invalidations
+
+	caps.PixelX = 1200 // A bigger font: same columns, wider cells.
+	deletes := rawMsgs(f.Observe(nil))
+	require.Len(t, deletes, 1, "the old-size image is deleted")
+	require.Empty(t, f.entries)
+	require.Greater(t, host.invalidations, before)
+	require.Equal(t, chat.DiagramPending, f.Diagram("flowchart LR\n A --> B\n", 80).State, "it renders again at the new size")
+}
+
+func TestMermaidFeatureIgnoresAResultForTheOldCellSize(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	caps := kittyCaps()
+	f := newTestMermaidFeature(t, host, caps)
+	f.Observe(nil)
+	const src = "flowchart LR\n A --> B\n"
+	f.Diagram(src, 80)
+	stale := waitReady(t, f)
+
+	caps.PixelX = 1200
+	f.Observe(nil)
+	f.Diagram(src, 80)
+	_, handled := f.HandleMsg(stale)
+	require.True(t, handled)
+	require.NotContains(t, f.entries, stale.key, "nothing is kept for the old cells")
+	fresh := waitReady(t, f)
+	require.Equal(t, 12, fresh.cellW)
+	require.NotEqual(t, stale.key, fresh.key)
+	require.Equal(t, diagramPending, f.entries[fresh.key].state)
+}

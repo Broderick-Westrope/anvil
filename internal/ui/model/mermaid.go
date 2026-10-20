@@ -111,13 +111,18 @@ const (
 	diagramFull
 )
 
+// diagramKey names one image of a diagram. The cell size is part of it, so
+// a result rendered for cells the terminal no longer has never matches.
 type diagramKey struct {
-	hash  uint64
-	width int
-	kind  diagramKind
+	hash         uint64
+	width        int
+	kind         diagramKind
+	cellW, cellH int
 }
 
-func (k diagramKey) id() string { return fmt.Sprintf("mermaid-%x-%d-%d", k.hash, k.width, k.kind) }
+func (k diagramKey) id() string {
+	return fmt.Sprintf("mermaid-%x-%d-%d-%dx%d", k.hash, k.width, k.kind, k.cellW, k.cellH)
+}
 
 type diagramState int
 
@@ -198,8 +203,24 @@ type mermaidFeature struct {
 	// enginesLoaded reports whether the worker holds the render engines.
 	enginesLoaded atomic.Bool
 	listening     bool
-	supported     bool
+	// drawn is what the terminal could show when the chat was last
+	// invalidated for it.
+	drawn diagramCaps
 }
+
+// diagramCaps is what decides whether and how big diagrams draw.
+type diagramCaps struct {
+	kitty        bool
+	cellW, cellH int
+}
+
+func (f *mermaidFeature) currentCaps() diagramCaps {
+	cellW, cellH := f.caps.CellSize()
+	return diagramCaps{kitty: f.caps.SupportsKittyGraphics(), cellW: cellW, cellH: cellH}
+}
+
+// usable reports whether diagrams can be drawn at all.
+func (c diagramCaps) usable() bool { return c.kitty && c.cellW > 0 && c.cellH > 0 }
 
 func newMermaidFeature(host diagramHost, caps *common.Capabilities, com *common.Common) *mermaidFeature {
 	return &mermaidFeature{
@@ -276,12 +297,13 @@ func sourceHash(source string, theme mermaid.Theme) uint64 {
 // diagram runs during rendering, so it only touches the feature's own state
 // and queues work.
 func (f *mermaidFeature) diagram(source string, width int, kind diagramKind) chat.DiagramView {
-	cellW, cellH := f.caps.CellSize()
-	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
+	caps := f.currentCaps()
+	if !caps.usable() || width <= 0 {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
+	cellW, cellH := caps.cellW, caps.cellH
 	theme := f.theme()
-	key := diagramKey{hash: sourceHash(source, theme), width: width, kind: kind}
+	key := diagramKey{hash: sourceHash(source, theme), width: width, kind: kind, cellW: cellW, cellH: cellH}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -457,13 +479,19 @@ func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
 	if bg, ok := msg.(tea.BackgroundColorMsg); ok {
 		f.termBg = hexColor(bg.Color)
 	}
-	if supported := f.caps.SupportsKittyGraphics(); supported != f.supported {
-		f.supported = supported
-		if supported {
+	var cmds []tea.Cmd
+	if now := f.currentCaps(); now != f.drawn {
+		if f.drawn.usable() {
+			// Images sized for the old cells would draw at the wrong
+			// size; results still rendering for them are dropped when
+			// they arrive, as their entries are gone.
+			cmds = append(cmds, f.forgetAll())
+		}
+		f.drawn = now
+		if now.usable() {
 			f.host.InvalidateChat()
 		}
 	}
-	var cmds []tea.Cmd
 	if f.drill != nil && !f.host.DrillInOpen(f.drill) {
 		f.drill = nil
 		cmds = append(cmds, f.forgetKind(diagramFull))
@@ -600,11 +628,20 @@ func (f *mermaidFeature) evictLocked(keep diagramKey) tea.Cmd {
 
 // forgetKind drops every diagram of kind.
 func (f *mermaidFeature) forgetKind(kind diagramKind) tea.Cmd {
+	return f.forgetWhere(func(key diagramKey) bool { return key.kind == kind })
+}
+
+// forgetAll drops every diagram.
+func (f *mermaidFeature) forgetAll() tea.Cmd {
+	return f.forgetWhere(func(diagramKey) bool { return true })
+}
+
+func (f *mermaidFeature) forgetWhere(match func(diagramKey) bool) tea.Cmd {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var keys []diagramKey
 	for key := range f.entries {
-		if key.kind == kind {
+		if match(key) {
 			keys = append(keys, key)
 		}
 	}
