@@ -240,3 +240,24 @@ func TestDiscardBranchSummary_AfterReturningToTheOldBranch(t *testing.T) {
 	_, err = f.env.messages.Get(t.Context(), summary.ID)
 	require.Error(t, err)
 }
+
+func TestReserveSession_QueuesSendsAtOnce(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+
+	release := f.c.ReserveSession(f.sessionID)
+	ran := make(chan struct{})
+	_, err := f.c.admission.submit(t.Context(), f.sessionID, submission{prompt: "next", run: func(context.Context) (*fantasy.AgentResult, error) {
+		close(ran)
+		return nil, nil
+	}})
+	require.NoError(t, err)
+	select {
+	case <-ran:
+		t.Fatal("a send ran while the session was reserved")
+	default:
+	}
+
+	release()
+	<-ran
+}

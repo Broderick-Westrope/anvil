@@ -85,6 +85,10 @@ type Coordinator interface {
 	// work such as summarizing is refused. Holds nest. The idempotent
 	// release lifts the hold and starts work queued behind it.
 	Hold(ctx context.Context, sessionIDs []string) (release func(), err error)
+	// ReserveSession stops new runs from starting in sessionID at once,
+	// without waiting for runs in flight, until release. Messages sent
+	// meanwhile queue.
+	ReserveSession(sessionID string) (release func())
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
@@ -1300,6 +1304,10 @@ func (c *coordinator) HasAgent(name string) bool {
 // Hold implements Coordinator.
 func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release func(), err error) {
 	return c.admission.hold(ctx, sessionIDs)
+}
+
+func (c *coordinator) ReserveSession(sessionID string) (release func()) {
+	return c.admission.reserve([]string{sessionID})
 }
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {

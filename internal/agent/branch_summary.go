@@ -15,7 +15,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/session"
 )
 
 // BuiltinBranchSummarizer is the summarizer agent Anvil ships.
@@ -140,18 +139,15 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 	if err == nil && strings.TrimSpace(out.Text) == "" {
 		err = errors.New("summarizer returned no summary")
 	}
-	if err == nil {
-		var sess session.Session
-		if sess, err = c.sessions.Get(ctx, req.SessionID); err == nil && sess.LeafMessageID != req.TargetID {
-			err = ErrStaleBranchSummary
-		}
-	}
 	if err != nil {
 		c.deleteChildSession(childID)
 		return message.Message{}, err
 	}
 
-	summary, err := c.messages.Create(ctx, req.SessionID, message.CreateMessageParams{
+	// Stored only if the leaf is still the target, checked in the same
+	// transaction, so a rewind can't land between the check and the
+	// insert.
+	summary, err := c.messages.CreateAtLeaf(ctx, req.SessionID, req.TargetID, message.CreateMessageParams{
 		Role:            message.User,
 		MessageType:     message.MessageTypeBranchSummary,
 		ParentMessageID: req.TargetID,
@@ -163,6 +159,9 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 			Ledger:         ledger,
 		}},
 	})
+	if errors.Is(err, message.ErrLeafMoved) {
+		err = ErrStaleBranchSummary
+	}
 	if err != nil {
 		c.deleteChildSession(childID)
 		return message.Message{}, fmt.Errorf("store branch summary: %w", err)
