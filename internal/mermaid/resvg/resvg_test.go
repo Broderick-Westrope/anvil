@@ -102,7 +102,9 @@ func TestRenderPastTheMemoryLimitFailsAndRecovers(t *testing.T) {
 func TestRenderPastItsDeadlineFailsAndRecovers(t *testing.T) {
 	t.Parallel()
 
-	e, err := newWithLimits(t.Context(), renderLimits{Memory: defaultLimits.Memory, Timeout: time.Nanosecond})
+	// A deadline already past, so the render can't finish first however
+	// coarse the platform's timers are.
+	e, err := newWithLimits(t.Context(), renderLimits{Memory: defaultLimits.Memory, Timeout: -time.Second})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = e.Close() })
 
