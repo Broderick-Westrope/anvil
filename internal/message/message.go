@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -47,6 +48,10 @@ type CreateMessageParams struct {
 type Service interface {
 	pubsub.Subscriber[Message]
 	Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error)
+	// CreateAtLeaf creates the message only if the session's leaf is
+	// still leaf, checked in the same transaction, and returns
+	// ErrLeafMoved otherwise.
+	CreateAtLeaf(ctx context.Context, sessionID, leaf string, params CreateMessageParams) (Message, error)
 	Update(ctx context.Context, message Message) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
@@ -217,7 +222,20 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// ErrLeafMoved means CreateAtLeaf found the session's leaf had moved.
+var ErrLeafMoved = errors.New("session leaf moved")
+
 func (s *service) Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
+	return s.create(ctx, sessionID, nil, params)
+}
+
+func (s *service) CreateAtLeaf(ctx context.Context, sessionID, leaf string, params CreateMessageParams) (Message, error) {
+	return s.create(ctx, sessionID, &leaf, params)
+}
+
+// create inserts the message and advances the session's leaf to it. When
+// expectedLeaf is set, it first checks the leaf in the same transaction.
+func (s *service) create(ctx context.Context, sessionID string, expectedLeaf *string, params CreateMessageParams) (Message, error) {
 	if params.Role != Assistant && (params.MessageType == "" || params.MessageType == MessageTypeMessage) {
 		params.Parts = append(params.Parts, Finish{
 			Reason: "stop",
@@ -256,6 +274,15 @@ func (s *service) Create(ctx context.Context, sessionID string, params CreateMes
 	defer tx.Rollback() //nolint:errcheck
 
 	qtx := db.New(tx)
+	if expectedLeaf != nil {
+		sess, err := qtx.GetSessionByID(ctx, sessionID)
+		if err != nil {
+			return Message{}, fmt.Errorf("get session %s: %w", sessionID, err)
+		}
+		if sess.LeafMessageID.String != *expectedLeaf {
+			return Message{}, ErrLeafMoved
+		}
+	}
 	dbMessage, err = qtx.CreateMessage(ctx, createParams)
 	if err != nil {
 		return Message{}, err
