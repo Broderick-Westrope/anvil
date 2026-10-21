@@ -13,3 +13,8 @@ func readClipboard(f clipboardFormat) ([]byte, error) {
 	}
 	return nil, errClipboardUnknownFormat
 }
+
+func writeClipboardImage(png []byte) error {
+	_, err := nativeclipboard.Image.Write(png)
+	return err
+}

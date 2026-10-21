@@ -689,7 +689,8 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 	broken := &diagramEngines{}
 	tests := map[string]diagramRequest{
 		"image":  {key: diagramKey{hash: 1}, source: "A"},
-		"export": {key: diagramKey{hash: 2}, source: "A", export: true},
+		"export": {key: diagramKey{hash: 2}, source: "A", job: diagramJobExport},
+		"copy":   {key: diagramKey{hash: 3}, source: "A", job: diagramJobCopy},
 	}
 	for name, req := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -699,9 +700,14 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 			require.False(t, ok, "the engines are dropped")
 			switch msg := msg.(type) {
 			case diagramReadyMsg:
+				require.Equal(t, diagramJobRender, req.job)
 				require.Equal(t, req.key, msg.key)
 				require.ErrorContains(t, msg.err, "diagram renderer crashed")
 			case diagramExportedMsg:
+				require.Equal(t, diagramJobExport, req.job)
+				require.ErrorContains(t, msg.err, "diagram renderer crashed")
+			case diagramCopiedMsg:
+				require.Equal(t, diagramJobCopy, req.job)
 				require.ErrorContains(t, msg.err, "diagram renderer crashed")
 			default:
 				t.Fatalf("unexpected %T", msg)

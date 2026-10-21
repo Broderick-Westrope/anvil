@@ -53,6 +53,9 @@ const (
 	// diagramExportMaxAge is how long a page exported for the browser is
 	// kept; older ones are deleted when the next is written.
 	diagramExportMaxAge = 24 * time.Hour
+	// diagramCopyScale is the scale a copied image is drawn at: twice the
+	// layout's size, so it stays sharp on HiDPI screens.
+	diagramCopyScale = 2
 )
 
 // diagramKind is where a diagram is drawn.
@@ -108,10 +111,20 @@ type diagramRequest struct {
 	theme        mermaid.Theme
 	cellW, cellH int
 	maxCols      int
-	// export writes the diagram as a page to open in the browser instead
-	// of rasterizing it.
-	export bool
+	job          diagramJob
 }
+
+// diagramJob is what the worker makes of a request.
+type diagramJob int
+
+const (
+	// diagramJobRender rasterizes the diagram for the terminal.
+	diagramJobRender diagramJob = iota
+	// diagramJobExport writes it as a page to open in the browser.
+	diagramJobExport
+	// diagramJobCopy encodes it as a PNG for the clipboard.
+	diagramJobCopy
+)
 
 type diagramReadyMsg struct {
 	key        diagramKey
@@ -133,6 +146,11 @@ type diagramShownMsg struct {
 type diagramExportedMsg struct {
 	path string
 	err  error
+}
+
+type diagramCopiedMsg struct {
+	png []byte
+	err error
 }
 
 // mermaidFeature renders ```mermaid fences in finished assistant messages
@@ -180,8 +198,10 @@ type mermaidFeature struct {
 	// newRenderer loads the layout engine; tests make it fail.
 	newRenderer func() (*mermaid.Renderer, error)
 	// openURL opens a page in the user's browser.
-	openURL   func(string) error
-	listening bool
+	openURL func(string) error
+	// writeImage puts a PNG on the system clipboard.
+	writeImage func([]byte) error
+	listening  bool
 	// drawn is what diagrams were last drawn under.
 	drawn drawConditions
 }
@@ -218,6 +238,7 @@ func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.
 		returnMemory:    debug.FreeOSMemory,
 		newRenderer:     mermaid.NewRenderer,
 		openURL:         browser.OpenURL,
+		writeImage:      writeClipboardImage,
 	}
 }
 
@@ -456,6 +477,18 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case chat.DiagramOpenMsg:
 		return f.open(msg), true
+	case chat.DiagramCopyImageMsg:
+		req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy}
+		if !f.enqueue(req) {
+			return util.ReportWarn("Diagram renderer is busy; try again"), true
+		}
+		return util.ReportInfo("Copying diagram image"), true
+	case diagramCopiedMsg:
+		if msg.err != nil {
+			slog.Warn("Failed to render mermaid diagram for the clipboard", "err", msg.err)
+			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("copy diagram image: %w", msg.err))), true
+		}
+		return tea.Batch(f.listen, f.writeToClipboard(msg.png)), true
 	case diagramExportedMsg:
 		if msg.err != nil {
 			slog.Warn("Failed to export mermaid diagram", "err", msg.err)
@@ -512,7 +545,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 	if msg.External {
 		theme := f.theme()
-		req := diagramRequest{key: diagramKey{hash: f.imageHash(msg.Source, theme["pele-bg"])}, source: msg.Source, theme: theme, export: true}
+		req := diagramRequest{key: diagramKey{hash: f.imageHash(msg.Source, theme["pele-bg"])}, source: msg.Source, theme: theme, job: diagramJobExport}
 		if !f.enqueue(req) {
 			return util.ReportWarn("Diagram renderer is busy; try again")
 		}

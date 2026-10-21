@@ -5,3 +5,7 @@ package model
 func readClipboard(clipboardFormat) ([]byte, error) {
 	return nil, errClipboardPlatformUnsupported
 }
+
+func writeClipboardImage([]byte) error {
+	return errClipboardPlatformUnsupported
+}

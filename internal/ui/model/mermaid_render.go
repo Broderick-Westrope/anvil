@@ -1,11 +1,13 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"image"
 	"image/draw"
+	"image/png"
 	"log/slog"
 	"math"
 	"net/url"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid/resvg"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -157,18 +160,51 @@ func (f *mermaidFeature) runRequest(e *diagramEngines, req diagramRequest) (msg 
 			msg, ok = requestFailed(req, fmt.Errorf("diagram renderer crashed: %v", r)), false
 		}
 	}()
-	if req.export {
+	switch req.job {
+	case diagramJobExport:
 		return f.export(e, req), true
+	case diagramJobCopy:
+		return copyDiagram(e, req), true
 	}
 	return renderDiagram(e, req), true
 }
 
 // requestFailed is the result for req when it fails with err.
 func requestFailed(req diagramRequest, err error) tea.Msg {
-	if req.export {
+	switch req.job {
+	case diagramJobExport:
 		return diagramExportedMsg{err: err}
+	case diagramJobCopy:
+		return diagramCopiedMsg{err: err}
 	}
 	return diagramReadyMsg{key: req.key, err: err}
+}
+
+// copyDiagram draws the diagram at diagramCopyScale on the theme's
+// background, which the chat leaves transparent: pasted somewhere else, a
+// diagram drawn for a dark theme would be unreadable on a light page.
+func copyDiagram(e *diagramEngines, req diagramRequest) diagramCopiedMsg {
+	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{err: err} }
+	raster, err := e.rasterizer()
+	if err != nil {
+		return fail(err)
+	}
+	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{})
+	if err != nil {
+		return fail(err)
+	}
+	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: diagramCopyScale})
+	if err != nil {
+		return fail(err)
+	}
+	out := image.NewRGBA(img.Bounds())
+	draw.Draw(out, out.Bounds(), image.NewUniform(lipgloss.Color(req.theme["pele-bg"])), image.Point{}, draw.Src)
+	draw.Draw(out, out.Bounds(), img, img.Bounds().Min, draw.Over)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, out); err != nil {
+		return fail(err)
+	}
+	return diagramCopiedMsg{png: buf.Bytes()}
 }
 
 func (f *mermaidFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
@@ -267,6 +303,15 @@ func (f *mermaidFeature) openInBrowser(path string) tea.Cmd {
 			return util.NewErrorMsg(fmt.Errorf("open diagram: %w", err))
 		}
 		return util.NewInfoMsg("Opened diagram in browser")
+	}
+}
+
+func (f *mermaidFeature) writeToClipboard(png []byte) tea.Cmd {
+	return func() tea.Msg {
+		if err := f.writeImage(png); err != nil {
+			return util.NewErrorMsg(fmt.Errorf("copy diagram image: %w", err))
+		}
+		return util.NewInfoMsg("Diagram image copied to clipboard")
 	}
 }
 
