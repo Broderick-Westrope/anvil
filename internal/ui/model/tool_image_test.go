@@ -845,10 +845,12 @@ func TestGraphicsFeatureOpensOnlyImagesThatCantRunScripts(t *testing.T) {
 	}
 }
 
-func TestProducerEngineNamesWhatCrashed(t *testing.T) {
+// TestBitmapProducerNamesItsEngine pins the bitmap branch of engine: the
+// Mermaid one is covered through runRequest, but nothing in the decoders
+// panics on demand to reach this one that way.
+func TestBitmapProducerNamesItsEngine(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, "diagram renderer", producerMermaid.engine())
 	require.Equal(t, "image decoder", producerBitmap.engine())
 }
 
