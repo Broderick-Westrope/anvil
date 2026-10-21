@@ -1,5 +1,3 @@
-//go:build (darwin || windows) && !ios && !arm && !386
-
 package model
 
 import (
@@ -31,12 +29,12 @@ func TestWriteWithinWontQueueBehindAStuckWrite(t *testing.T) {
 		return nil
 	})
 	require.ErrorIs(t, err, errClipboardBusy)
-	require.EqualError(t, err, "the clipboard didn't take the image within 5s; try again")
+	require.EqualError(t, err, "the clipboard didn't take the image in time; try again")
 	require.Less(t, time.Since(start), time.Second)
 
 	wrote := false
 	err = pending.writeWithin(time.Second, func() error { wrote = true; return nil })
-	require.ErrorIs(t, err, errClipboardBusy, "the stuck write still holds the clipboard")
+	require.EqualError(t, err, "an earlier copy is still waiting for the clipboard; try again", "the stuck write still holds the clipboard")
 	require.False(t, wrote, "a second write would wait behind it and land out of order")
 
 	close(release)
