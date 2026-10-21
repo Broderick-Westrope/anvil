@@ -9,16 +9,25 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
 // clipboardToolTimeout bounds a clipboard tool that never takes the image.
+// The tool runs on the diagram worker, so renders wait behind it.
 const clipboardToolTimeout = 5 * time.Second
 
 var (
-	errNoImageClipboardTool = errors.New("copying images needs wl-copy (wl-clipboard) or xclip")
-	errNoDesktopSession     = errors.New("copying images needs a desktop session (no DISPLAY or WAYLAND_DISPLAY)")
+	errNoImageClipboardTool = errors.New("no clipboard tool for images; install wl-clipboard or xclip")
+	errNoDesktopSession     = errors.New("no desktop session (DISPLAY and WAYLAND_DISPLAY are unset)")
 )
+
+// imageClipboardReady says why there's no clipboard tool to use, if there
+// isn't one.
+func imageClipboardReady() error {
+	_, err := imageCopyCommand()
+	return err
+}
 
 // writeClipboardImage hands the PNG to wl-copy under Wayland or xclip under
 // X11. They stay behind to serve the image and do large transfers
@@ -28,20 +37,45 @@ func writeClipboardImage(png []byte) error {
 	if err != nil {
 		return err
 	}
+	// The child left serving the image inherits stdout and stderr, so a
+	// pipe would keep Run waiting until something else is copied. A file
+	// doesn't.
+	stderr, err := os.CreateTemp("", "anvil-clipboard-*")
+	if err != nil {
+		return fmt.Errorf("%s: %w", args[0], err)
+	}
+	defer os.Remove(stderr.Name())
+	defer stderr.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), clipboardToolTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	// Stdout and stderr stay unset: the child left serving the image would
-	// inherit pipes, and Run would wait on them until something else is
-	// copied.
 	cmd.Stdin = bytes.NewReader(png)
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf("%s didn't take the image within %s", args[0], clipboardToolTimeout)
 		}
+		if said := toolSaid(stderr); said != "" {
+			return fmt.Errorf("%s: %s", args[0], said)
+		}
 		return fmt.Errorf("%s: %w", args[0], err)
 	}
 	return nil
+}
+
+// toolSaid is the first non-blank line of what the tool wrote to f.
+func toolSaid(f *os.File) string {
+	out, err := os.ReadFile(f.Name())
+	if err != nil {
+		return ""
+	}
+	for line := range strings.Lines(string(out)) {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func imageCopyCommand() ([]string, error) {
@@ -56,11 +90,4 @@ func imageCopyCommand() ([]string, error) {
 		return []string{"xclip", "-selection", "clipboard", "-t", "image/png", "-i"}, nil
 	}
 	return nil, errNoImageClipboardTool
-}
-
-// imageClipboardReady says why there's no clipboard tool to use, if there
-// isn't one.
-func imageClipboardReady() error {
-	_, err := imageCopyCommand()
-	return err
 }

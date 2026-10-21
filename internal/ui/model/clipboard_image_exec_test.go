@@ -4,6 +4,7 @@ package model
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,39 +12,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// clipboardSession sets up a desktop session whose only programs are the
-// fake tools given, each running its script. $OUT names a file a script
-// may write to; the session returns its path.
-func clipboardSession(t *testing.T, wayland, x11 bool, tools map[string]string) string {
+// desktop is the session a clipboard tool runs in.
+type desktop struct {
+	wayland, x11 string
+	// tools are the clipboard tools installed, each a shell script.
+	tools map[string]string
+}
+
+// enter sets up d as the session, with only its tools and what their
+// scripts need on PATH, since the real PATH may have a real wl-copy or
+// xclip. $OUT names a file a script may write to; enter returns its path.
+func (d desktop) enter(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for name, script := range tools {
+	for name, script := range d.tools {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755))
 	}
-	// The scripts need a shell and cat, but nothing else from the real
-	// PATH, which may have a real wl-copy or xclip.
 	bin := t.TempDir()
 	for _, tool := range []string{"sh", "cat", "sleep"} {
-		path, err := lookPathIn(tool, os.Getenv("PATH"))
+		path, err := exec.LookPath(tool)
 		require.NoError(t, err)
 		require.NoError(t, os.Symlink(path, filepath.Join(bin, tool)))
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+bin)
-	t.Setenv("WAYLAND_DISPLAY", map[bool]string{true: "wayland-0"}[wayland])
-	t.Setenv("DISPLAY", map[bool]string{true: ":0"}[x11])
+	t.Setenv("WAYLAND_DISPLAY", d.wayland)
+	t.Setenv("DISPLAY", d.x11)
 	out := filepath.Join(dir, "clipboard")
 	t.Setenv("OUT", out)
 	return out
-}
-
-func lookPathIn(file, path string) (string, error) {
-	for _, dir := range filepath.SplitList(path) {
-		candidate := filepath.Join(dir, file)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	return "", os.ErrNotExist
 }
 
 const recordClipboard = `{ echo "${0##*/} $*"; cat; } > "$OUT"`
@@ -51,17 +47,17 @@ const recordClipboard = `{ echo "${0##*/} $*"; cat; } > "$OUT"`
 func TestWriteClipboardImagePicksTheSessionsTool(t *testing.T) {
 	both := map[string]string{"wl-copy": recordClipboard, "xclip": recordClipboard}
 	tests := map[string]struct {
-		wayland, x11 bool
-		tools        map[string]string
-		want         string
+		session desktop
+		want    string
 	}{
-		"wayland":                 {wayland: true, x11: true, tools: both, want: "wl-copy --type image/png"},
-		"wayland without wl-copy": {wayland: true, x11: true, tools: map[string]string{"xclip": recordClipboard}, want: "xclip -selection clipboard -t image/png -i"},
-		"x11":                     {x11: true, tools: both, want: "xclip -selection clipboard -t image/png -i"},
+		"wayland":                 {session: desktop{wayland: "wayland-0", x11: ":0", tools: both}, want: "wl-copy --type image/png"},
+		"wayland without wl-copy": {session: desktop{wayland: "wayland-0", x11: ":0", tools: map[string]string{"xclip": recordClipboard}}, want: "xclip -selection clipboard -t image/png -i"},
+		"x11":                     {session: desktop{x11: ":0", tools: both}, want: "xclip -selection clipboard -t image/png -i"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			out := clipboardSession(t, tc.wayland, tc.x11, tc.tools)
+			out := tc.session.enter(t)
+			require.NoError(t, imageClipboardReady())
 			require.NoError(t, writeClipboardImage([]byte("PNG")))
 			got, err := os.ReadFile(out)
 			require.NoError(t, err)
@@ -72,31 +68,66 @@ func TestWriteClipboardImagePicksTheSessionsTool(t *testing.T) {
 
 func TestWriteClipboardImageExplainsWhyItCant(t *testing.T) {
 	tests := map[string]struct {
-		wayland, x11 bool
-		tools        map[string]string
-		want         string
+		session desktop
+		want    string
+		wantIs  error
 	}{
-		"no tool":           {x11: true, want: "copying images needs wl-copy (wl-clipboard) or xclip"},
-		"wayland, no tool":  {wayland: true, want: "copying images needs wl-copy (wl-clipboard) or xclip"},
-		"no desktop":        {tools: map[string]string{"wl-copy": recordClipboard, "xclip": recordClipboard}, want: "copying images needs a desktop session (no DISPLAY or WAYLAND_DISPLAY)"},
-		"tool fails":        {x11: true, tools: map[string]string{"xclip": "exit 1"}, want: "xclip: exit status 1"},
-		"wayland tool only": {x11: true, tools: map[string]string{"wl-copy": recordClipboard}, want: "copying images needs wl-copy (wl-clipboard) or xclip"},
+		"no tool": {
+			session: desktop{x11: ":0"},
+			want:    "no clipboard tool for images; install wl-clipboard or xclip", wantIs: errNoImageClipboardTool,
+		},
+		"wayland, no tool": {
+			session: desktop{wayland: "wayland-0"},
+			want:    "no clipboard tool for images; install wl-clipboard or xclip", wantIs: errNoImageClipboardTool,
+		},
+		"x11 with only wl-copy": {
+			session: desktop{x11: ":0", tools: map[string]string{"wl-copy": recordClipboard}},
+			want:    "no clipboard tool for images; install wl-clipboard or xclip", wantIs: errNoImageClipboardTool,
+		},
+		"wayland with only xclip": {
+			session: desktop{wayland: "wayland-0", tools: map[string]string{"xclip": recordClipboard}},
+			want:    "no clipboard tool for images; install wl-clipboard or xclip", wantIs: errNoImageClipboardTool,
+		},
+		"no desktop": {
+			session: desktop{tools: map[string]string{"wl-copy": recordClipboard, "xclip": recordClipboard}},
+			want:    "no desktop session (DISPLAY and WAYLAND_DISPLAY are unset)", wantIs: errNoDesktopSession,
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			clipboardSession(t, tc.wayland, tc.x11, tc.tools)
-			require.EqualError(t, writeClipboardImage([]byte("PNG")), tc.want)
+			tc.session.enter(t)
+			require.EqualError(t, imageClipboardReady(), tc.want)
+			err := writeClipboardImage([]byte("PNG"))
+			require.EqualError(t, err, tc.want)
+			require.ErrorIs(t, err, tc.wantIs)
 		})
 	}
 }
 
-func TestWriteClipboardImageNamesATool(t *testing.T) {
-	clipboardSession(t, false, true, nil)
-	require.ErrorIs(t, writeClipboardImage([]byte("PNG")), errNoImageClipboardTool)
+func TestWriteClipboardImageReportsWhatTheToolSaid(t *testing.T) {
+	tests := map[string]struct {
+		script, want string
+	}{
+		"says why":       {script: "echo \"Error: Can't open display: :0\" >&2; echo more >&2; exit 1", want: "xclip: Error: Can't open display: :0"},
+		"says nothing":   {script: "exit 1", want: "xclip: exit status 1"},
+		"blank first":    {script: "echo >&2; echo ' late reason ' >&2; exit 2", want: "xclip: late reason"},
+		"succeeds noisy": {script: "echo warning >&2; cat > /dev/null"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			desktop{x11: ":0", tools: map[string]string{"xclip": tc.script}}.enter(t)
+			err := writeClipboardImage([]byte("PNG"))
+			if tc.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.EqualError(t, err, tc.want)
+		})
+	}
 }
 
 func TestWriteClipboardImageReturnsWhileTheToolServesTheImage(t *testing.T) {
-	out := clipboardSession(t, false, true, map[string]string{"xclip": `cat > "$OUT"; sleep 8 &`})
+	out := desktop{x11: ":0", tools: map[string]string{"xclip": `cat > "$OUT"; sleep 8 &`}}.enter(t)
 	start := time.Now()
 	require.NoError(t, writeClipboardImage([]byte("PNG")))
 	require.Less(t, time.Since(start), clipboardToolTimeout, "the child left serving the image doesn't hold it up")
@@ -106,9 +137,8 @@ func TestWriteClipboardImageReturnsWhileTheToolServesTheImage(t *testing.T) {
 }
 
 func TestWriteClipboardImageGivesUpOnAToolThatHangs(t *testing.T) {
-	clipboardSession(t, false, true, map[string]string{"xclip": "exec sleep 30"})
+	desktop{x11: ":0", tools: map[string]string{"xclip": "exec sleep 30"}}.enter(t)
 	start := time.Now()
-	err := writeClipboardImage([]byte("PNG"))
-	require.EqualError(t, err, "xclip didn't take the image within 5s")
+	require.EqualError(t, writeClipboardImage([]byte("PNG")), "xclip didn't take the image within 5s")
 	require.Less(t, time.Since(start), clipboardToolTimeout+2*time.Second)
 }
