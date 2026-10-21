@@ -87,7 +87,7 @@ out of the context (often 50k+ tokens each) until the agent asks for them.
 | [Providers and models](./docs/providers.md) | API keys, subscriptions, custom and local providers |
 | [Configuration](./docs/configuration.md) | Config files, context files, LSPs, MCPs, TUI and tool options |
 | [Permissions](./docs/permissions.md) | Rules, chained commands, yolo mode, the bouncer |
-| [Sessions](./docs/sessions.md) | Recovery, pinning, titles, [branching](./docs/guides/session-branching.md) |
+| [Sessions](./docs/sessions.md) | Recovery, pinning, titles, [branching](./docs/sessions.md#branching) |
 | [Plugins](./docs/plugins.md) | Installing plugins, writing agents, skills and commands |
 | [Agents, skills and commands](./docs/extending.md) | Per-agent models, skills, custom commands, workflows |
 | [Hooks](./docs/hooks/) | Running your own commands around tool calls |
