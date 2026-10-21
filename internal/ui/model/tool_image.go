@@ -3,13 +3,15 @@ package model
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	_ "image/gif"  // Registers the GIF decoder for tool images.
 	_ "image/jpeg" // Registers the JPEG decoder for tool images.
-	_ "image/png"  // Registers the PNG decoder for tool images.
+	"image/png"
+	_ "image/png" // Registers the PNG decoder for tool images.
 	"math"
 	"net/http"
 	"os"
@@ -133,22 +135,12 @@ type undisplayableError struct{ reason string }
 
 func (e undisplayableError) Error() string { return e.reason }
 
-// renderBitmap decodes req's image and fits it to the drill-in: actual
-// size, one image pixel per screen pixel, shrunk to fit but never
-// enlarged, and padded to whole cells.
-func renderBitmap(req diagramRequest) diagramReadyMsg {
-	fail := func(err error) diagramReadyMsg { return diagramReadyMsg{key: req.key, err: err} }
-	if !bitmapTypes[req.mimeType] {
-		// The type is the tool's to choose, so it stays off the screen.
-		return fail(undisplayableError{"unsupported image type"})
-	}
-	raw, err := base64.StdEncoding.DecodeString(req.data)
-	if err != nil {
-		return fail(fmt.Errorf("decode image data: %w", err))
-	}
+// decodeBitmap decodes raw, unless its decoder would hold more than the
+// bitmap limits allow. For an animated GIF it is the first frame.
+func decodeBitmap(raw []byte) (image.Image, error) {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
 	if err != nil {
-		return fail(fmt.Errorf("decode image: %w", err))
+		return nil, fmt.Errorf("decode image: %w", err)
 	}
 	// The sides are checked first, so the products below can't overflow
 	// an int, even a 32-bit one.
@@ -158,16 +150,35 @@ func renderBitmap(req diagramRequest) diagramReadyMsg {
 		tooLarge = pixels > bitmapMaxPixels || pixels*decodeBytesPerPixel(format, cfg.ColorModel, raw) > bitmapMaxDecodedBytes
 	}
 	if tooLarge {
-		return fail(undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)})
+		return nil, undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)}
+	}
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("decode image: %w", err)
+	}
+	return img, nil
+}
+
+// renderBitmap decodes req's image and fits it to the drill-in: actual
+// size, one image pixel per screen pixel, shrunk to fit but never
+// enlarged, and padded to whole cells.
+func renderBitmap(req diagramRequest) diagramReadyMsg {
+	fail := func(err error) diagramReadyMsg { return diagramReadyMsg{key: req.key, err: err} }
+	if !bitmapTypes[req.mimeType] {
+		// The type is the tool's to choose, so it stays off the screen.
+		return fail(undisplayableError{"unsupported image type"})
 	}
 	if req.cellW*req.cellH > diagramFullMaxPixels {
 		// Not even one cell fits, so fitBitmap would never finish.
 		return fail(undisplayableError{"terminal cells too large to draw in"})
 	}
-	// For an animated GIF this is the first frame.
-	img, _, err := image.Decode(bytes.NewReader(raw))
+	raw, err := base64.StdEncoding.DecodeString(req.data)
 	if err != nil {
-		return fail(fmt.Errorf("decode image: %w", err))
+		return fail(fmt.Errorf("decode image data: %w", err))
+	}
+	img, err := decodeBitmap(raw)
+	if err != nil {
+		return fail(err)
 	}
 	fit := fitBitmap(img.Bounds().Dx(), img.Bounds().Dy(), req)
 	if fit.w != img.Bounds().Dx() || fit.h != img.Bounds().Dy() {
@@ -248,4 +259,55 @@ func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
 		}
 		return util.NewInfoMsg("Opened image in viewer")
 	}
+}
+
+// copyToolImage queues a tool image's copy to the clipboard, which the
+// worker writes so copies land in the order they were asked for.
+func (f *graphicsFeature) copyToolImage(msg chat.ImageCopyMsg) tea.Cmd {
+	if f.overSSH() {
+		// The clipboard is the remote machine's, and OSC 52 only carries
+		// text.
+		return util.ReportWarn("Can't copy an image over SSH; o opens it in a viewer")
+	}
+	if err := f.clipboardReady(); err != nil {
+		return util.ReportError(fmt.Errorf("copy image: %w", err))
+	}
+	req := diagramRequest{key: diagramKey{producer: producerBitmap}, data: msg.Data, job: diagramJobCopy}
+	if !f.enqueue(req) {
+		return util.ReportWarn("Image decoder is busy; try again")
+	}
+	return util.ReportInfo("Copying image")
+}
+
+// copyBitmap writes req's image to the clipboard as a PNG: a PNG's own
+// bytes, exactly as the model saw them, and anything else decoded and
+// encoded again, since the clipboard writers take PNG. Either way it is
+// decoded first, within the bitmap limits, so only a real image is
+// copied.
+func (f *graphicsFeature) copyBitmap(req diagramRequest) diagramCopiedMsg {
+	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{tool: true, err: err} }
+	raw, err := base64.StdEncoding.DecodeString(req.data)
+	if err != nil {
+		return fail(fmt.Errorf("decode image data: %w", err))
+	}
+	sniffed := http.DetectContentType(raw)
+	if !bitmapTypes[sniffed] {
+		return fail(errors.New("only PNG, JPEG, GIF and WebP images copy"))
+	}
+	img, err := decodeBitmap(raw)
+	if err != nil {
+		return fail(err)
+	}
+	out := raw
+	if sniffed != "image/png" {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			return fail(fmt.Errorf("encode image: %w", err))
+		}
+		out = buf.Bytes()
+	}
+	if err := f.writeImage(out); err != nil {
+		return fail(err)
+	}
+	return diagramCopiedMsg{tool: true}
 }

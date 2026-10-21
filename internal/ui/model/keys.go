@@ -60,8 +60,9 @@ type KeyMap struct {
 		FocusChat      key.Binding
 		Branch         key.Binding
 
-		// OpenDiagram, CopyDiagramImage and OpenImage are handled by the
-		// selected item itself; the bindings are only shown in the help.
+		// OpenDiagram, CopyDiagramImage (Y, for a diagram or a tool image)
+		// and OpenImage are handled by the selected item itself; the
+		// bindings are only shown in the help.
 		OpenDiagram      key.Binding
 		CopyDiagramImage key.Binding
 		OpenImage        key.Binding

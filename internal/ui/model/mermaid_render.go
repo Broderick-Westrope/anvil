@@ -174,6 +174,10 @@ func (f *graphicsFeature) runRequest(e *diagramEngines, req diagramRequest) (msg
 
 // job is how the worker answers req, and what it answers when that fails.
 func (f *graphicsFeature) job(req diagramRequest) (run func(*diagramEngines) tea.Msg, fail func(error) tea.Msg) {
+	if req.key.producer == producerBitmap && req.job == diagramJobCopy {
+		return func(*diagramEngines) tea.Msg { return f.copyBitmap(req) },
+			func(err error) tea.Msg { return diagramCopiedMsg{tool: true, err: err} }
+	}
 	if req.key.producer == producerBitmap {
 		return func(*diagramEngines) tea.Msg { return renderBitmap(req) },
 			func(err error) tea.Msg { return diagramReadyMsg{key: req.key, err: err} }

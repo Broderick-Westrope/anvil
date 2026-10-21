@@ -3994,7 +3994,7 @@ func (m *UI) selectedItemBindings() []key.Binding {
 		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyDiagramImage}
 	}
 	if chat.ShowsToolImage(selected) {
-		return []key.Binding{m.keyMap.Chat.OpenImage}
+		return []key.Binding{m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyDiagramImage}
 	}
 	return nil
 }
