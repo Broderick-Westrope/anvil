@@ -115,3 +115,20 @@ func TestDiagramDetailItemHints(t *testing.T) {
 		})
 	}
 }
+
+func TestDiagramDetailItemWontOpenOrCopyTheImageOfAFailedDiagram(t *testing.T) {
+	t.Parallel()
+
+	const src = "A\n"
+	sty := styles.TokyoNight()
+	item := NewDiagramDetailItem(&sty, src, fakeDiagrams{full: map[string]DiagramView{src: {State: DiagramFailed, Err: "bad"}}})
+	item.RawRender(80)
+	for _, key := range []tea.KeyPressMsg{{Code: 'o', Text: "o"}, {Code: 'y', ShiftedCode: 'Y', Mod: tea.ModShift, Text: "Y"}} {
+		handled, cmd := item.HandleKeyEvent(key)
+		require.True(t, handled, key.Text)
+		require.Nil(t, cmd, "%s: it would fail the same way", key.Text)
+	}
+	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	require.True(t, handled)
+	require.NotNil(t, cmd, "the source still copies")
+}

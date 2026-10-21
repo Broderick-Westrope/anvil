@@ -21,6 +21,8 @@ type DiagramDetailItem struct {
 	diagrams DiagramRenderer
 
 	codeBlock diagramCodeBlock
+	// failed reports that the last render showed the failure note.
+	failed bool
 }
 
 // NewDiagramDetailItem creates the drill-in item for source.
@@ -43,9 +45,10 @@ func (d *DiagramDetailItem) Render(width int) string { return d.RawRender(width)
 // a placeholder while it renders, or the code block when it can't be shown.
 func (d *DiagramDetailItem) RawRender(width int) string {
 	view := d.diagrams.FullDiagram(d.source, width)
+	d.failed = view.State == DiagramFailed
 	keys := d.sty.Header.Keystroke.Render("c/y") + " " + d.sty.Header.KeystrokeTip.Render("copy source")
 	hint := keys
-	if view.State != DiagramFailed {
+	if !d.failed {
 		// A diagram the renderer rejects can't be opened in the browser
 		// or copied as an image either.
 		hint = d.sty.Header.Keystroke.Render("o") + " " + d.sty.Header.KeystrokeTip.Render("open in browser") + "  " + keys +
@@ -63,12 +66,20 @@ func (d *DiagramDetailItem) RawRender(width int) string {
 	return strings.Join([]string{hint, "", body}, "\n")
 }
 
-// HandleKeyEvent implements KeyEventHandler.
+// HandleKeyEvent implements KeyEventHandler. A failed diagram can't be
+// opened in the browser or copied as an image, which would fail the same
+// way, so o and Y do nothing then, as the hint says.
 func (d *DiagramDetailItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	switch key.String() {
 	case "o":
+		if d.failed {
+			return true, nil
+		}
 		return true, diagramOpenCmd(d.source, true)
 	case "Y":
+		if d.failed {
+			return true, nil
+		}
 		return true, diagramCopyImageCmd(d.source)
 	case "c", "y":
 		return true, common.CopyToClipboard(d.source, "Diagram source copied to clipboard")
