@@ -1028,3 +1028,30 @@ func TestGraphicsFeatureFreesAnImageThatLandsAfterItsWidthMovedOn(t *testing.T) 
 	require.Len(t, rawMsgs(cmd), 1, "freed in the terminal")
 	require.NotContains(t, f.entries, ready.key)
 }
+
+func TestFitBitmapLandsJustUnderThePaddedCap(t *testing.T) {
+	t.Parallel()
+
+	req := diagramRequest{cellW: 10, cellH: 20, maxCols: 2000}
+	for name, size := range map[string][2]int{
+		"just over":     {4100, 4100},
+		"twice over":    {5800, 5800},
+		"four times":    {8192, 8192},
+		"wide and over": {8192, 4096},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			done := make(chan bitmapFit, 1)
+			go func() { done <- fitBitmap(size[0], size[1], req) }()
+			var fit bitmapFit
+			select {
+			case fit = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("fitting never finished")
+			}
+			padded := fit.cols * req.cellW * fit.rows * req.cellH
+			require.LessOrEqual(t, padded, diagramFullMaxPixels)
+			require.Greater(t, padded, diagramFullMaxPixels*96/100, "shrunk no further than it had to")
+		})
+	}
+}
