@@ -83,11 +83,14 @@ Out:
       arrives, the items that show images (diagram items and tool image
       outputs, via the shared marker interface that replaces
       `DiagramShower`) re-render, as diagrams do today; other items don't.
-- [ ] A tool drill-in shows a snapshot of the tool at the time it was
-      opened, as text output does today (`thinking_detail.go`: "Tool
-      drill-ins don't need this because they show a snapshot"). A result
-      that arrives after opening appears on the next opening; making tool
-      drill-ins live is out of scope.
+- [ ] The image output reads its source's result whenever it renders,
+      exactly as `toolDetailOutputItem` does for text today
+      (`tool_detail.go:517-532`). No new plumbing makes tool drill-ins
+      update live (no source-aware `Version()`): a result arriving after
+      opening shows when something else re-renders the item (resize, an
+      image invalidation) or on the next opening. A test pins that a late
+      result with image data renders correctly once the item re-renders,
+      and that `o` uses the result read at that render.
 - [ ] Tool image outputs work in tool drill-ins nested under a subagent
       drill-in.
 - [ ] Without Kitty graphics or a reported cell size, the item shows the
@@ -169,7 +172,7 @@ Out:
   output; a nested drill-in adds a keypress and breadcrumb for nothing.
   `BuildToolDetailItems` takes the renderer. The existing
   `toolDetailOutputItem` decides at render time, from its source's
-  result, whether to draw an image. Tool drill-ins stay snapshots, so the
+  result, whether to draw an image. Tool drill-ins gain no live updates, so the
   item's list version changes only when the image's view state does: the
   shared marker interface lets `InvalidateDiagrams` clear its cache and
   bump its version like the diagram items. It reports `Finished() ==
