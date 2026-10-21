@@ -776,3 +776,37 @@ func TestPNGInterlaced(t *testing.T) {
 	require.False(t, pngInterlaced(header(0)))
 	require.False(t, pngInterlaced(header(1)[:28]), "too short to say")
 }
+
+func TestGraphicsFeatureKeepsOnlyTheLatestImageAtOneWidth(t *testing.T) {
+	t.Parallel()
+
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	images := f.ImagesFor(drill)
+	shown := showToolImage(t, f, drill, pngData(t, 20, 30))
+
+	// The result changed twice at the same width, the second time while the
+	// first change still rendered.
+	older, latest := pngData(t, 30, 30), pngData(t, 40, 30)
+	images.FullImage(older, "image/png", 80)
+	images.FullImage(latest, "image/png", 80)
+	stale, current := waitReady(t, f), waitReady(t, f)
+
+	_, handled := f.HandleMsg(stale)
+	require.True(t, handled)
+	require.NotContains(t, f.entries, stale.key, "the older render is dropped")
+	f.HandleMsg(current)
+	transmit(current)
+	evict, _ := f.HandleMsg(diagramShownMsg{key: current.key, cols: current.cols, rows: current.rows})
+
+	require.Len(t, rawMsgs(evict), 1, "the image shown before is freed")
+	var full []diagramKey
+	for key := range f.entries {
+		if key.kind == diagramFull {
+			full = append(full, key)
+		}
+	}
+	require.Equal(t, []diagramKey{current.key}, full, "one full-size image, the latest asked for")
+	require.NotContains(t, f.entries, shown.key)
+}

@@ -189,6 +189,9 @@ type graphicsFeature struct {
 	// only touched on the UI goroutine.
 	top *Chat
 	gen uint64
+	// fullAsked is the full-size image last asked for, without its
+	// generation.
+	fullAsked diagramKey
 
 	requests    chan diagramRequest
 	results     chan tea.Msg
@@ -420,15 +423,19 @@ func (f *graphicsFeature) lookup(source string, width int, kind diagramKind, dra
 }
 
 // lookupRequest is lookup for the image req asks for. A full-size image
-// gets the current generation, which moves on when the drill-in's width
-// does: the image at a width it returns to must not share its terminal ID
-// with the one evicted when it left, whose delete may still be on its way.
+// gets the current generation, which moves on whenever the drill-in asks
+// for a different image or width: only that one is current, and one it
+// returns to must not share its terminal ID with the one evicted when it
+// left, whose delete may still be on its way.
 func (f *graphicsFeature) lookupRequest(req diagramRequest, draw bool) chat.DiagramView {
 	kind, width := req.key.kind, req.maxCols
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if kind == diagramFull {
-		if f.widths[kind] != width {
+		asked := req.key
+		asked.gen = 0
+		if asked != f.fullAsked {
+			f.fullAsked = asked
 			f.gen++
 		}
 		req.key.gen = f.gen
