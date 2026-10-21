@@ -478,6 +478,11 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	case chat.DiagramOpenMsg:
 		return f.open(msg), true
 	case chat.DiagramCopyImageMsg:
+		if f.overSSH() {
+			// The clipboard is the remote machine's, and OSC 52, which
+			// copies the source over SSH, only carries text.
+			return util.ReportWarn("Can't copy a diagram image over SSH; c/y copies its source"), true
+		}
 		req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy}
 		if !f.enqueue(req) {
 			return util.ReportWarn("Diagram renderer is busy; try again"), true
@@ -567,6 +572,12 @@ func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 func (f *mermaidFeature) tmux() bool {
 	_, ok := f.caps.Env.LookupEnv("TMUX")
 	return ok
+}
+
+func (f *mermaidFeature) overSSH() bool {
+	_, conn := f.caps.Env.LookupEnv("SSH_CONNECTION")
+	_, tty := f.caps.Env.LookupEnv("SSH_TTY")
+	return conn || tty
 }
 
 // evictLocked drops transmitted diagrams drawn at a width their kind no

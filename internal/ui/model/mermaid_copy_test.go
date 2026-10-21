@@ -9,6 +9,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,4 +103,22 @@ func TestMermaidFeatureWarnsWhenTooBusyToCopy(t *testing.T) {
 	cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "A"})
 	require.True(t, handled)
 	require.Equal(t, util.NewWarnMsg("Diagram renderer is busy; try again"), cmd())
+}
+
+func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"SSH_CONNECTION", "SSH_TTY"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			caps := kittyCaps()
+			caps.Env = uv.Environ{name + "=x"}
+			f := newIdleMermaidFeature(&fakeDiagramHost{}, caps)
+			cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "A"})
+			require.True(t, handled)
+			require.Equal(t, util.NewWarnMsg("Can't copy a diagram image over SSH; c/y copies its source"), cmd())
+			require.Empty(t, f.requests, "nothing renders")
+		})
+	}
 }
