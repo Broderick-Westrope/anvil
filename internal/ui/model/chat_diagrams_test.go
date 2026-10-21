@@ -176,12 +176,14 @@ func TestHelpShowsDiagramKeysOnADiagramNode(t *testing.T) {
 
 	m.chat.SetSelected(1)
 	require.Contains(t, helpTexts(m.ShortHelp()), "o open in browser")
+	require.Contains(t, helpTexts(m.ShortHelp()), "Y copy image")
 	require.Contains(t, helpTexts(m.ShortHelp()), "c/y copy")
 	var full []key.Binding
 	for _, group := range m.FullHelp() {
 		full = append(full, group...)
 	}
 	require.Contains(t, helpTexts(full), "o open in browser")
+	require.Contains(t, helpTexts(full), "Y copy image")
 
 	m.focus = uiFocusEditor
 	require.NotContains(t, helpTexts(m.ShortHelp()), "o open in browser", "the editor has focus")
