@@ -479,6 +479,9 @@ func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
 			// results still rendering for them are dropped when they
 			// arrive, as their entries are gone.
 			cmds = append(cmds, f.forgetWhere(func(diagramKey) bool { return true }))
+			// A full-size image asked for again at once must not share
+			// its terminal ID with the one whose delete is on its way.
+			f.gen++
 		}
 		if f.drawn.usable() || now.usable() {
 			// Placeholders for forgotten images, or code blocks that

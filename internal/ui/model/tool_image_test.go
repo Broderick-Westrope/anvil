@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
@@ -452,4 +453,47 @@ func TestMermaidFeatureReportsAToolImageItCantOpen(t *testing.T) {
 			require.Contains(t, msg.Msg, tc.reason)
 		})
 	}
+}
+
+func TestMermaidFeatureRedrawsAToolImageUnderANewTerminalID(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	f.Observe(nil)
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	data := pngData(t, 30, 30)
+	old := showToolImage(t, f, drill, data)
+
+	// Everything is forgotten, and the image asked for again at once, while
+	// the delete for the old one is still on its way to the terminal.
+	host.bg = nil
+	f.Observe(tea.BackgroundColorMsg{Color: color.RGBA{R: 0x05, G: 0x00, B: 0x14, A: 0xff}})
+	fresh := showToolImage(t, f, drill, data)
+
+	require.NotEqual(t, old.key.id(), fresh.key.id(), "the late delete can't hit the new image")
+}
+
+func TestMermaidFeatureAToolDrillInFreesADiagramImage(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	f.HandleMsg(chat.DiagramOpenMsg{Source: tallFlowchart(30)})
+	f.DrillInChanged(host.drills[0])
+	item := host.drills[0].MessageItems()[0].(*chat.DiagramDetailItem)
+	item.RawRender(80)
+	full := waitReady(t, f)
+	f.HandleMsg(full)
+	transmit(full)
+	f.HandleMsg(diagramShownMsg{key: full.key, cols: full.cols, rows: full.rows})
+	require.Contains(t, f.entries, full.key)
+
+	tool := NewChat(f.com)
+	deletes := rawMsgs(f.DrillInChanged(tool))
+
+	require.Len(t, deletes, 1)
+	require.NotContains(t, f.entries, full.key)
+	showToolImage(t, f, tool, pngData(t, 30, 30))
 }
