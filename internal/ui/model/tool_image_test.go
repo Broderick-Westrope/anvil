@@ -771,7 +771,8 @@ func TestPNGInterlaced(t *testing.T) {
 	t.Parallel()
 
 	header := func(interlace byte) []byte {
-		raw, _ := base64.StdEncoding.DecodeString(pngIHDROnlyInterlace(10, 10, 8, 6, interlace))
+		raw, err := base64.StdEncoding.DecodeString(pngIHDROnlyInterlace(10, 10, 8, 6, interlace))
+		require.NoError(t, err)
 		return raw
 	}
 	require.True(t, pngInterlaced(header(1)))

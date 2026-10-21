@@ -268,8 +268,9 @@ func (f *graphicsFeature) Diagram(source string, width int) chat.DiagramView {
 	return f.lookup(source, width, diagramInline, true)
 }
 
-// FullDiagram implements chat.DiagramRenderer, for when no drill-in is
-// open; drill-ins ask through ForChat.
+// FullDiagram implements chat.DiagramRenderer as asked with no owner,
+// which renders only while no drill-in is open; drill-in items ask
+// through For.
 func (f *graphicsFeature) FullDiagram(source string, width int) chat.DiagramView {
 	return f.fullDiagram(nil, source, width)
 }
@@ -642,16 +643,22 @@ type ownedGraphics struct {
 	owner *Chat
 }
 
+// Diagram implements chat.DiagramRenderer.
 func (o ownedGraphics) Diagram(source string, width int) chat.DiagramView {
 	return o.f.Diagram(source, width)
 }
 
+// FullDiagram implements chat.DiagramRenderer, rendering only while
+// the owner is on top.
 func (o ownedGraphics) FullDiagram(source string, width int) chat.DiagramView {
 	return o.f.fullDiagram(o.owner, source, width)
 }
 
+// InView implements chat.DiagramRenderer.
 func (o ownedGraphics) InView(sources []string, width int) { o.f.InView(sources, width) }
 
+// FullImage implements chat.ImageRenderer, rendering only while the
+// owner is on top.
 func (o ownedGraphics) FullImage(data, mimeType string, width int) chat.DiagramView {
 	return o.f.fullImage(o.owner, data, mimeType, width)
 }

@@ -134,7 +134,7 @@ func rawMsgs(cmd tea.Cmd) []string {
 	return out
 }
 
-func TestMermaidFeatureRendersKittyPlaceholders(t *testing.T) {
+func TestGraphicsFeatureRendersKittyPlaceholders(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -164,7 +164,7 @@ func TestMermaidFeatureRendersKittyPlaceholders(t *testing.T) {
 	require.Contains(t, view.Image, string(kitty.Placeholder))
 }
 
-func TestMermaidFeatureWithoutKittyKeepsCodeBlock(t *testing.T) {
+func TestGraphicsFeatureWithoutKittyKeepsCodeBlock(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, &common.Capabilities{PixelX: 1000, PixelY: 800, Columns: 100, Rows: 40})
@@ -173,7 +173,7 @@ func TestMermaidFeatureWithoutKittyKeepsCodeBlock(t *testing.T) {
 	require.Empty(t, f.entries, "nothing is queued")
 }
 
-func TestMermaidFeatureReportsFailures(t *testing.T) {
+func TestGraphicsFeatureReportsFailures(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -193,7 +193,7 @@ func TestMermaidFeatureReportsFailures(t *testing.T) {
 	require.Equal(t, chat.DiagramPending, f.FullDiagram(src, 80).State, "each kind renders on its own")
 }
 
-func TestMermaidFeatureReleasesEnginesWhenIdle(t *testing.T) {
+func TestGraphicsFeatureReleasesEnginesWhenIdle(t *testing.T) {
 	t.Parallel()
 
 	st := uistyles.TokyoNight()
@@ -217,7 +217,7 @@ func TestMermaidFeatureReleasesEnginesWhenIdle(t *testing.T) {
 		"the engines load again on demand, and are dropped again")
 }
 
-func TestMermaidFeatureEvictsOtherWidthsOnResize(t *testing.T) {
+func TestGraphicsFeatureEvictsOtherWidthsOnResize(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -234,7 +234,7 @@ func TestMermaidFeatureEvictsOtherWidthsOnResize(t *testing.T) {
 	require.True(t, fimage.HasTransmitted(narrow.key.id(), narrow.cols, narrow.rows))
 }
 
-func TestMermaidFeatureEvictsLeastRecentlyDrawnOverBudget(t *testing.T) {
+func TestGraphicsFeatureEvictsLeastRecentlyDrawnOverBudget(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -261,7 +261,7 @@ func TestMermaidFeatureEvictsLeastRecentlyDrawnOverBudget(t *testing.T) {
 	require.True(t, strings.HasPrefix(waitReady(t, f).key.id(), "mermaid-"))
 }
 
-func TestMermaidFeatureThemeUsesTheBackgroundBehindTheImage(t *testing.T) {
+func TestGraphicsFeatureThemeUsesTheBackgroundBehindTheImage(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
@@ -278,7 +278,7 @@ func TestMermaidFeatureThemeUsesTheBackgroundBehindTheImage(t *testing.T) {
 		"a new background renders the diagram again")
 }
 
-func TestMermaidFeatureRendersTransparentImages(t *testing.T) {
+func TestGraphicsFeatureRendersTransparentImages(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -288,7 +288,7 @@ func TestMermaidFeatureRendersTransparentImages(t *testing.T) {
 	require.Zero(t, a, "the terminal shows through")
 }
 
-func TestMermaidFeatureOpensDrillIn(t *testing.T) {
+func TestGraphicsFeatureOpensDrillIn(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -325,7 +325,7 @@ func TestMermaidFeatureOpensDrillIn(t *testing.T) {
 	require.NotContains(t, f.entries, full.key)
 }
 
-func TestMermaidFeatureWithoutKittyOpensTheCodeBlock(t *testing.T) {
+func TestGraphicsFeatureWithoutKittyOpensTheCodeBlock(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -346,7 +346,7 @@ func TestMermaidFeatureWithoutKittyOpensTheCodeBlock(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureExportsForTheBrowser(t *testing.T) {
+func TestGraphicsFeatureExportsForTheBrowser(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -377,7 +377,7 @@ func TestMermaidFeatureExportsForTheBrowser(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureThemeIsTheTokyoNightPalette(t *testing.T) {
+func TestGraphicsFeatureThemeIsTheTokyoNightPalette(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
@@ -407,7 +407,7 @@ func TestMermaidFeatureThemeIsTheTokyoNightPalette(t *testing.T) {
 	}, f.theme())
 }
 
-func TestMermaidFeatureThemeFollowsTheStyles(t *testing.T) {
+func TestGraphicsFeatureThemeFollowsTheStyles(t *testing.T) {
 	t.Parallel()
 
 	st := uistyles.TokyoNight()
@@ -419,7 +419,7 @@ func TestMermaidFeatureThemeFollowsTheStyles(t *testing.T) {
 	require.Equal(t, "#040506", theme["pele-series-8"])
 }
 
-func TestMermaidFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
+func TestGraphicsFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -445,7 +445,7 @@ func TestMermaidFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
 	require.Equal(t, invalidations, host.invalidations, "nothing new to show")
 }
 
-func TestMermaidFeatureRedrawsWhenTheCellSizeArrivesAfterKitty(t *testing.T) {
+func TestGraphicsFeatureRedrawsWhenTheCellSizeArrivesAfterKitty(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -460,7 +460,7 @@ func TestMermaidFeatureRedrawsWhenTheCellSizeArrivesAfterKitty(t *testing.T) {
 	require.Greater(t, host.invalidations, before, "the code blocks the chat cached are redrawn")
 }
 
-func TestMermaidFeatureDropsImagesWhenTheCellSizeChanges(t *testing.T) {
+func TestGraphicsFeatureDropsImagesWhenTheCellSizeChanges(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -478,7 +478,7 @@ func TestMermaidFeatureDropsImagesWhenTheCellSizeChanges(t *testing.T) {
 	require.Equal(t, chat.DiagramPending, f.Diagram("flowchart LR\n A --> B\n", 80).State, "it renders again at the new size")
 }
 
-func TestMermaidFeatureIgnoresAResultForTheOldCellSize(t *testing.T) {
+func TestGraphicsFeatureIgnoresAResultForTheOldCellSize(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -501,7 +501,7 @@ func TestMermaidFeatureIgnoresAResultForTheOldCellSize(t *testing.T) {
 	require.Equal(t, diagramPending, f.entries[fresh.key].state)
 }
 
-func TestMermaidFeatureRedrawsWhenTheBackgroundChanges(t *testing.T) {
+func TestGraphicsFeatureRedrawsWhenTheBackgroundChanges(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
@@ -524,7 +524,7 @@ func tallFlowchart(steps int) string {
 	return src
 }
 
-func TestMermaidFeatureDrillInReusesAnUnsqueezedInlineImage(t *testing.T) {
+func TestGraphicsFeatureDrillInReusesAnUnsqueezedInlineImage(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -543,7 +543,7 @@ func TestMermaidFeatureDrillInReusesAnUnsqueezedInlineImage(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureDrillInShowsTheSqueezedInlineImageWhileItRenders(t *testing.T) {
+func TestGraphicsFeatureDrillInShowsTheSqueezedInlineImageWhileItRenders(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -557,7 +557,7 @@ func TestMermaidFeatureDrillInShowsTheSqueezedInlineImageWhileItRenders(t *testi
 	require.Equal(t, diagramFull, waitReady(t, f).key.kind)
 }
 
-func TestMermaidFeatureDrillInWithoutAnInlineImageRenders(t *testing.T) {
+func TestGraphicsFeatureDrillInWithoutAnInlineImageRenders(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -567,7 +567,7 @@ func TestMermaidFeatureDrillInWithoutAnInlineImageRenders(t *testing.T) {
 	require.Equal(t, diagramFull, waitReady(t, f).key.kind)
 }
 
-func TestMermaidFeatureImageHashCoversThePalette(t *testing.T) {
+func TestGraphicsFeatureImageHashCoversThePalette(t *testing.T) {
 	t.Parallel()
 
 	st := uistyles.TokyoNight()
@@ -579,7 +579,7 @@ func TestMermaidFeatureImageHashCoversThePalette(t *testing.T) {
 	require.Equal(t, plain.imageHash("A", "#000000"), plain.imageHash("A", "#000000"))
 }
 
-func TestMermaidFeatureDropsAFailureForAForgottenDiagram(t *testing.T) {
+func TestGraphicsFeatureDropsAFailureForAForgottenDiagram(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -596,7 +596,7 @@ func TestMermaidFeatureDropsAFailureForAForgottenDiagram(t *testing.T) {
 	require.NotContains(t, f.entries, failed.key, "nothing is kept for the old cells")
 }
 
-func TestMermaidFeatureExportPrunesOldPages(t *testing.T) {
+func TestGraphicsFeatureExportPrunesOldPages(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -617,7 +617,7 @@ func TestMermaidFeatureExportPrunesOldPages(t *testing.T) {
 	require.FileExists(t, exported.path)
 }
 
-func TestMermaidFeatureExportsToTheUsersCacheDir(t *testing.T) {
+func TestGraphicsFeatureExportsToTheUsersCacheDir(t *testing.T) {
 	t.Parallel()
 
 	cache, err := os.UserCacheDir()
@@ -627,7 +627,7 @@ func TestMermaidFeatureExportsToTheUsersCacheDir(t *testing.T) {
 	require.Equal(t, filepath.Join(cache, "anvil", "diagrams"), f.exportDir)
 }
 
-func TestMermaidFeatureCachesCompiledCodeInTheUsersCacheDir(t *testing.T) {
+func TestGraphicsFeatureCachesCompiledCodeInTheUsersCacheDir(t *testing.T) {
 	t.Parallel()
 
 	cache, err := os.UserCacheDir()
@@ -637,7 +637,7 @@ func TestMermaidFeatureCachesCompiledCodeInTheUsersCacheDir(t *testing.T) {
 	require.Equal(t, filepath.Join(cache, "anvil", "wasm"), f.compileCacheDir)
 }
 
-func TestMermaidFeatureRendersThroughTheCompileCache(t *testing.T) {
+func TestGraphicsFeatureRendersThroughTheCompileCache(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -664,7 +664,7 @@ func TestFileURL(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureRedrawsWhenDiagramsBecomeUndrawable(t *testing.T) {
+func TestGraphicsFeatureRedrawsWhenDiagramsBecomeUndrawable(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -706,7 +706,7 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureInViewQueuesAndKeepsDiagrams(t *testing.T) {
+func TestGraphicsFeatureInViewQueuesAndKeepsDiagrams(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -731,7 +731,7 @@ func TestMermaidFeatureInViewQueuesAndKeepsDiagrams(t *testing.T) {
 // On a HiDPI screen two or three diagrams can fill the budget. Evicting one
 // that's on screen made it fall back to its code block, render again and
 // evict the next, so diagrams flickered while scrolling.
-func TestMermaidFeatureNeverEvictsDiagramsInView(t *testing.T) {
+func TestGraphicsFeatureNeverEvictsDiagramsInView(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -753,7 +753,7 @@ func TestMermaidFeatureNeverEvictsDiagramsInView(t *testing.T) {
 	require.NotContains(t, f.entries, a.key)
 }
 
-func TestMermaidFeatureRetriesATransientFailureOnce(t *testing.T) {
+func TestGraphicsFeatureRetriesATransientFailureOnce(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -769,7 +769,7 @@ func TestMermaidFeatureRetriesATransientFailureOnce(t *testing.T) {
 	require.Equal(t, chat.DiagramFailed, f.Diagram(src, 80).State, "but only once")
 }
 
-func TestMermaidFeatureDropsFailuresAtOldWidths(t *testing.T) {
+func TestGraphicsFeatureDropsFailuresAtOldWidths(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
@@ -879,7 +879,7 @@ func heldDiagram(f *graphicsFeature, hash uint64, width int, lastUsed uint64, n 
 	return key
 }
 
-func TestMermaidFeatureEvictLocked(t *testing.T) {
+func TestGraphicsFeatureEvictLocked(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -920,7 +920,7 @@ func TestMermaidFeatureEvictLocked(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureEvictLockedOnlyDropsFailuresAtOldWidths(t *testing.T) {
+func TestGraphicsFeatureEvictLockedOnlyDropsFailuresAtOldWidths(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
@@ -955,7 +955,7 @@ func heldInline(t *testing.T, f *graphicsFeature, src string, cols int) *diagram
 	return e
 }
 
-func TestMermaidFeatureInlineImageFitsTheDrillInExactly(t *testing.T) {
+func TestGraphicsFeatureInlineImageFitsTheDrillInExactly(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
@@ -971,7 +971,7 @@ func TestMermaidFeatureInlineImageFitsTheDrillInExactly(t *testing.T) {
 	require.Empty(t, out, "wider than the drill-in")
 }
 
-func TestMermaidFeatureCountsTheBytesTheTerminalHolds(t *testing.T) {
+func TestGraphicsFeatureCountsTheBytesTheTerminalHolds(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
@@ -991,7 +991,7 @@ func fullEntry(f *graphicsFeature) diagramKey {
 	return key
 }
 
-func TestMermaidFeatureObservingFreesNoFullImage(t *testing.T) {
+func TestGraphicsFeatureObservingFreesNoFullImage(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -1001,7 +1001,7 @@ func TestMermaidFeatureObservingFreesNoFullImage(t *testing.T) {
 	require.Contains(t, f.entries, key, "only a drill-in change frees it")
 }
 
-func TestMermaidFeatureReplacingADrillInFreesItsImage(t *testing.T) {
+func TestGraphicsFeatureReplacingADrillInFreesItsImage(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
@@ -1026,7 +1026,7 @@ func browserCmdMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
 	return batch[1]()
 }
 
-func TestMermaidFeatureOpensAnExportedPage(t *testing.T) {
+func TestGraphicsFeatureOpensAnExportedPage(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
@@ -1041,7 +1041,7 @@ func TestMermaidFeatureOpensAnExportedPage(t *testing.T) {
 	require.Equal(t, []string{"file:///tmp/d.html"}, opened)
 }
 
-func TestMermaidFeatureReportsAFailedExport(t *testing.T) {
+func TestGraphicsFeatureReportsAFailedExport(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
@@ -1051,7 +1051,7 @@ func TestMermaidFeatureReportsAFailedExport(t *testing.T) {
 	require.Equal(t, util.NewErrorMsg(errors.New("open diagram: disk full")), browserCmdMsg(t, cmd))
 }
 
-func TestMermaidFeatureReportsABrowserThatWontOpen(t *testing.T) {
+func TestGraphicsFeatureReportsABrowserThatWontOpen(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
@@ -1126,7 +1126,7 @@ func TestPruneExportsWarnsNothingWhenItWorks(t *testing.T) {
 	require.Empty(t, rec.warns)
 }
 
-func TestMermaidFeatureReportsEnginesThatWontLoad(t *testing.T) {
+func TestGraphicsFeatureReportsEnginesThatWontLoad(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
@@ -1150,7 +1150,7 @@ func TestMermaidFeatureReportsEnginesThatWontLoad(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureInViewHoldsNothingWhenDiagramsCantDraw(t *testing.T) {
+func TestGraphicsFeatureInViewHoldsNothingWhenDiagramsCantDraw(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
