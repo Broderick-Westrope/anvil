@@ -172,3 +172,17 @@ func TestGraphicsFeatureReportsACrashWhileCopyingAToolImage(t *testing.T) {
 	require.Equal(t, toolImageCopy, copied.what)
 	require.ErrorContains(t, copied.err, "image decoder crashed: clipboard library bug")
 }
+
+func TestGraphicsFeatureReportsAClipboardThatWontTakeAToolImage(t *testing.T) {
+	t.Parallel()
+
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f.writeImage = (&clipboardRecorder{err: errors.New("clipboard is busy")}).write
+	f.HandleMsg(chat.ImageCopyMsg{Data: pngData(t, 2, 2)})
+
+	copied, ok := waitResult(t, f).(diagramCopiedMsg)
+
+	require.True(t, ok)
+	require.Equal(t, toolImageCopy, copied.what)
+	require.EqualError(t, copied.err, "clipboard is busy")
+}
