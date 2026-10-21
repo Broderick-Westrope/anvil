@@ -66,6 +66,7 @@ const (
 // diagramKey names one image of a diagram. The cell size is part of it, so
 // a result rendered for cells the terminal no longer has never matches.
 type diagramKey struct {
+	producer     producer
 	hash         uint64
 	width        int
 	kind         diagramKind
@@ -73,7 +74,24 @@ type diagramKey struct {
 }
 
 func (k diagramKey) id() string {
-	return fmt.Sprintf("mermaid-%x-%d-%d-%dx%d", k.hash, k.width, k.kind, k.cellW, k.cellH)
+	return fmt.Sprintf("%s-%x-%d-%d-%dx%d", k.producer, k.hash, k.width, k.kind, k.cellW, k.cellH)
+}
+
+// producer is what turns a request into an image.
+type producer int
+
+const (
+	// producerMermaid lays out and rasterizes Mermaid source.
+	producerMermaid producer = iota
+	// producerBitmap decodes an image a tool returned.
+	producerBitmap
+)
+
+func (p producer) String() string {
+	if p == producerBitmap {
+		return "image"
+	}
+	return "mermaid"
 }
 
 type diagramState int
@@ -103,11 +121,14 @@ type diagramEntry struct {
 }
 
 type diagramRequest struct {
-	key          diagramKey
-	source       string
-	theme        mermaid.Theme
-	cellW, cellH int
-	maxCols      int
+	key    diagramKey
+	source string
+	// data and mimeType are a bitmap's base64 data and type, for
+	// producerBitmap.
+	data, mimeType string
+	theme          mermaid.Theme
+	cellW, cellH   int
+	maxCols        int
 	// export writes the diagram as a page to open in the browser instead
 	// of rasterizing it.
 	export bool
@@ -367,7 +388,13 @@ func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw
 	if !ok {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
+	req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: key.cellW, cellH: key.cellH, maxCols: width}
+	return f.lookupRequest(req, draw)
+}
 
+// lookupRequest is lookup for the image req asks for.
+func (f *mermaidFeature) lookupRequest(req diagramRequest, draw bool) chat.DiagramView {
+	key, kind, width := req.key, req.key.kind, req.maxCols
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.widths[kind] = width
@@ -381,7 +408,6 @@ func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw
 			if !e.transient || e.retried {
 				return chat.DiagramView{State: chat.DiagramFailed, Err: e.err}
 			}
-			req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: key.cellW, cellH: key.cellH, maxCols: width}
 			if f.enqueue(req) {
 				e.state, e.retried = diagramPending, true
 			}
@@ -398,7 +424,6 @@ func (f *mermaidFeature) lookup(source string, width int, kind diagramKind, draw
 		// either: render it again.
 		delete(f.entries, key)
 	}
-	req := diagramRequest{key: key, source: source, theme: f.theme(), cellW: key.cellW, cellH: key.cellH, maxCols: width}
 	if f.enqueue(req) {
 		f.entries[key] = &diagramEntry{state: diagramPending, lastUsed: f.clock}
 	}

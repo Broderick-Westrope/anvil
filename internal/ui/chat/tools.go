@@ -374,6 +374,11 @@ func (t *baseToolMessageItem) ResultVersion() uint64 {
 	return t.resultVersion
 }
 
+// Result is the tool's result, or nil before it has one.
+func (t *baseToolMessageItem) Result() *message.ToolResult {
+	return t.result
+}
+
 // ID returns the unique identifier for this tool message item.
 func (t *baseToolMessageItem) ID() string {
 	return t.toolCall.ID

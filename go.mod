@@ -68,6 +68,7 @@ require (
 	github.com/tidwall/sjson v1.2.5
 	github.com/zeebo/xxh3 v1.1.0
 	go.uber.org/goleak v1.3.0
+	golang.org/x/image v0.45.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
@@ -190,7 +191,6 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.3 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
-	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/api v0.294.0 // indirect

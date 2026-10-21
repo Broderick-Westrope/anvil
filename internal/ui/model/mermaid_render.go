@@ -130,6 +130,11 @@ func (f *mermaidFeature) work() {
 // serve answers req with engines, loading them first if they're nil, and
 // returns the engines to keep for the next request.
 func (f *mermaidFeature) serve(engines *diagramEngines, req diagramRequest) (*diagramEngines, tea.Msg) {
+	if req.key.producer == producerBitmap {
+		// Bitmaps need no engines.
+		msg, _ := f.runRequest(nil, req)
+		return engines, msg
+	}
 	if engines == nil {
 		pele, err := f.newRenderer()
 		if err != nil {
@@ -157,8 +162,11 @@ func (f *mermaidFeature) runRequest(e *diagramEngines, req diagramRequest) (msg 
 			msg, ok = requestFailed(req, fmt.Errorf("diagram renderer crashed: %v", r)), false
 		}
 	}()
-	if req.export {
+	switch {
+	case req.export:
 		return f.export(e, req), true
+	case req.key.producer == producerBitmap:
+		return renderBitmap(req), true
 	}
 	return renderDiagram(e, req), true
 }
