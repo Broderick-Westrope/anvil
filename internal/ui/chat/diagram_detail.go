@@ -47,8 +47,9 @@ func (d *DiagramDetailItem) RawRender(width int) string {
 	hint := keys
 	if view.State != DiagramFailed {
 		// A diagram the renderer rejects can't be opened in the browser
-		// either.
-		hint = d.sty.Header.Keystroke.Render("o") + " " + d.sty.Header.KeystrokeTip.Render("open in browser") + "  " + keys
+		// or copied as an image either.
+		hint = d.sty.Header.Keystroke.Render("o") + " " + d.sty.Header.KeystrokeTip.Render("open in browser") + "  " + keys +
+			"  " + d.sty.Header.Keystroke.Render("Y") + " " + d.sty.Header.KeystrokeTip.Render("copy image")
 	}
 	var body string
 	switch view.State {
@@ -67,6 +68,8 @@ func (d *DiagramDetailItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	switch key.String() {
 	case "o":
 		return true, diagramOpenCmd(d.source, true)
+	case "Y":
+		return true, diagramCopyImageCmd(d.source)
 	case "c", "y":
 		return true, common.CopyToClipboard(d.source, "Diagram source copied to clipboard")
 	}

@@ -69,6 +69,9 @@ func TestDiagramDetailItemKeys(t *testing.T) {
 	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	require.True(t, handled)
 	require.Equal(t, DiagramOpenMsg{Source: "A\n", External: true}, cmdMsg(t, cmd))
+	handled, cmd = item.HandleKeyEvent(tea.KeyPressMsg{Code: 'y', ShiftedCode: 'Y', Mod: tea.ModShift, Text: "Y"})
+	require.True(t, handled)
+	require.Equal(t, DiagramCopyImageMsg{Source: "A\n"}, cmdMsg(t, cmd))
 	handled, _ = item.HandleKeyEvent(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	require.False(t, handled)
 }
@@ -95,8 +98,8 @@ func TestDiagramDetailItemHints(t *testing.T) {
 		want    []string
 		wantNot []string
 	}{
-		"ready":  {view: DiagramView{State: DiagramReady, Image: "IMG"}, want: []string{"open in browser", "copy source"}},
-		"failed": {view: DiagramView{State: DiagramFailed, Err: "bad"}, want: []string{"copy source"}, wantNot: []string{"open in browser"}},
+		"ready":  {view: DiagramView{State: DiagramReady, Image: "IMG"}, want: []string{"open in browser", "copy source", "Y copy image"}},
+		"failed": {view: DiagramView{State: DiagramFailed, Err: "bad"}, want: []string{"copy source"}, wantNot: []string{"open in browser", "copy image"}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

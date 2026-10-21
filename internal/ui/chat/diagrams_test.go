@@ -301,6 +301,9 @@ func TestDiagramItemActions(t *testing.T) {
 	handled, cmd := item.HandleKeyEvent(keyPress("o"))
 	require.True(t, handled)
 	require.Equal(t, DiagramOpenMsg{Source: "A\n", External: true}, cmdMsg(t, cmd))
+	handled, cmd = item.HandleKeyEvent(keyPress("Y"))
+	require.True(t, handled)
+	require.Equal(t, DiagramCopyImageMsg{Source: "A\n"}, cmdMsg(t, cmd))
 	handled, _ = item.HandleKeyEvent(keyPress("x"))
 	require.False(t, handled)
 
@@ -344,6 +347,18 @@ func TestDiagramItemDoesNotOpenAFailedDiagramInTheBrowser(t *testing.T) {
 	handled, cmd := item.HandleKeyEvent(keyPress("o"))
 	require.True(t, handled)
 	require.Nil(t, cmd, "the export would fail the same way")
+}
+
+func TestDiagramItemDoesNotCopyAFailedDiagramAsAnImage(t *testing.T) {
+	t.Parallel()
+
+	const src = "A\n"
+	sty := styles.TokyoNight()
+	item := NewDiagramItem(&sty, finishedMessage("m"), 1, src, fakeDiagrams{inline: map[string]DiagramView{src: {State: DiagramFailed, Err: "bad"}}})
+	item.Render(80)
+	handled, cmd := item.HandleKeyEvent(keyPress("Y"))
+	require.True(t, handled)
+	require.Nil(t, cmd, "the render would fail the same way")
 }
 
 func TestOpenCodeFenceInfoString(t *testing.T) {
