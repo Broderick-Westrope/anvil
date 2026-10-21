@@ -991,17 +991,14 @@ func fullEntry(f *graphicsFeature) diagramKey {
 	return key
 }
 
-func TestMermaidFeatureKeepsFullImagesWhileTheTopDrillInStays(t *testing.T) {
+func TestMermaidFeatureObservingFreesNoFullImage(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
 	f := newIdleGraphicsFeature(host, kittyCaps())
 	key := fullEntry(f)
 	f.Observe(nil)
-	require.Contains(t, f.entries, key, "observing frees nothing")
-
-	require.Nil(t, f.DrillInChanged(nil), "no drill-in was open, and none is")
-	require.Contains(t, f.entries, key)
+	require.Contains(t, f.entries, key, "only a drill-in change frees it")
 }
 
 func TestMermaidFeatureReplacingADrillInFreesItsImage(t *testing.T) {

@@ -614,11 +614,9 @@ func (f *graphicsFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 
 // DrillInChanged implements drillInFeature. Only the drill-in on top may
 // hold a full-size image, so the last one's is freed, and the chats
-// re-render so the new top asks for its own.
+// re-render so the new top asks for its own. The registry only calls it
+// when top changes.
 func (f *graphicsFeature) DrillInChanged(top *Chat) tea.Cmd {
-	if top == f.top {
-		return nil
-	}
 	f.top = top
 	f.gen++
 	cmd := f.forgetKind(diagramFull)
