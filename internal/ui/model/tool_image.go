@@ -191,7 +191,8 @@ func fitBitmap(w, h int, req diagramRequest) bitmapFit {
 	fw, fh := float64(w), float64(h)
 	scale := math.Min(1, float64(req.maxCols)*cw/fw)
 	scale = math.Min(scale, diagramMaxFullRows*ch/fh)
-	scale = math.Min(scale, math.Sqrt(diagramFullMaxPixels/(fw*fh)))
+	// The pixel cap is checked once padded, which is what the terminal
+	// holds; each pass shrinks to just under it.
 	for {
 		fit := bitmapFit{w: max(1, int(fw*scale)), h: max(1, int(fh*scale))}
 		fit.cols = int(math.Ceil(float64(fit.w) / cw))
