@@ -83,15 +83,15 @@ func jpegProgressive(raw []byte) bool {
 			return true
 		}
 		marker := raw[i+1]
-		switch {
-		case marker == 0xff:
+		switch marker {
+		case 0xff:
 			i++ // A fill byte.
 			continue
-		case marker == 0xc2:
+		case 0xc2:
 			return true
-		case marker == 0xc0 || marker == 0xc1:
+		case 0xc0, 0xc1:
 			return false
-		case marker == 0xda:
+		case 0xda:
 			// The scan started before any frame header.
 			return true
 		}
