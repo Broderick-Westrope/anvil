@@ -150,9 +150,14 @@ func renderBitmap(req diagramRequest) diagramReadyMsg {
 	if err != nil {
 		return fail(fmt.Errorf("decode image: %w", err))
 	}
-	pixels := cfg.Width * cfg.Height
-	if cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide || pixels > bitmapMaxPixels ||
-		pixels*decodeBytesPerPixel(format, cfg.ColorModel, raw) > bitmapMaxDecodedBytes {
+	// The sides are checked first, so the products below can't overflow
+	// an int, even a 32-bit one.
+	tooLarge := cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide
+	if !tooLarge {
+		pixels := cfg.Width * cfg.Height
+		tooLarge = pixels > bitmapMaxPixels || pixels*decodeBytesPerPixel(format, cfg.ColorModel, raw) > bitmapMaxDecodedBytes
+	}
+	if tooLarge {
 		return fail(undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)})
 	}
 	if req.cellW*req.cellH > diagramFullMaxPixels {

@@ -77,7 +77,7 @@ func TestToolDetailOutputImageStates(t *testing.T) {
 			want: []string{"Loaded Image", "image/png", "This terminal can't display images"},
 		},
 		"failed keeps the line and says why": {
-			view:    DiagramView{State: DiagramFailed, Err: "unsupported image type image/svg+xml"},
+			view:    DiagramView{State: DiagramFailed, Err: "unsupported image type"},
 			want:    []string{"Loaded Image", "Can't display: unsupported image type image/svg+xml"},
 			wantNot: []string{"Loading image"},
 		},
