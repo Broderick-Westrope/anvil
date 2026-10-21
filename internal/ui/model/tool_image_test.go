@@ -100,14 +100,17 @@ func encodeImage(t *testing.T, img image.Image, format string) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
-// pngIHDROnly is a PNG that is only a signature and an IHDR claiming w×h,
-// so decoding its config works and decoding its pixels fails.
-func pngIHDROnly(w, h uint32) string {
+// pngIHDROnly is a PNG that is only a signature and an IHDR claiming w×h
+// RGBA, so decoding its config works and decoding its pixels fails.
+func pngIHDROnly(w, h uint32) string { return pngIHDROnlyDepth(w, h, 8) }
+
+// pngIHDROnlyDepth is pngIHDROnly with depth bits per channel.
+func pngIHDROnlyDepth(w, h uint32, depth byte) string {
 	var ihdr bytes.Buffer
 	ihdr.WriteString("IHDR")
 	_ = binary.Write(&ihdr, binary.BigEndian, w)
 	_ = binary.Write(&ihdr, binary.BigEndian, h)
-	ihdr.Write([]byte{8, 6, 0, 0, 0})
+	ihdr.Write([]byte{depth, 6, 0, 0, 0})
 	var buf bytes.Buffer
 	buf.WriteString("\x89PNG\r\n\x1a\n")
 	_ = binary.Write(&buf, binary.BigEndian, uint32(ihdr.Len()-4))
@@ -226,12 +229,13 @@ func TestMermaidFeatureRefusesToolImagesItCantShow(t *testing.T) {
 		data, mimeType string
 		want           string
 	}{
-		"unsupported type":       {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type image/svg+xml"},
-		"too wide to decode":     {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
-		"too many pixels":        {data: pngIHDROnly(8000, 4200), mimeType: "image/png", want: "image too large (8000×4200)"},
-		"corrupt data":           {data: base64.StdEncoding.EncodeToString([]byte("not a png")), mimeType: "image/png", want: "decode image"},
-		"truncated after header": {data: pngIHDROnly(10, 10), mimeType: "image/png", want: "decode image"},
-		"invalid base64":         {data: "!!!", mimeType: "image/png", want: "decode image data"},
+		"unsupported type":            {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type image/svg+xml"},
+		"too wide to decode":          {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
+		"too many bytes once decoded": {data: pngIHDROnlyDepth(6000, 4000, 16), mimeType: "image/png", want: "image too large (6000×4000)"},
+		"too many pixels":             {data: pngIHDROnly(8000, 4200), mimeType: "image/png", want: "image too large (8000×4200)"},
+		"corrupt data":                {data: base64.StdEncoding.EncodeToString([]byte("not a png")), mimeType: "image/png", want: "decode image"},
+		"truncated after header":      {data: pngIHDROnly(10, 10), mimeType: "image/png", want: "decode image"},
+		"invalid base64":              {data: "!!!", mimeType: "image/png", want: "decode image data"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -496,4 +500,43 @@ func TestMermaidFeatureAToolDrillInFreesADiagramImage(t *testing.T) {
 	require.Len(t, deletes, 1)
 	require.NotContains(t, f.entries, full.key)
 	showToolImage(t, f, tool, pngData(t, 30, 30))
+}
+
+func TestMermaidFeatureDecodesAnEightBitImageThatSixteenBitsWouldRefuse(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	ready := requestImage(t, f, pngIHDROnly(6000, 4000), "image/png", 80)
+	require.ErrorContains(t, ready.err, "decode image:", "it got past the size check to the pixels")
+}
+
+func TestDecodedBytesPerPixel(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		model color.Model
+		want  int
+	}{
+		"16-bit RGBA":    {model: color.RGBA64Model, want: 8},
+		"16-bit NRGBA":   {model: color.NRGBA64Model, want: 8},
+		"16-bit grey":    {model: color.Gray16Model, want: 2},
+		"grey":           {model: color.GrayModel, want: 1},
+		"alpha":          {model: color.AlphaModel, want: 1},
+		"paletted":       {model: color.Palette{color.Black}, want: 1},
+		"8-bit RGBA":     {model: color.RGBAModel, want: 4},
+		"YCbCr, as JPEG": {model: color.YCbCrModel, want: 4},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, decodedBytesPerPixel(tc.model))
+		})
+	}
+}
+
+func TestBitmapLimits(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 8192, bitmapMaxSide)
+	require.Equal(t, 134_217_728, bitmapMaxDecodedBytes)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"image"
+	"image/color"
 	"image/draw"
 	_ "image/gif"  // Registers the GIF decoder for tool images.
 	_ "image/jpeg" // Registers the JPEG decoder for tool images.
@@ -47,11 +48,30 @@ func (f *mermaidFeature) fullImage(owner *Chat, data, mimeType string, width int
 }
 
 // Bitmap limits. A source past them isn't decoded: decoding allocates
-// its full RGBA before it is shrunk to fit.
+// all its pixels before it is shrunk to fit.
 const (
 	bitmapMaxSide         = 8192
-	bitmapMaxSourcePixels = 32 << 20
+	bitmapMaxDecodedBytes = 128 << 20
 )
+
+// decodedBytesPerPixel is what the decoders allocate per pixel for an
+// image of model m. A 16-bit PNG takes twice an 8-bit one; models it
+// doesn't know are taken as RGBA, which is at least what JPEG and WebP
+// use.
+func decodedBytesPerPixel(m color.Model) int {
+	switch m {
+	case color.RGBA64Model, color.NRGBA64Model:
+		return 8
+	case color.Gray16Model:
+		return 2
+	case color.GrayModel, color.AlphaModel:
+		return 1
+	}
+	if _, ok := m.(color.Palette); ok {
+		return 1
+	}
+	return 4
+}
 
 // bitmapTypes are the image types tool images are decoded from.
 var bitmapTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
@@ -78,7 +98,8 @@ func renderBitmap(req diagramRequest) diagramReadyMsg {
 	if err != nil {
 		return fail(fmt.Errorf("decode image: %w", err))
 	}
-	if cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide || cfg.Width*cfg.Height > bitmapMaxSourcePixels {
+	if cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide ||
+		cfg.Width*cfg.Height*decodedBytesPerPixel(cfg.ColorModel) > bitmapMaxDecodedBytes {
 		return fail(undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)})
 	}
 	// For an animated GIF this is the first frame.
