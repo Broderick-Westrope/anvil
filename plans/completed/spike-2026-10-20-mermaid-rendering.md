@@ -25,7 +25,7 @@ flowchart LR
   `github.com/boolean-maybe/go-resvg` v0.0.2 (Apache-2.0) around its
   `resvg.wasm` (wazero, DejaVu Sans built in). See Memory below for why
   it isn't a dependency.
-- `internal/ui/model/mermaid.go (now graphics.go)`: a feature that renders on one worker
+- `internal/ui/model/mermaid.go`: a feature that renders on one worker
   goroutine and sends the image to the terminal with the existing
   `internal/ui/image` Kitty path. Once the terminal has it, the feature
   invalidates the chat. The worker loads the engines on the first diagram

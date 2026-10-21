@@ -69,21 +69,25 @@ Out:
 
 - [ ] Opening the drill-in of a `view` call on a PNG, JPEG, GIF or WebP
       shows the image under the Output section in a Kitty terminal,
-      scrolling with the list when taller than the view.
-- [ ] Images are drawn at one image pixel per screen pixel, shrunk (aspect
+      scrolling with the list when taller than the view. (Placeholders
+      are tested; not yet seen in a real Kitty terminal.)
+- [x] Images are drawn at one image pixel per screen pixel, shrunk (aspect
       kept) to the drill-in width, 297 rows and 16 Mpx; never enlarged.
-- [ ] An animated GIF shows its first frame, decoded with `gif.Decode`
+- [x] An animated GIF shows its first frame, decoded with `gif.Decode`
       (first frame only), not `gif.DecodeAll`.
-- [ ] A source over the decode limit shows "Can't display: image too
-      large (W×H)" without decoding it, and `o` still opens it. Tests
+- [x] A source over the decode limit shows "Can't display: image too
+      large (W×H)" without decoding it, and `o` still opens it. The
+      limit estimates each decoder's peak (`decodeBytesPerPixel`). Tests
       cover a header claiming huge dimensions, an extreme aspect ratio,
       and an image whose padded size crosses the 16 Mpx cap.
-- [ ] An MCP tool result with image data gets the same drill-in output.
-- [ ] While decoding, the item shows a pending placeholder. When the image
+- [x] An MCP tool result with image data gets the same drill-in output.
+- [x] While decoding, the item shows a pending placeholder. When the image
       arrives, the items that show images (diagram items and tool image
       outputs, via the shared marker interface that replaces
       `DiagramShower`) re-render, as diagrams do today; other items don't.
-- [ ] The image output reads its source's result whenever it renders,
+      (The marker is on the output item's type, so text outputs in a tool
+      drill-in re-render too; they're cheap.)
+- [x] The image output reads its source's result whenever it renders,
       exactly as `toolDetailOutputItem` does for text today
       (`tool_detail.go:517-532`). No new plumbing makes tool drill-ins
       update live (no source-aware `Version()`): a result arriving after
@@ -92,40 +96,47 @@ Out:
       result with image data renders correctly once the item re-renders,
       and that `o` uses the result read at that render.
 - [ ] Tool image outputs work in tool drill-ins nested under a subagent
-      drill-in.
-- [ ] Without Kitty graphics or a reported cell size, the item shows the
+      drill-in. (Same `ToolDrillInMsg` handler; not tested separately.)
+- [x] Without Kitty graphics or a reported cell size, the item shows the
       "Loaded Image" line plus a note that the terminal can't display
       images.
-- [ ] An unsupported MIME type or a decode failure shows the "Loaded
-      Image" line plus "Can't display: <reason>". Unsupported types are not
+- [x] An unsupported MIME type or a decode failure shows the "Loaded
+      Image" line plus "Can't display: <reason>". The reason never
+      includes the tool's MIME type, which could carry escape codes. Unsupported types are not
       logged at warn level; decode failures are.
-- [ ] `o` writes the result's bytes, with an extension matching the MIME
-      type, to the export directory (`diagramExportDir`, pruned after
-      24 h) and opens it with the OS default handler, including when
-      display failed. The hint shows `o open in viewer`.
-- [ ] Popping the drill-in (back key, with no other event after it),
+- [x] `o` writes the result's bytes, with an extension matching the type
+      they sniff as, to the export directory (`diagramExportDir`, pruned
+      after 24 h) and opens it with the OS default handler, including when
+      display failed, if they sniff as PNG, JPEG, GIF or WebP; anything
+      else gets a warning. The hint and the help bar show
+      `o open in viewer`.
+- [x] Popping the drill-in (back key, with no other event after it),
       or pushing another drill-in on top of it, deletes its full-size
       image from the terminal in the same `Update`. Returning to a
       covered drill-in renders its image again.
-- [ ] Stale completions are rejected: a ready or shown message for a
+- [x] Stale completions are rejected: a ready or shown message for a
       full-size request from an earlier opening (closed and reopened
       while it was in flight) never marks the new entry ready or leaves
       an image in the terminal. Tested for tool → diagram and diagram →
       tool transitions, resize while rendering, and close/reopen with
       messages in flight.
-- [ ] A covered drill-in never queues or transmits a full-size image:
+- [x] A covered drill-in never queues or transmits a full-size image:
       re-rendering it (through `InvalidateDiagrams`, which visits every
       chat on the stack, or `ClampOffset`) leaves it pending. Tested.
-- [ ] Forgetting an earlier opening's image never deletes the current
+- [x] Forgetting an earlier opening's image never deletes the current
       opening's image of the same content and size. Tested with the old
       forget landing after the new transmit.
-- [ ] A change of cell size, Kitty support or (for diagrams) background
+- [x] A change of cell size, Kitty support or (for diagrams) background
       forgets and redraws images as diagrams do today.
-- [ ] With `options.tui.diagrams` off, tool images still display.
-- [ ] Mermaid behaviour is unchanged (see Constraints).
-- [ ] Verified end to end in a real session via the `terminal` MCP
-      (`tui-manual-testing` skill).
-- [ ] `AGENTS.md` describes the shared graphics cache and its producers
+- [x] With `options.tui.diagrams` off, tool images still display.
+- [x] Mermaid behaviour is unchanged (see Constraints), except that a
+      diagram drill-in's image is freed as soon as it leaves the top.
+      Two tests of the old `f.drill` tracking were rewritten for that.
+- [x] Verified end to end in a real session via the `terminal` MCP
+      (`tui-manual-testing` skill), in a PTY without Kitty graphics: the
+      fallback note, `o` opening identical bytes in Preview, the back key,
+      and a reloaded session.
+- [x] `AGENTS.md` describes the shared graphics cache and its producers
       instead of a Mermaid-only feature; this spec moves to
       `plans/completed/` in the PR that ships it.
 
@@ -179,13 +190,14 @@ Out:
   output; a nested drill-in adds a keypress and breadcrumb for nothing.
   `BuildToolDetailItems` takes the renderer. The existing
   `toolDetailOutputItem` decides at render time, from its source's
-  result, whether to draw an image. Tool drill-ins gain no live updates, so the
-  item's list version changes only when the image's view state does: the
-  shared marker interface lets `InvalidateDiagrams` clear its cache and
-  bump its version like the diagram items. It reports `Finished() ==
-  false` while it draws an image (as `DiagramDetailItem` does) so the list
-  never freezes it, and its own render cache keys on the renderer's view
-  state too. `ToolMessageItem` gains whatever result accessor this needs.
+  result, whether to draw an image. Tool drill-ins gain no live updates,
+  so the item's list version changes only when the image's view state
+  does: the shared marker interface lets `InvalidateDiagrams` clear its
+  cache and bump its version like the diagram items. It reports
+  `Finished() == false` while it draws an image (as `DiagramDetailItem`
+  does) so the list never freezes it. The image path keeps no render
+  cache of its own; the list caches it by version. Tool items gained a
+  `Result()` accessor, found by type assertion like `ResultVersion`.
 - **Drill-in ownership is reconciled synchronously, not polled.**
   Today `mermaidFeature.Observe` notices a closed diagram drill-in by
   polling `DrillInOpen`, but `features.observe` skips input messages and
