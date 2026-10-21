@@ -466,11 +466,14 @@ func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		mimeType, ext string
+		raw      []byte
+		mimeType string
+		ext      string
 	}{
-		"png":                {mimeType: "image/png", ext: ".png"},
-		"jpeg":               {mimeType: "image/jpeg", ext: ".jpg"},
-		"avif it can't draw": {mimeType: "image/avif", ext: ".avif"},
+		"png":                         {raw: []byte("\x89PNG\r\n\x1a\nthe bytes"), mimeType: "image/png", ext: ".png"},
+		"jpeg":                        {raw: []byte("\xff\xd8\xffthe bytes"), mimeType: "image/jpeg", ext: ".jpg"},
+		"bmp it can't draw":           {raw: []byte("BMthe bytes"), mimeType: "image/bmp", ext: ".bmp"},
+		"png labelled something else": {raw: []byte("\x89PNG\r\n\x1a\nthe bytes"), mimeType: "image/x-made-up", ext: ".png"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -479,7 +482,7 @@ func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 			f.exportDir = t.TempDir()
 			var opened string
 			f.openURL = func(u string) error { opened = u; return nil }
-			data := base64.StdEncoding.EncodeToString([]byte("the bytes the model saw"))
+			data := base64.StdEncoding.EncodeToString(tc.raw)
 
 			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: data, MIMEType: tc.mimeType})
 			require.True(t, handled)
@@ -492,7 +495,7 @@ func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 			require.Equal(t, tc.ext, filepath.Ext(path))
 			got, err := os.ReadFile(path)
 			require.NoError(t, err)
-			require.Equal(t, "the bytes the model saw", string(got))
+			require.Equal(t, tc.raw, got, "the bytes the model saw")
 			require.Equal(t, fileURL(path), opened)
 		})
 	}
@@ -508,12 +511,12 @@ func TestGraphicsFeatureReportsAToolImageItCantOpen(t *testing.T) {
 	}{
 		"invalid data": {data: "!!!", setup: func(*graphicsFeature) {}, reason: "decode image data"},
 		"no viewer": {
-			data:   base64.StdEncoding.EncodeToString([]byte("x")),
+			data:   pngData(t, 2, 2),
 			setup:  func(f *graphicsFeature) { f.openURL = func(string) error { return errors.New("no viewer") } },
 			reason: "no viewer",
 		},
 		"export dir under a file": {
-			data: base64.StdEncoding.EncodeToString([]byte("x")),
+			data: pngData(t, 2, 2),
 			setup: func(f *graphicsFeature) {
 				file := filepath.Join(f.exportDir, "file")
 				_ = os.WriteFile(file, nil, 0o600)
@@ -813,20 +816,25 @@ func TestGraphicsFeatureKeepsOnlyTheLatestImageAtOneWidth(t *testing.T) {
 func TestGraphicsFeatureOpensOnlyImagesThatCantRunScripts(t *testing.T) {
 	t.Parallel()
 
-	for name, mimeType := range map[string]string{"svg": "image/svg+xml", "unknown": "image/x-made-up"} {
+	tests := map[string]struct{ raw, mimeType string }{
+		"svg":                 {raw: "<svg/>", mimeType: "image/svg+xml"},
+		"html labelled a png": {raw: "<html><script>alert(1)</script></html>", mimeType: "image/png"},
+		"unknown bytes":       {raw: "just text", mimeType: "image/x-made-up"},
+	}
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 			f.exportDir = t.TempDir()
 			f.openURL = func(string) error { t.Fatal("opened"); return nil }
 
-			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), MIMEType: mimeType})
+			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: base64.StdEncoding.EncodeToString([]byte(tc.raw)), MIMEType: tc.mimeType})
 
 			require.True(t, handled)
 			msg, ok := cmd().(util.InfoMsg)
 			require.True(t, ok)
 			require.Equal(t, util.InfoTypeWarn, msg.Type)
-			require.Equal(t, "Won't open "+mimeType+" images: they could run code", msg.Msg)
+			require.Equal(t, "Won't open this image: its bytes aren't a known image type, so they could run code", msg.Msg)
 			entries, err := os.ReadDir(f.exportDir)
 			require.NoError(t, err)
 			require.Empty(t, entries, "nothing written")

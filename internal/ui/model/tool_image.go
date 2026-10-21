@@ -11,6 +11,7 @@ import (
 	_ "image/jpeg" // Registers the JPEG decoder for tool images.
 	_ "image/png"  // Registers the PNG decoder for tool images.
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -197,16 +198,17 @@ func fitBitmap(w, h int, req diagramRequest) bitmapFit {
 	}
 }
 
-// imageExts are the image types o opens, and the extensions they are
-// written with so the OS opens them in its viewer. They are raster types
-// that carry no code: a tool result is untrusted, and the OS opens types
-// such as SVG in a browser, which would run scripts in them.
+// imageExts are the image types o opens, by the type their bytes sniff as,
+// and the extensions they are written with so the OS opens them in its
+// viewer. They are raster types that carry no code: a tool result is
+// untrusted, and the OS opens types such as SVG or HTML in a browser,
+// which would run scripts in them. The bytes decide, not the result's
+// MIME type, which the tool chose and some openers (xdg-open) ignore.
 var imageExts = map[string]string{
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
 	"image/gif":  ".gif",
 	"image/webp": ".webp",
-	"image/avif": ".avif",
 	"image/bmp":  ".bmp",
 }
 
@@ -214,35 +216,28 @@ var imageExts = map[string]string{
 // the export directory and opens them in the OS default viewer. It works
 // for images Anvil can't draw, since the viewer may.
 func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
-	ext, ok := imageExts[msg.MIMEType]
-	if !ok {
-		return util.ReportWarn("Won't open " + msg.MIMEType + " images: they could run code")
-	}
 	dir, open := f.exportDir, f.openURL
 	return func() tea.Msg {
-		path, err := writeImage(dir, msg.Data, ext)
-		if err == nil {
-			err = open(fileURL(path))
-		}
+		fail := func(err error) tea.Msg { return util.NewErrorMsg(fmt.Errorf("open image: %w", err)) }
+		raw, err := base64.StdEncoding.DecodeString(msg.Data)
 		if err != nil {
-			return util.NewErrorMsg(fmt.Errorf("open image: %w", err))
+			return fail(fmt.Errorf("decode image data: %w", err))
+		}
+		ext, ok := imageExts[http.DetectContentType(raw)]
+		if !ok {
+			return util.NewWarnMsg("Won't open this image: its bytes aren't a known image type, so they could run code")
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fail(fmt.Errorf("create export dir: %w", err))
+		}
+		pruneExports(dir)
+		path := filepath.Join(dir, fmt.Sprintf("image-%x%s", xxh3.Hash(raw), ext))
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			return fail(fmt.Errorf("write image: %w", err))
+		}
+		if err := open(fileURL(path)); err != nil {
+			return fail(err)
 		}
 		return util.NewInfoMsg("Opened image in viewer")
 	}
-}
-
-func writeImage(dir, data, ext string) (string, error) {
-	raw, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return "", fmt.Errorf("decode image data: %w", err)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create export dir: %w", err)
-	}
-	pruneExports(dir)
-	path := filepath.Join(dir, fmt.Sprintf("image-%x%s", xxh3.Hash(raw), ext))
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		return "", fmt.Errorf("write image: %w", err)
-	}
-	return path, nil
 }

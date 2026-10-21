@@ -164,8 +164,10 @@ Out:
   the file changing or being deleted. Unlike diagrams, `o` stays available
   when display fails, since the OS viewer often handles formats Anvil
   can't. It only opens raster types that carry no code (PNG, JPEG, GIF,
-  WebP, AVIF, BMP): tool results are untrusted, and the OS opens SVG in a
-  browser, where scripts in it would run. Other types get a warning.
+  WebP, BMP), judged by sniffing the bytes rather than trusting the
+  result's MIME type: tool results are untrusted, the OS opens SVG or
+  HTML in a browser where scripts in it would run, and some openers
+  (xdg-open) go by content. Anything else gets a warning.
 - **Actual size, shrunk to fit.** Mostly screenshots and mocks: fitting to
   the view height makes tall screenshots unreadable, and enlarging blurs
   icons. Same caps as the diagram drill-in so "one full-size image, at

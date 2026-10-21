@@ -260,7 +260,8 @@ Terms with a specific meaning in this codebase are defined in
   generation in full-size keys keeps late results and deletes from an
   earlier opening off the current image. `o` writes the result's bytes
   to the diagram export dir and opens them in the OS viewer, even when
-  Anvil can't draw them. The cache exists whatever
+  Anvil can't draw them, but only when the bytes sniff as a raster type
+  that can't carry scripts (`imageExts`). The cache exists whatever
   `options.tui.diagrams` says. Design:
   `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
