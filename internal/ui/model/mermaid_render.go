@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	"image/png"
 	"log/slog"
@@ -198,11 +199,9 @@ func (f *mermaidFeature) copyDiagram(e *diagramEngines, req diagramRequest) diag
 	if err != nil {
 		return fail(err)
 	}
-	out := image.NewRGBA(img.Bounds())
-	draw.Draw(out, out.Bounds(), image.NewUniform(lipgloss.Color(req.theme["pele-bg"])), image.Point{}, draw.Src)
-	draw.Draw(out, out.Bounds(), img, img.Bounds().Min, draw.Over)
+	fillBehind(img, color.RGBAModel.Convert(lipgloss.Color(req.theme["pele-bg"])).(color.RGBA))
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, out); err != nil {
+	if err := png.Encode(&buf, img); err != nil {
 		return fail(err)
 	}
 	if err := f.writeImage(buf.Bytes()); err != nil {
@@ -318,4 +317,17 @@ func fileURL(path string) string {
 		slashed = "/" + slashed
 	}
 	return (&url.URL{Scheme: "file", Path: slashed}).String()
+}
+
+// fillBehind draws opaque bg under img in place, sparing a second
+// full-size image. img's pixels are premultiplied, so each channel gains
+// bg's in proportion to what the pixel leaves uncovered.
+func fillBehind(img *image.RGBA, bg color.RGBA) {
+	under := [4]uint32{uint32(bg.R), uint32(bg.G), uint32(bg.B), 0xff}
+	for i := 0; i < len(img.Pix); i += 4 {
+		uncovered := 0xff - uint32(img.Pix[i+3])
+		for c := range under {
+			img.Pix[i+c] += uint8((under[c]*uncovered + 0x7f) / 0xff)
+		}
+	}
 }

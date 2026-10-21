@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/color"
 	"image/png"
 	"math"
 	"sync"
@@ -176,4 +178,17 @@ func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
 			require.Empty(t, f.requests, "nothing renders")
 		})
 	}
+}
+
+func TestFillBehindPutsTheBackgroundUnderTheImage(t *testing.T) {
+	t.Parallel()
+
+	img := image.NewRGBA(image.Rect(0, 0, 3, 1))
+	img.SetRGBA(1, 0, color.RGBA{R: 0x40, G: 0x20, B: 0x10, A: 0x80})
+	img.SetRGBA(2, 0, color.RGBA{R: 0xff, G: 0xee, B: 0xdd, A: 0xff})
+	fillBehind(img, color.RGBA{R: 0x00, G: 0x80, B: 0xfe, A: 0xff})
+
+	require.Equal(t, color.RGBA{R: 0x00, G: 0x80, B: 0xfe, A: 0xff}, img.RGBAAt(0, 0), "transparent shows the background")
+	require.Equal(t, color.RGBA{R: 0x40, G: 0x60, B: 0x8f, A: 0xff}, img.RGBAAt(1, 0), "half covers it by half")
+	require.Equal(t, color.RGBA{R: 0xff, G: 0xee, B: 0xdd, A: 0xff}, img.RGBAAt(2, 0), "opaque hides it")
 }
