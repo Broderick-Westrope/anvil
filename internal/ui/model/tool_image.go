@@ -10,8 +10,7 @@ import (
 	"image/draw"
 	_ "image/gif"  // Registers the GIF decoder for tool images.
 	_ "image/jpeg" // Registers the JPEG decoder for tool images.
-	"image/png"
-	_ "image/png" // Registers the PNG decoder for tool images.
+	"image/png"    // Also registers the PNG decoder for tool images.
 	"math"
 	"net/http"
 	"os"
@@ -267,7 +266,7 @@ func (f *graphicsFeature) copyToolImage(msg chat.ImageCopyMsg) tea.Cmd {
 	if f.overSSH() {
 		// The clipboard is the remote machine's, and OSC 52 only carries
 		// text.
-		return util.ReportWarn("Can't copy an image over SSH; o opens it in a viewer")
+		return util.ReportWarn("Can't copy an image over SSH")
 	}
 	if err := f.clipboardReady(); err != nil {
 		return util.ReportError(fmt.Errorf("copy image: %w", err))
@@ -282,17 +281,20 @@ func (f *graphicsFeature) copyToolImage(msg chat.ImageCopyMsg) tea.Cmd {
 // copyBitmap writes req's image to the clipboard as a PNG: a PNG's own
 // bytes, exactly as the model saw them, and anything else decoded and
 // encoded again, since the clipboard writers take PNG. Either way it is
-// decoded first, within the bitmap limits, so only a real image is
-// copied.
+// decoded in full first, within the bitmap limits: DecodeConfig accepts a
+// truncated or corrupt file, and only a real image should be copied.
+// Encoding holds the decoded image (already within the limits) and the
+// PNG it writes, which is compressed, so its peak stays near the
+// decoder's.
 func (f *graphicsFeature) copyBitmap(req diagramRequest) diagramCopiedMsg {
-	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{tool: true, err: err} }
+	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{what: toolImageCopy, err: err} }
 	raw, err := base64.StdEncoding.DecodeString(req.data)
 	if err != nil {
 		return fail(fmt.Errorf("decode image data: %w", err))
 	}
 	sniffed := http.DetectContentType(raw)
 	if !bitmapTypes[sniffed] {
-		return fail(errors.New("only PNG, JPEG, GIF and WebP images copy"))
+		return fail(errors.New("not a PNG, JPEG, GIF or WebP image"))
 	}
 	img, err := decodeBitmap(raw)
 	if err != nil {
@@ -309,5 +311,5 @@ func (f *graphicsFeature) copyBitmap(req diagramRequest) diagramCopiedMsg {
 	if err := f.writeImage(out); err != nil {
 		return fail(err)
 	}
-	return diagramCopiedMsg{tool: true}
+	return diagramCopiedMsg{what: toolImageCopy}
 }

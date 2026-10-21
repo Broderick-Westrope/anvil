@@ -181,12 +181,22 @@ type diagramExportedMsg struct {
 	err  error
 }
 
-// diagramCopiedMsg reports a copy to the clipboard, of a diagram or, with
-// tool, of a tool image.
+// diagramCopiedMsg reports a copy of what to the clipboard.
 type diagramCopiedMsg struct {
-	tool bool
+	what copyKind
 	err  error
 }
+
+// copyKind is what a copy to the clipboard was of, as its reports name
+// it.
+type copyKind struct {
+	noun, copied, failedLog string
+}
+
+var (
+	diagramCopy   = copyKind{noun: "diagram image", copied: "Diagram image copied to clipboard", failedLog: "Failed to copy mermaid diagram image"}
+	toolImageCopy = copyKind{noun: "image", copied: "Image copied to clipboard", failedLog: "Failed to copy tool image"}
+)
 
 // graphicsFeature is the cache of every image Anvil draws with Kitty
 // graphics. Producers make the images: Mermaid renders ```mermaid fences
@@ -568,15 +578,11 @@ func (f *graphicsFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	case chat.ImageCopyMsg:
 		return f.copyToolImage(msg), true
 	case diagramCopiedMsg:
-		what, log := "diagram image", "Failed to copy mermaid diagram image"
-		if msg.tool {
-			what, log = "image", "Failed to copy tool image"
-		}
 		if msg.err != nil {
-			slog.Warn(log, "err", msg.err)
-			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("copy %s: %w", what, msg.err))), true
+			slog.Warn(msg.what.failedLog, "err", msg.err)
+			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("copy %s: %w", msg.what.noun, msg.err))), true
 		}
-		return tea.Batch(f.listen, util.ReportInfo(strings.ToUpper(what[:1])+what[1:]+" copied to clipboard")), true
+		return tea.Batch(f.listen, util.ReportInfo(msg.what.copied)), true
 	case diagramExportedMsg:
 		if msg.err != nil {
 			slog.Warn("Failed to export mermaid diagram", "err", msg.err)

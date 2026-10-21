@@ -81,7 +81,7 @@ func TestGraphicsFeatureWontCopyAToolImageItCantDecode(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct{ data, want string }{
-		"not an image":   {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), want: "only PNG, JPEG, GIF and WebP images copy"},
+		"not an image":   {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), want: "not a PNG, JPEG, GIF or WebP image"},
 		"too large":      {data: pngIHDROnly(9000, 10), want: "image too large (9000×10)"},
 		"corrupt":        {data: pngIHDROnly(10, 10), want: "decode image:"},
 		"invalid base64": {data: "!!!", want: "decode image data"},
@@ -103,10 +103,10 @@ func TestGraphicsFeatureReportsACopiedToolImage(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
-	cmd, _ := f.HandleMsg(diagramCopiedMsg{tool: true})
+	cmd, _ := f.HandleMsg(diagramCopiedMsg{what: toolImageCopy})
 	require.Equal(t, util.NewInfoMsg("Image copied to clipboard"), browserCmdMsg(t, cmd))
 
-	cmd, _ = f.HandleMsg(diagramCopiedMsg{tool: true, err: errors.New("no clipboard")})
+	cmd, _ = f.HandleMsg(diagramCopiedMsg{what: toolImageCopy, err: errors.New("no clipboard")})
 	require.Equal(t, util.NewErrorMsg(errors.New("copy image: no clipboard")), browserCmdMsg(t, cmd))
 }
 
@@ -119,7 +119,7 @@ func TestGraphicsFeatureWontCopyAToolImageWhereTheClipboardIsntUsable(t *testing
 	}{
 		"over ssh": {
 			setup: func(f *graphicsFeature) { f.caps.Env = uv.Environ{"SSH_TTY=x"} },
-			want:  util.NewWarnMsg("Can't copy an image over SSH; o opens it in a viewer"),
+			want:  util.NewWarnMsg("Can't copy an image over SSH"),
 		},
 		"no clipboard": {
 			setup: func(f *graphicsFeature) { f.clipboardReady = func() error { return errors.New("no clipboard tool") } },
@@ -153,6 +153,22 @@ func TestGraphicsFeatureLogsAFailedToolImageCopy(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
-	f.HandleMsg(diagramCopiedMsg{tool: true, err: errors.New("no clipboard")})
+	f.HandleMsg(diagramCopiedMsg{what: toolImageCopy, err: errors.New("no clipboard")})
 	require.Equal(t, []string{"Failed to copy tool image"}, rec.warns)
+}
+
+func TestGraphicsFeatureReportsACrashWhileCopyingAToolImage(t *testing.T) {
+	t.Parallel()
+
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f.writeImage = func([]byte) error { panic("clipboard library bug") }
+	req := diagramRequest{key: diagramKey{producer: producerBitmap}, data: pngData(t, 2, 2), job: diagramJobCopy}
+
+	msg, ok := f.runRequest(nil, req)
+
+	require.False(t, ok)
+	copied, isCopy := msg.(diagramCopiedMsg)
+	require.True(t, isCopy)
+	require.Equal(t, toolImageCopy, copied.what)
+	require.ErrorContains(t, copied.err, "image decoder crashed: clipboard library bug")
 }
