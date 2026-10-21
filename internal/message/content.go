@@ -133,6 +133,12 @@ type ToolCall struct {
 
 func (ToolCall) isPart() {}
 
+// MediaPlaceholder is the text of a tool result that returned media of type
+// mimeType and no text of its own, so the result says what it carries.
+func MediaPlaceholder(mimeType string) string {
+	return "Loaded " + mimeType + " content"
+}
+
 type ToolResult struct {
 	ToolCallID string `json:"tool_call_id"`
 	Name       string `json:"name"`

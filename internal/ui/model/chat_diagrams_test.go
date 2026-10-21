@@ -22,7 +22,7 @@ import (
 func newSplitTestUI() *UI {
 	m := newTestUI()
 	m.com.Workspace = &testWorkspace{cfg: &config.Config{}}
-	m.diagrams = newMermaidFeature(uiHost{m}, &m.caps, m.com)
+	m.diagrams = newGraphicsFeature(uiHost{m}, &m.caps, m.com)
 	return m
 }
 
@@ -165,7 +165,7 @@ func TestHelpShowsDiagramKeysOnADiagramNode(t *testing.T) {
 	m := newSplitTestUI()
 	m.keyMap = DefaultKeyMap()
 	sty := m.com.Styles.Attachments
-	m.attachments = attachments.New(attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove), attachments.Keymap{})
+	m.attachments = attachments.New(attachments.NewRenderer(sty), attachments.Keymap{})
 	m.state = uiChat
 	m.session = &session.Session{ID: "s"}
 	m.focus = uiFocusMain
@@ -176,12 +176,14 @@ func TestHelpShowsDiagramKeysOnADiagramNode(t *testing.T) {
 
 	m.chat.SetSelected(1)
 	require.Contains(t, helpTexts(m.ShortHelp()), "o open in browser")
+	require.Contains(t, helpTexts(m.ShortHelp()), "Y copy image")
 	require.Contains(t, helpTexts(m.ShortHelp()), "c/y copy")
 	var full []key.Binding
 	for _, group := range m.FullHelp() {
 		full = append(full, group...)
 	}
 	require.Contains(t, helpTexts(full), "o open in browser")
+	require.Contains(t, helpTexts(full), "Y copy image")
 
 	m.focus = uiFocusEditor
 	require.NotContains(t, helpTexts(m.ShortHelp()), "o open in browser", "the editor has focus")
@@ -410,7 +412,7 @@ func TestHelpHidesTheBrowserKeyOnAFailedDiagram(t *testing.T) {
 	m := newSplitTestUI()
 	m.keyMap = DefaultKeyMap()
 	sty := m.com.Styles.Attachments
-	m.attachments = attachments.New(attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove), attachments.Keymap{})
+	m.attachments = attachments.New(attachments.NewRenderer(sty), attachments.Keymap{})
 	m.state = uiChat
 	m.session = &session.Session{ID: "s"}
 	m.focus = uiFocusMain
@@ -568,16 +570,6 @@ func TestUIHostInvalidatesDiagramsInEveryChat(t *testing.T) {
 	uiHost{m}.InvalidateDiagrams()
 	require.NotEqual(t, mainVersion, main.Version())
 	require.NotEqual(t, drillVersion, drilled.Version())
-}
-
-func TestUIHostDrillInOpen(t *testing.T) {
-	t.Parallel()
-
-	m := newSplitTestUI()
-	open, other := NewChat(m.com), NewChat(m.com)
-	m.drillStack = []drillInEntry{{chat: open}}
-	require.True(t, uiHost{m}.DrillInOpen(open))
-	require.False(t, uiHost{m}.DrillInOpen(other))
 }
 
 func TestChatReportsTheDiagramsInViewAsItScrolls(t *testing.T) {

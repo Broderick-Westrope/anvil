@@ -79,6 +79,14 @@ type navigationGuard interface {
 	BlockNavigation() tea.Cmd
 }
 
+// drillInFeature hears which drill-in is on top, in the same Update that
+// changes it, whatever the message (including the keys that go back).
+type drillInFeature interface {
+	// DrillInChanged is called with the chat of the drill-in now on top,
+	// or nil when none is open.
+	DrillInChanged(top *Chat) tea.Cmd
+}
+
 // features is UI's ordered registry of features. Order is precedence:
 // the first feature to claim a message, key or action wins.
 type features struct {
@@ -88,6 +96,9 @@ type features struct {
 	palettes []paletteFeature
 	cancels  []cancelFeature
 	guards   []navigationGuard
+	drills   []drillInFeature
+	// top is the drill-in the drill features last heard of.
+	top *Chat
 }
 
 // register adds f, and the optional surfaces it implements, after the
@@ -108,6 +119,9 @@ func (fs *features) register(f feature) {
 	}
 	if g, ok := f.(navigationGuard); ok {
 		fs.guards = append(fs.guards, g)
+	}
+	if d, ok := f.(drillInFeature); ok {
+		fs.drills = append(fs.drills, d)
 	}
 }
 
@@ -131,6 +145,20 @@ func (fs *features) blockNavigation() tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// drillInTop tells the drill features when top is a different drill-in
+// from the last one they heard of.
+func (fs *features) drillInTop(top *Chat) tea.Cmd {
+	if top == fs.top {
+		return nil
+	}
+	fs.top = top
+	var cmds []tea.Cmd
+	for _, f := range fs.drills {
+		cmds = append(cmds, f.DrillInChanged(top))
+	}
+	return tea.Batch(cmds...)
 }
 
 // isInput reports whether msg is keyboard, paste or mouse input, which

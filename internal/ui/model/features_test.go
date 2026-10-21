@@ -8,12 +8,14 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -40,6 +42,12 @@ type fakeFeature struct {
 	commands []string
 	panel    panelView
 	entries  []*dialog.CommandItem
+	tops     []*Chat
+}
+
+func (f *fakeFeature) DrillInChanged(top *Chat) tea.Cmd {
+	f.tops = append(f.tops, top)
+	return nil
 }
 
 var fakeFeatureKey = key.NewBinding(key.WithKeys("f9"))
@@ -107,7 +115,7 @@ func newFeatureTestUI(t *testing.T) (*UI, *fakeFeature) {
 	u.keyMap = DefaultKeyMap()
 	u.dialog = dialog.NewOverlay()
 	sty := u.com.Styles.Attachments
-	renderer := attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove)
+	renderer := attachments.NewRenderer(sty)
 	u.attachments = attachments.New(renderer, attachments.Keymap{})
 	u.slashAC = autocomplete.New(nil, 10)
 	sess := ws.sessions["sess-1"]
@@ -344,7 +352,7 @@ func TestAPaletteCommandNoFeatureRunsLeavesThePaletteToUpstream(t *testing.T) {
 func TestFeaturesIgnoreHighFrequencyMessagesWithoutAllocating(t *testing.T) {
 	f := newWorkflowUIFixture(t)
 	f.event(started("demo", "sess-1"))
-	msgs := []tea.Msg{spinner.TickMsg{}, anim.StepMsg{}, tea.MouseMotionMsg{}}
+	msgs := []tea.Msg{spinner.TickMsg{}, animTickMsg{}, tea.MouseMotionMsg{}}
 	allocs := testing.AllocsPerRun(100, func() {
 		for _, msg := range msgs {
 			f.u.features.observe(msg)
@@ -361,7 +369,7 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 	u.keyMap = DefaultKeyMap()
 	u.dialog = dialog.NewOverlay()
 	u.features.register(newWorkflowFeature(uiHost{u}, u.com, ws))
-	msgs := []tea.Msg{spinner.TickMsg{}, anim.StepMsg{}, tea.MouseMotionMsg{}}
+	msgs := []tea.Msg{spinner.TickMsg{}, animTickMsg{}, tea.MouseMotionMsg{}}
 	b.ReportAllocs()
 	for b.Loop() {
 		for _, msg := range msgs {
@@ -456,8 +464,33 @@ func TestNavigationGuardHoldsMetadataEntries(t *testing.T) {
 	t.Parallel()
 	u, g := newGuardTestUI(t)
 
-	require.False(t, u.canWriteLeafMetadata(), "a model or reasoning entry would move the leaf")
+	u.session.LeafMessageID = "leaf"
+	entry := message.ModelChangeContent{Provider: "p", ModelID: "m"}
+
+	require.Nil(t, u.writeMetadataEntry(message.MessageTypeModelChange, entry),
+		"a metadata entry would move the leaf")
 
 	g.armed = false
-	require.True(t, u.canWriteLeafMetadata())
+	require.NotNil(t, u.writeMetadataEntry(message.MessageTypeModelChange, entry))
+}
+
+func TestFeaturesHearOfTheTopDrillInInTheUpdateThatChangesIt(t *testing.T) {
+	t.Parallel()
+
+	u, f := newFeatureTestUI(t)
+	sty := uistyles.TokyoNight()
+	item := chat.NewToolMessageItem(&sty, "msg-1", message.ToolCall{ID: "tc-1", Name: "bash", Input: `{"command":"ls"}`, Finished: true}, &message.ToolResult{ToolCallID: "tc-1", Content: "ok"}, false, chat.ToolItemOptions{})
+
+	u.Update(util.ToolDrillInMsg{ToolItem: item, Label: "Bash"})
+	require.Len(t, f.tops, 1)
+	require.Same(t, u.drillStack[0].chat, f.tops[0])
+
+	u.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	require.Len(t, f.tops, 1, "told only when the top changes")
+
+	// Going back is a key, which features never observe.
+	u.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.False(t, u.isDrilledIn())
+	require.Len(t, f.tops, 2)
+	require.Nil(t, f.tops[1])
 }

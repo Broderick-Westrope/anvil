@@ -42,7 +42,7 @@ func TestPermissions_ViewRequestDisplaysFile(t *testing.T) {
 			defer cancel()
 			ctx = context.WithValue(ctx, tools.SessionIDContextKey, "test-session")
 			requests := permissions.Subscribe(ctx)
-			tool := tools.NewViewTool(nil, permissions, nil, skills.NewTracker(registry), registry, workingDir)
+			tool := tools.NewViewTool(nil, permissions, nil, skills.NewTracker(registry), registry, nil, workingDir)
 			params := tools.ViewParams{SkillName: "external"}
 			want := tools.ViewPermissionsParams{SkillName: "external", FilePath: skillPath}
 			if selector == "file_path" {

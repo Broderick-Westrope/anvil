@@ -15,6 +15,7 @@ import (
 var safeArgs = map[string]func(args []string) bool{
 	"date":       readsDate,
 	"hostname":   onlyFlags(hostnameReadFlags),
+	"ipconfig":   onlyFlags(ipconfigReadFlags),
 	"git branch": listsRefs(branchReadFlags),
 	"git tag":    listsRefs(tagReadFlags),
 	"git remote": readsRemotes,
@@ -79,6 +80,10 @@ func onlyFlags(flags flagSet) func(args []string) bool {
 var hostnameReadFlags = flagSet{
 	exact: []string{"-f", "-s", "-i", "-I", "-d", "-a", "-A", "--fqdn", "--short", "--domain"},
 }
+
+// ipconfigReadFlags are the ipconfig switches that only print. Others,
+// such as /release, /renew and /flushdns, change the network state.
+var ipconfigReadFlags = flagSet{exact: []string{"/all", "/displaydns"}}
 
 // dateDisplayFlags are the date arguments that only change what date
 // prints. Anything else, such as -s or a bare date, sets the clock.

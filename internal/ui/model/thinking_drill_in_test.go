@@ -372,7 +372,7 @@ func TestPermissionNotificationReachesSubagentUnderADrillIn(t *testing.T) {
 
 	u, _ := newJobsTestUI(nil)
 	sub := NewChat(u.com)
-	tool := chat.NewToolMessageItem(u.com.Styles, "sub-a", message.ToolCall{ID: "tc1", Name: "bash", Input: "{}"}, nil, false, nil)
+	tool := chat.NewToolMessageItem(u.com.Styles, "sub-a", message.ToolCall{ID: "tc1", Name: "bash", Input: "{}"}, nil, false, chat.ToolItemOptions{})
 	sub.SetMessages(tool)
 	u.drillStack = []drillInEntry{{sessionID: "child", chat: sub}, {chat: NewChat(u.com)}}
 

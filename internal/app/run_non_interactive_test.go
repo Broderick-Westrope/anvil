@@ -108,7 +108,7 @@ func newRunFixture(t *testing.T, script runScript) *runFixture {
 }
 
 func (f *runFixture) run(ctx context.Context) error {
-	return f.app.RunNonInteractive(ctx, f.output, "prompt", "", "", func() { f.responses.Add(1) }, "", false)
+	return f.app.RunNonInteractive(ctx, f.output, "prompt", "", "", "", func() { f.responses.Add(1) }, "", false)
 }
 
 func (f *runFixture) say(ctx context.Context, sessionID string, role message.MessageRole, text string) (message.Message, error) {

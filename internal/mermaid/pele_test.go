@@ -1,12 +1,14 @@
 package mermaid
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	pele "github.com/Broderick-Westrope/pele-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,12 +28,12 @@ func TestRenderFlowchart(t *testing.T) {
 	t.Logf("load: %s", time.Since(start))
 
 	start = time.Now()
-	res, err := r.Render(sampleFlowchart, Options{MaxWidth: 800})
+	res, err := r.Render(t.Context(), sampleFlowchart, Options{MaxWidth: 800})
 	require.NoError(t, err)
 	t.Logf("first render: %s (%vx%v)", time.Since(start), res.Width, res.Height)
 
 	start = time.Now()
-	_, err = r.Render(sampleFlowchart, Options{MaxWidth: 800})
+	_, err = r.Render(t.Context(), sampleFlowchart, Options{MaxWidth: 800})
 	require.NoError(t, err)
 	t.Logf("second render: %s", time.Since(start))
 
@@ -49,43 +51,26 @@ func TestRenderStopsAtItsDeadline(t *testing.T) {
 	r, err := NewRenderer()
 	require.NoError(t, err)
 	// The deadline passes before layout starts.
-	var deadline time.Duration
-	r.afterFunc = func(d time.Duration, fire func()) *time.Timer {
-		deadline = d
-		fire()
-		return time.AfterFunc(time.Hour, func() {})
-	}
-	_, err = r.Render(sampleFlowchart, Options{})
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	_, err = r.Render(ctx, sampleFlowchart, Options{})
 	require.Equal(t, ErrRenderTimeout, err, "the timeout is returned unwrapped")
-	require.Equal(t, 5*time.Second, deadline)
+	require.Equal(t, 5*time.Second, renderTimeout)
 
-	r.afterFunc = time.AfterFunc
-
-	_, err = r.Render(sampleFlowchart, Options{})
-	require.NoError(t, err, "the renderer still works after an interrupted render")
+	_, err = r.Render(t.Context(), sampleFlowchart, Options{})
+	require.NoError(t, err, "the renderer still works after a render that ran out of time")
 }
 
-func TestRenderWaitsForALateDeadlineBeforeTheNextRender(t *testing.T) {
+func TestRenderStopsWhenCanceled(t *testing.T) {
 	t.Parallel()
 
 	r, err := NewRenderer()
 	require.NoError(t, err)
-	// The deadline fires after layout finishes but before Stop.
-	var pending func()
-	r.afterFunc = func(_ time.Duration, fire func()) *time.Timer {
-		pending = fire
-		timer := time.AfterFunc(time.Hour, func() {})
-		timer.Stop()
-		go func() { time.Sleep(10 * time.Millisecond); pending() }()
-		return timer
-	}
-	_, _ = r.Render(sampleFlowchart, Options{})
-	r.afterFunc = time.AfterFunc
-	// Long enough for an unawaited interrupt to land while idle, where it
-	// would stop the next render.
-	time.Sleep(50 * time.Millisecond)
-	_, err = r.Render(sampleFlowchart, Options{})
-	require.NoError(t, err, "the late interrupt doesn't stop the next render")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = r.Render(ctx, sampleFlowchart, Options{})
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, ErrRenderTimeout, "a canceled render didn't run out of time")
 }
 
 func TestRenderRefusesHugeSources(t *testing.T) {
@@ -94,9 +79,9 @@ func TestRenderRefusesHugeSources(t *testing.T) {
 	r, err := NewRenderer()
 	require.NoError(t, err)
 	huge := "flowchart TD\n" + strings.Repeat("  A --> B\n", MaxSourceBytes/10+1)
-	_, err = r.Render(huge, Options{})
+	_, err = r.Render(t.Context(), huge, Options{})
 	require.ErrorIs(t, err, ErrSourceTooLarge)
-	_, err = r.Render(huge[:MaxSourceBytes], Options{})
+	_, err = r.Render(t.Context(), huge[:MaxSourceBytes], Options{})
 	require.NotErrorIs(t, err, ErrSourceTooLarge)
 }
 
@@ -112,28 +97,10 @@ func TestRenderDropsImages(t *testing.T) {
 	require.NoError(t, err)
 	for name, img := range tests {
 		src := "flowchart TD\n  A@{ img: \"" + img + "\", label: \"pic\" }"
-		res, err := r.Render(src, Options{})
+		res, err := r.Render(t.Context(), src, Options{})
 		require.NoError(t, err, name)
 		require.Contains(t, res.SVG, "pele-shape-imageSquare", "%s: Pele parsed an image node", name)
 		require.False(t, strings.Contains(res.SVG, "<image"), "%s: SVG has an <image>", name)
-	}
-}
-
-func TestNewRendererRejectsBrokenPele(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		source, wantErr string
-	}{
-		"syntax error":          {source: "var (", wantErr: "compile pele"},
-		"throws while loading":  {source: "throw new Error('boom')", wantErr: "load pele"},
-		"no pele global":        {source: "", wantErr: "pele global not defined"},
-		"undefined pele global": {source: "var pele = undefined", wantErr: "pele global not defined"},
-		"render isn't callable": {source: "var pele = {render: 1}", wantErr: "pele.render is not a function"},
-	}
-	for name, tc := range tests {
-		_, err := newRenderer(tc.source)
-		require.ErrorContains(t, err, tc.wantErr, name)
 	}
 }
 
@@ -143,10 +110,25 @@ func TestRenderFitsMaxWidth(t *testing.T) {
 	r, err := NewRenderer()
 	require.NoError(t, err)
 	src := sampleDiagrams["subgraph"]
-	wide, err := r.Render(src, Options{})
+	wide, err := r.Render(t.Context(), src, Options{})
 	require.NoError(t, err)
-	narrow, err := r.Render(src, Options{MaxWidth: 300})
+	narrow, err := r.Render(t.Context(), src, Options{MaxWidth: 300})
 	require.NoError(t, err)
 	require.Greater(t, wide.Width, 300.0)
 	require.LessOrEqual(t, narrow.Width, 300.0)
+}
+
+func TestRenderSizesLabelsForResvg(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRenderer()
+	require.NoError(t, err)
+	src := "flowchart LR\n  A[Mermaid text] --> B[SVG]"
+	res, err := r.Render(t.Context(), src, Options{})
+	require.NoError(t, err)
+	require.NotContains(t, res.SVG, "max-width:100%", "the SVG has a fixed size, not one that scales to a page")
+
+	arial, err := pele.Render(t.Context(), src, pele.Options{Responsive: pele.Ptr(false), MaxWidth: pele.Ptr(0.0)})
+	require.NoError(t, err)
+	require.NotEqual(t, arial.Width, res.Width, "labels are measured in DejaVu Sans, not Pele's default Arial table")
 }

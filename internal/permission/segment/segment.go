@@ -22,17 +22,23 @@ const maxUnwrapDepth = 8
 // separate string. Chains (&&, ||, ;), pipes, subshells, command
 // substitutions, and process substitutions are all traversed.
 //
-// Three kinds of segment are produced:
+// These kinds of segment are produced:
 //
-//   - Simple commands. Environment variable prefixes are stripped, and
-//     redirections that cannot write to a file (fd duplication such as
-//     "2>&1", heredocs, and plain "<" reads) are kept inline.
+//   - Simple commands, with and without their environment variable
+//     prefixes: "FOO=bar ls" yields both "ls" and "FOO=bar ls", so a
+//     deny on "ls" still applies while an allow on "ls *" does not
+//     cover the assignment. Redirections that cannot write to a file
+//     (fd duplication such as "2>&1", heredocs, and plain "<" reads)
+//     are kept inline.
+//   - Variable declarations and pure assignments ("export X=y",
+//     "PATH=/x"), which change the environment of later commands.
 //   - File-writing redirections, emitted as their own segment (for
 //     example "> /etc/passwd"). Keeping these separate is what stops a
 //     broad rule like "echo *" from also authorising a write to an
 //     arbitrary path.
 //   - Commands nested inside another command's arguments: the target of
-//     a wrapper such as env, sudo, xargs, or timeout, and the body of a
+//     a wrapper such as env, sudo, xargs, or timeout (also with any
+//     NAME=value the wrapper sets attached), and the body of a
 //     find-style -exec/-ok clause.
 //   - Normalised spellings of a command or write target. Words without
 //     expansions are unquoted and unescaped, brace expansions are
@@ -46,8 +52,9 @@ const maxUnwrapDepth = 8
 // depend on runtime state (variables, command substitution, globs in
 // the command name) cannot be resolved and keep their printed form.
 //
-// Pure assignments with no command (e.g. FOO=bar) produce no segments,
-// so a command consisting only of assignments returns an empty slice.
+// Pure assignments with no command (e.g. FOO=bar) produce a segment of
+// their own, which typically matches no rule and falls through to
+// "ask".
 //
 // If the command cannot be parsed, the entire command is returned as a
 // single segment so it can still be evaluated (and will typically fall
@@ -146,15 +153,30 @@ func (s *splitter) addStmt(stmt *syntax.Stmt) {
 		}
 	}
 
-	var tokens, plain []string
-	if call, ok := stmt.Cmd.(*syntax.CallExpr); ok {
-		tokens = make([]string, 0, len(call.Args))
-		for _, arg := range call.Args {
+	var tokens, plain, assigns, plainAssigns []string
+	switch cmd := stmt.Cmd.(type) {
+	case *syntax.CallExpr:
+		tokens = make([]string, 0, len(cmd.Args))
+		for _, arg := range cmd.Args {
 			var sb strings.Builder
 			if err := s.printer.Print(&sb, arg); err == nil {
 				tokens = append(tokens, sb.String())
 				plain = append(plain, plainWords(arg, sb.String())...)
 			}
+		}
+		for _, assign := range cmd.Assigns {
+			if printed, plainAssign, ok := formatAssign(s.printer, assign); ok {
+				assigns = append(assigns, printed)
+				plainAssigns = append(plainAssigns, plainAssign)
+			}
+		}
+	case *syntax.DeclClause:
+		// Declaration builtins (export, declare, local, readonly, typeset)
+		// change the environment of every later command, so each one is a
+		// segment of its own rather than being dropped.
+		var sb strings.Builder
+		if err := s.printer.Print(&sb, cmd); err == nil {
+			s.addPlain(sb.String())
 		}
 	}
 	if len(plain) > 0 && strings.Contains(plain[0], "/") {
@@ -163,6 +185,15 @@ func (s *splitter) addStmt(stmt *syntax.Stmt) {
 
 	s.all.add(withRedirs(tokens, inline))
 	s.addPlain(withRedirs(plain, inline))
+	// Assignments steer the command through its environment (LD_PRELOAD,
+	// PATH, GIT_EXTERNAL_DIFF), so the command is also emitted with them
+	// attached. A rule such as "ls *" then cannot approve "LD_PRELOAD=x
+	// ls", and a pure assignment such as "PATH=/x", which affects the
+	// commands after it, is not dropped.
+	// With no assignments these are the segments just added, which the
+	// lists drop as duplicates.
+	s.all.add(strings.TrimSpace(strings.Join(append(assigns, withRedirs(tokens, inline)), " ")))
+	s.addPlain(strings.TrimSpace(strings.Join(append(plainAssigns, withRedirs(plain, inline)), " ")))
 	for i := range writes {
 		s.all.add(writes[i])
 		s.addPlain(plainWrites[i])
@@ -175,7 +206,8 @@ func (s *splitter) addStmt(stmt *syntax.Stmt) {
 	}
 	if s.depth < maxUnwrapDepth {
 		s.addScript(plain)
-		s.addScript(unwrap(plain, 0))
+		inner, _ := unwrap(plain, 0)
+		s.addScript(inner)
 	}
 }
 
@@ -300,6 +332,29 @@ func scriptPayload(words []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// formatAssign renders an inline assignment as NAME=value, both as
+// printed and with a static value unquoted. Array assignments and other
+// forms without a plain value are printed whole.
+func formatAssign(printer *syntax.Printer, assign *syntax.Assign) (printed, plain string, ok bool) {
+	if assign.Name == nil {
+		return "", "", false
+	}
+	var sb strings.Builder
+	if err := printer.Print(&sb, assign); err != nil {
+		return "", "", false
+	}
+	printed = sb.String()
+	plain = printed
+	// Only a plain NAME=value is unquoted; NAME+=, NAME[i]= and arrays keep
+	// their printed form, and an empty NAME= already prints as itself.
+	if assign.Value != nil && assign.Index == nil && !assign.Append {
+		if value, static := StaticWord(assign.Value); static {
+			plain = assign.Name.Value + "=" + value
+		}
+	}
+	return printed, plain, true
 }
 
 // StaticWord returns the value a word expands to when it contains only
@@ -489,10 +544,17 @@ var numericRe = regexp.MustCompile(`^[0-9]+$`)
 // separate value leaves the value at the front of the result. That
 // yields a segment matching no rule, so the command falls through to
 // "ask" — stricter than the alternative, never more permissive.
+//
+// When the wrapper set environment variables ("env LD_PRELOAD=x ls"),
+// the target is also returned with them attached, for the same reason
+// split does so for inline assignments.
 func nestedCommands(tokens []string) []string {
 	var out []string
-	if inner := unwrap(tokens, 0); len(inner) > 0 {
+	if inner, assigns := unwrap(tokens, 0); inner != nil {
 		out = append(out, strings.Join(inner, " "))
+		if len(assigns) > 0 {
+			out = append(out, strings.Join(append(assigns, inner...), " "))
+		}
 	}
 	out = append(out, execClauses(tokens)...)
 	return out
@@ -521,13 +583,15 @@ func flagSet(flags ...string) map[string]struct{} {
 }
 
 // unwrap resolves nested wrapper commands down to the innermost target.
-func unwrap(tokens []string, depth int) []string {
+// It also returns the NAME=value assignments the wrappers skipped over,
+// in order, since they set the target's environment.
+func unwrap(tokens []string, depth int) (inner, assigns []string) {
 	if depth >= maxUnwrapDepth || len(tokens) == 0 {
-		return nil
+		return nil, nil
 	}
 	head := path.Base(tokens[0])
 	if _, ok := wrapperCommands[head]; !ok {
-		return nil
+		return nil, nil
 	}
 	valueFlags := wrapperValueFlags[head]
 
@@ -535,7 +599,7 @@ func unwrap(tokens []string, depth int) []string {
 		tok := tokens[i]
 		if tok == "--" {
 			if i+1 >= len(tokens) {
-				return nil
+				return nil, nil
 			}
 			i++
 		} else {
@@ -543,17 +607,21 @@ func unwrap(tokens []string, depth int) []string {
 				i++
 				continue
 			}
-			if strings.HasPrefix(tok, "-") || numericRe.MatchString(tok) || isAssignment(tok) {
+			if isAssignment(tok) {
+				assigns = append(assigns, tok)
+				continue
+			}
+			if strings.HasPrefix(tok, "-") || numericRe.MatchString(tok) {
 				continue
 			}
 		}
-		inner := tokens[i:]
-		if deeper := unwrap(inner, depth+1); len(deeper) > 0 {
-			return deeper
+		inner = tokens[i:]
+		if deeper, deeperAssigns := unwrap(inner, depth+1); len(deeper) > 0 {
+			return deeper, append(assigns, deeperAssigns...)
 		}
-		return inner
+		return inner, assigns
 	}
-	return nil
+	return nil, nil
 }
 
 // isAssignment reports whether tok is a NAME=value environment prefix
@@ -640,9 +708,33 @@ func Generalize(segment string) string {
 		return segment
 	}
 
+	// Leading assignments are kept verbatim. A "NAME=*" pattern would be
+	// unsafe: "*" also matches spaces, so "GOOS=* go build *" would
+	// approve "GOOS=x LD_PRELOAD=/evil go build" too.
+	var assigns []string
+	for len(tokens) > 0 && isAssignment(tokens[0]) {
+		assigns = append(assigns, tokens[0])
+		tokens = tokens[1:]
+	}
+	if len(tokens) == 0 {
+		return strings.Join(assigns, " ")
+	}
+
 	prefix := tokens[0]
+	if _, ok := declBuiltins[prefix]; ok && len(tokens) > 1 && isAssignment(tokens[1]) {
+		return strings.Join(tokens, " ")
+	}
 	if len(tokens) > 1 && subcommandRe.MatchString(tokens[1]) {
 		prefix += " " + tokens[1]
 	}
-	return prefix + " *"
+	return strings.Join(append(assigns, prefix+" *"), " ")
+}
+
+// declBuiltins are the shell builtins that declare or export variables.
+var declBuiltins = map[string]struct{}{
+	"declare":  {},
+	"export":   {},
+	"local":    {},
+	"readonly": {},
+	"typeset":  {},
 }

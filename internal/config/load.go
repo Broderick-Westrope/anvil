@@ -308,6 +308,8 @@ func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env
 		ExtraBody:          config.ExtraBody,
 		ExtraParams:        make(map[string]string),
 		Models:             p.Models,
+		ChatGPTModels:      config.ChatGPTModels,
+		GrokModels:         config.GrokModels,
 	}
 
 	complete, ok := knownProviderCompletions[p.ID]
@@ -334,7 +336,9 @@ var knownProviderCompletions = map[catwalk.InferenceProvider]providerCompletion{
 }
 
 func completeAPIKeyProvider(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
-	if !hasAPIKey(resolver, prepared.APIKey) {
+	// An OAuth login is a credential too: OpenAI signed in with ChatGPT, or
+	// xAI with Grok, is configured without an API key.
+	if prepared.OAuthToken == nil && !hasAPIKey(resolver, prepared.APIKey) {
 		return func() {
 			slog.Warn("Skipping provider due to missing API key", "provider", prepared.ID)
 		}

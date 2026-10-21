@@ -41,8 +41,8 @@ type detailRenderConfigurable interface {
 }
 
 // BuildToolDetailItems returns multiple independently expandable list items
-// for a tool drill-in view.
-func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageItem {
+// for a tool drill-in view. images draws a result's image, or is nil.
+func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images ImageRenderer) []MessageItem {
 	tc := source.ToolCall()
 	status := source.Status()
 
@@ -89,6 +89,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem) []MessageI
 			Versioned: list.NewVersioned(),
 			sty:       sty,
 			source:    source,
+			images:    images,
 		})
 	}
 
@@ -487,6 +488,10 @@ type toolDetailOutputItem struct {
 	*list.Versioned
 	sty    *styles.Styles
 	source ToolMessageItem
+	images ImageRenderer
+	// shownImage is the image result last rendered, which o opens, or nil
+	// when the output last rendered as text.
+	shownImage *message.ToolResult
 
 	expanded      bool
 	focused       bool
@@ -500,7 +505,7 @@ type toolDetailOutputItem struct {
 }
 
 // Finished implements list.Item.
-func (o *toolDetailOutputItem) Finished() bool { return true }
+func (o *toolDetailOutputItem) Finished() bool { return o.sourceImage() == nil }
 
 // ID implements MessageItem.
 func (o *toolDetailOutputItem) ID() string {
@@ -514,6 +519,10 @@ func (o *toolDetailOutputItem) RawRender(width int) string {
 
 // Render implements list.Item.
 func (o *toolDetailOutputItem) Render(width int) string {
+	o.shownImage = o.sourceImage()
+	if o.shownImage != nil {
+		return o.renderImage(o.shownImage, width)
+	}
 	status := o.source.Status()
 	tc := o.source.ToolCall()
 	resultVer := o.sourceResultVersion()

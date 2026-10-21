@@ -761,6 +761,15 @@
           "type": "array",
           "description": "Glob patterns for tools that should render expanded instead of compact"
         },
+        "request_timeout": {
+          "type": "integer",
+          "description": "Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity, so slow but active streams are never killed. 0 disables it",
+          "default": 120,
+          "examples": [
+            300,
+            0
+          ]
+        },
         "background_jobs": {
           "$ref": "#/$defs/BackgroundJobsOptions",
           "description": "Background job behaviour"
@@ -1041,6 +1050,11 @@
           "description": "Enable transparent background for the TUI interface",
           "default": false
         },
+        "mouse": {
+          "type": "boolean",
+          "description": "Enable terminal mouse capture for selection, clicks, and scrolling in the TUI. Disable to let the terminal emulator or tmux handle text selection and copy/paste",
+          "default": true
+        },
         "diagrams": {
           "type": "boolean",
           "description": "Render Mermaid diagrams in assistant messages as images where the terminal supports it",
@@ -1056,6 +1070,12 @@
           "type": "string"
         },
         "refresh_token": {
+          "type": "string"
+        },
+        "id_token": {
+          "type": "string"
+        },
+        "account_id": {
           "type": "string"
         },
         "expires_in": {

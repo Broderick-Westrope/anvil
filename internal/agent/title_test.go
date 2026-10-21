@@ -136,7 +136,7 @@ func TestGenerateTitle(t *testing.T) {
 				return
 			}
 			require.InDelta(t, tt.wantCost, got.Cost, 1e-9)
-			require.Equal(t, usage.InputTokens+usage.CacheCreationTokens, got.PromptTokens)
+			require.Equal(t, contextTokens(usage), got.PromptTokens)
 			require.Equal(t, usage.OutputTokens, got.CompletionTokens)
 		})
 	}

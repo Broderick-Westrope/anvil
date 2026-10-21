@@ -19,12 +19,8 @@ const exportFontFamily = "Anvil DejaVu Sans"
 func HTMLDocument(res Result, theme Theme, title string) (string, error) {
 	var faces strings.Builder
 	for _, f := range fontFaces {
-		data, err := fontFiles.ReadFile(f.path)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", f.path, err)
-		}
 		fmt.Fprintf(&faces, "@font-face{font-family:%q;font-weight:%s;font-style:%s;src:url(data:font/ttf;base64,%s) format(\"truetype\")}\n",
-			exportFontFamily, f.weight, f.style, base64.StdEncoding.EncodeToString(data))
+			exportFontFamily, f.weight, f.style, base64.StdEncoding.EncodeToString(f.data))
 	}
 	bg := theme["pele-bg"]
 	fg := theme["pele-fg"]

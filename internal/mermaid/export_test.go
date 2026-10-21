@@ -14,7 +14,7 @@ func TestHTMLDocument(t *testing.T) {
 
 	r, err := NewRenderer()
 	require.NoError(t, err)
-	res, err := r.Render(sampleDiagrams["nested"], Options{})
+	res, err := r.Render(t.Context(), sampleDiagrams["nested"], Options{})
 	require.NoError(t, err)
 
 	doc, err := HTMLDocument(res, testTheme, "Diagram <1>")
@@ -44,7 +44,7 @@ func TestHTMLDocumentKeepsLabelsVerbatim(t *testing.T) {
 
 	r, err := NewRenderer()
 	require.NoError(t, err)
-	res, err := r.Render(`flowchart LR
+	res, err := r.Render(t.Context(), `flowchart LR
   A["var(--pele-bg)"] --> B["--_s: red"] --> C["var(--nope, red)"]`, Options{})
 	require.NoError(t, err)
 

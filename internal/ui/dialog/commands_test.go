@@ -156,6 +156,32 @@ func TestDefaultCommands_ReloadInstance(t *testing.T) {
 	require.Contains(t, item.Filter(), "restart")
 }
 
+func TestDefaultCommands_MouseToggleLabel(t *testing.T) {
+	t.Parallel()
+
+	off := false
+	for name, tc := range map[string]struct {
+		tui  *config.TUIOptions
+		want string
+	}{
+		"mouse unset": {&config.TUIOptions{}, "Disable Mouse"},
+		"mouse off":   {&config.TUIOptions{Mouse: &off}, "Enable Mouse"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := testCommandsConfig()
+			cfg.Options = &config.Options{TUI: tc.tui}
+			s := styles.TokyoNight()
+			c := &Commands{com: &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: cfg}}}
+
+			item := findCommandItem(c.defaultCommands(), "toggle_mouse")
+			require.NotNil(t, item)
+			require.Equal(t, tc.want, item.title)
+			require.Equal(t, ActionToggleMouseSupport{}, item.Action())
+		})
+	}
+}
+
 func TestDefaultCommandsListFeatureEntriesInOrderBeforeBrowseSkills(t *testing.T) {
 	t.Parallel()
 
@@ -176,7 +202,7 @@ func TestDefaultCommandsListFeatureEntriesInOrderBeforeBrowseSkills(t *testing.T
 	}
 	require.Equal(t, at("feature_first")+1, at("feature_second"))
 	require.Equal(t, at("feature_second")+1, at("browse_skills"))
-	require.Equal(t, at("toggle_transparent")+1, at("feature_first"))
+	require.Equal(t, at("toggle_mouse")+1, at("feature_first"))
 }
 
 func TestUserCommandActionCarriesTheWholeCommand(t *testing.T) {

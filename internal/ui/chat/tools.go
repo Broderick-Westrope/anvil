@@ -37,6 +37,16 @@ const responseContextHeight = 10
 // toolBodyLeftPaddingTotal represents the padding that should be applied to each tool body
 const toolBodyLeftPaddingTotal = 2
 
+// collapsedMaxLines returns the number of lines to display when content
+// is collapsed. If collapsing would hide only a single line, all lines
+// are shown instead.
+func collapsedMaxLines(totalLines int) int {
+	if totalLines <= responseContextHeight+1 {
+		return totalLines
+	}
+	return responseContextHeight
+}
+
 // ToolStatus represents the current state of a tool call.
 type ToolStatus int
 
@@ -246,6 +256,15 @@ func newBaseToolMessageItem(
 	return t
 }
 
+// ToolItemOptions configures how tool message items render.
+type ToolItemOptions struct {
+	// ExpandedPatterns lists the tools that render expanded by default.
+	ExpandedPatterns []string
+	// WorkingDir is the project directory. Bash commands that only cd into
+	// it before running have that prefix hidden.
+	WorkingDir string
+}
+
 // NewToolMessageItem creates a new [ToolMessageItem] based on the tool call name.
 //
 // It returns a specific tool message item type if implemented, otherwise it
@@ -257,12 +276,12 @@ func NewToolMessageItem(
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
-	expandedPatterns []string,
+	opts ToolItemOptions,
 ) ToolMessageItem {
 	var item ToolMessageItem
 	switch toolCall.Name {
 	case tools.BashToolName:
-		item = NewBashToolMessageItem(sty, toolCall, result, canceled)
+		item = NewBashToolMessageItem(sty, toolCall, result, canceled, opts.WorkingDir)
 	case tools.JobOutputToolName:
 		item = NewJobOutputToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobKillToolName:
@@ -318,7 +337,7 @@ func NewToolMessageItem(
 	case tools.TodosToolName, agent.TaskToolName, tools.AgenticFetchToolName:
 		// Keep current (expanded) behavior.
 	default:
-		compact := !config.IsToolExpanded(expandedPatterns, toolCall.Name)
+		compact := !config.IsToolExpanded(opts.ExpandedPatterns, toolCall.Name)
 		if compactable, ok := item.(Compactable); ok {
 			compactable.SetCompact(compact)
 		}
@@ -355,37 +374,35 @@ func (t *baseToolMessageItem) ResultVersion() uint64 {
 	return t.resultVersion
 }
 
+// Result is the tool's result, or nil before it has one.
+func (t *baseToolMessageItem) Result() *message.ToolResult {
+	return t.result
+}
+
 // ID returns the unique identifier for this tool message item.
 func (t *baseToolMessageItem) ID() string {
 	return t.toolCall.ID
 }
 
-// StartAnimation starts the assistant message animation if it should be spinning.
-func (t *baseToolMessageItem) StartAnimation() tea.Cmd {
-	if !t.isSpinning() {
-		return nil
-	}
-	return t.anim.Start()
+// Spinning implements [Animatable].
+func (t *baseToolMessageItem) Spinning() bool {
+	return t.isSpinning()
 }
 
-// Animate progresses the assistant message animation if it should be spinning.
+// Advance implements [Animatable].
 //
 // Bumps the F6 list-cache version so the next draw re-renders this
-// item: a spinner tick mutates anim's internal frame counter, which
-// changes the rendered output but is invisible to the per-item
-// caches. Without the bump the list cache would serve the previously
-// rendered frame indefinitely and the spinner would appear frozen.
-// The ID gate keeps unrelated ticks (routed here by a future change
-// to chat.Animate's dispatch) from churning the cache.
-func (t *baseToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
+// item: a spinner frame mutates anim's internal counter, which changes
+// the rendered output but is invisible to the per-item caches. Without
+// the bump the list cache would serve the previously rendered frame
+// indefinitely and the spinner would appear frozen.
+func (t *baseToolMessageItem) Advance() bool {
 	if !t.isSpinning() {
-		return nil
+		return false
 	}
-	if msg.ID != t.toolCall.ID {
-		return nil
-	}
+	t.anim.Advance()
 	t.Bump()
-	return t.anim.Animate(msg)
+	return true
 }
 
 // RawRender implements [MessageItem].
@@ -778,11 +795,35 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 	}
 
 	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
-		output = ansi.Truncate(output, width, "…")
-	} else if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
-		output = ansi.Hardwrap(output, width, false)
+		return sty.Tool.ParamMain.Render(ansi.Truncate(output, width, "…"))
+	}
+	if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
+		// Let Lip Gloss do the wrapping rather than wrapping and styling in
+		// separate steps. A parameter is often syntax highlighted, and a
+		// wrap falls wherever the width runs out, usually part-way through a
+		// coloured token. Lip Gloss carries the colours that are open at the
+		// break and re-opens them on the next line, on top of the parameter
+		// style. Hard-wrapping first and styling after would emit only the
+		// parameter colour there and drop the highlight; styling first and
+		// hard-wrapping after would emit nothing there and drop both.
+		return capLineWidths(sty.Tool.ParamMain.Width(width).Render(output), width)
 	}
 	return sty.Tool.ParamMain.Render(output)
+}
+
+// capLineWidths holds every line of s to width.
+//
+// Word wrapping keeps the space it broke on, so a word that ends exactly at
+// the edge leaves its line a column wider than the space it was given, and
+// the header spills past the pane. The space is invisible and sits before
+// the closing reset, out of reach of a plain trim, so the line is cut with
+// the escape sequences accounted for.
+func capLineWidths(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, width, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // toolHeader builds the tool header line: "● ToolName params..."
@@ -833,7 +874,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
 
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines) // Show all
 	}
@@ -854,12 +895,12 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		}
 	}
 
-	wasTruncated := len(lines) > responseContextHeight
+	wasTruncated := len(lines) > maxLines
 
 	if !expanded && wasTruncated {
 		out = append(out, sty.Tool.ContentTruncation.
 			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)))
 	}
 
 	return strings.Join(out, "\n")
@@ -870,7 +911,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	content = stringext.NormalizeSpace(content)
 
 	lines := strings.Split(content, "\n")
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}
@@ -1166,7 +1207,7 @@ func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent stri
 	lines := strings.Split(formatted, "\n")
 
 	// Truncate if needed.
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}
@@ -1220,7 +1261,7 @@ func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.
 	lines := strings.Split(formatted, "\n")
 
 	// Truncate if needed.
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}
@@ -1275,7 +1316,7 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	}
 
 	lines := strings.Split(rendered, "\n")
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}

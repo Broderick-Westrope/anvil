@@ -61,9 +61,9 @@ type WholeSelectable interface {
 	SelectedText() string
 }
 
-// DiagramShower marks the items that draw a diagram, so they can be
-// re-rendered alone when its image changes. Its method is unexported, so
-// only this package's diagram items implement it.
+// DiagramShower marks the items that draw a diagram or a tool image, so
+// they can be re-rendered alone when an image changes. Its method is
+// unexported, so only this package's items implement it.
 type DiagramShower interface {
 	showsDiagram()
 }
@@ -92,6 +92,15 @@ type DiagramOpenMsg struct {
 
 func diagramOpenCmd(source string, external bool) tea.Cmd {
 	return func() tea.Msg { return DiagramOpenMsg{Source: source, External: external} }
+}
+
+// DiagramCopyImageMsg asks to copy a diagram to the clipboard as a PNG.
+type DiagramCopyImageMsg struct {
+	Source string
+}
+
+func diagramCopyImageCmd(source string) tea.Cmd {
+	return func() tea.Msg { return DiagramCopyImageMsg{Source: source} }
 }
 
 // IsAssistantHead reports whether item is the first node of an assistant
@@ -422,7 +431,7 @@ func (d *DiagramItem) ClickDrillIn() tea.Cmd { return diagramOpenCmd(d.source, f
 
 // HandleKeyEvent implements KeyEventHandler. →/l open the full-size view,
 // as they drill into tools and agents; o opens the browser; c/y copy the
-// source.
+// source and Y the image.
 func (d *DiagramItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	switch key.String() {
 	case "right", "l":
@@ -434,6 +443,11 @@ func (d *DiagramItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		return true, diagramOpenCmd(d.source, true)
+	case "Y":
+		if d.failed {
+			return true, nil
+		}
+		return true, diagramCopyImageCmd(d.source)
 	case "c", "y":
 		return true, common.CopyToClipboard(d.source, "Diagram source copied to clipboard")
 	}

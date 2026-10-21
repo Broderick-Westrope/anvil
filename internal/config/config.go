@@ -150,6 +150,72 @@ type ProviderConfig struct {
 
 	// The provider models
 	Models []catwalk.Model `json:"models,omitempty" jsonschema:"description=List of models available from this provider"`
+
+	// ChatGPTModels lists the models the ChatGPT (Codex) backend grants
+	// when the OpenAI provider is signed in with a ChatGPT account. It is
+	// the provider's whole catalog in that case: the API-key models in
+	// Models are not served by the subscription.
+	ChatGPTModels []catwalk.Model `json:"chatgpt_models,omitempty" jsonschema:"-"`
+
+	// GrokModels lists the models the Grok plan grants when the xAI
+	// provider is signed in with a Grok account. Like ChatGPTModels, it is
+	// the provider's whole catalog in that case.
+	GrokModels []catwalk.Model `json:"grok_models,omitempty" jsonschema:"-"`
+}
+
+// HasAPIKey reports whether the provider's api_key resolves to a usable
+// credential. The stored value is often an unresolved template such as
+// $OPENAI_API_KEY, which is not a credential until the variable is set.
+func (c *ProviderConfig) HasAPIKey(resolver VariableResolver) bool {
+	if c.APIKey == "" {
+		return false
+	}
+	v, err := resolver.ResolveValue(c.APIKey)
+	return err == nil && v != ""
+}
+
+// HasSubscriptionLogin reports whether the provider supports an account
+// sign-in that replaces its API key: ChatGPT for OpenAI, Grok for xAI.
+func HasSubscriptionLogin(providerID string) bool {
+	return providerID == string(catwalk.InferenceProviderOpenAI) ||
+		providerID == string(catwalk.InferenceProviderXAI)
+}
+
+// AvailableModels returns the models this provider can serve with its
+// current credential: the subscription catalog when signed in with
+// ChatGPT or Grok (once fetched), otherwise the API-key catalog.
+func (c *ProviderConfig) AvailableModels() []catwalk.Model {
+	if sub := c.SubscriptionModels(); sub != nil {
+		return sub
+	}
+	return c.Models
+}
+
+// FindModel returns the model with the given ID from AvailableModels, or
+// nil.
+func (c *ProviderConfig) FindModel(id string) *catwalk.Model {
+	for _, m := range c.AvailableModels() {
+		if m.ID == id {
+			return &m
+		}
+	}
+	return nil
+}
+
+// SubscriptionModels returns the model catalog an OAuth subscription login
+// grants (ChatGPT for OpenAI, Grok for xAI), or nil when the provider is
+// not signed in with one. When non-nil it replaces Models entirely.
+func (c *ProviderConfig) SubscriptionModels() []catwalk.Model {
+	if c.OAuthToken == nil {
+		return nil
+	}
+	switch c.ID {
+	case string(catwalk.InferenceProviderOpenAI):
+		return c.ChatGPTModels
+	case string(catwalk.InferenceProviderXAI):
+		return c.GrokModels
+	}
+	return nil
 }
 
 // ToProvider converts the [ProviderConfig] to a [catwalk.Provider].
@@ -291,6 +357,7 @@ type TUIOptions struct {
 
 	Completions Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
 	Transparent *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
+	Mouse       *bool       `json:"mouse,omitempty" jsonschema:"description=Enable terminal mouse capture for selection\\, clicks\\, and scrolling in the TUI. Disable to let the terminal emulator or tmux handle text selection and copy/paste,default=true"`
 	Diagrams    *bool       `json:"diagrams,omitempty" jsonschema:"description=Render Mermaid diagrams in assistant messages as images where the terminal supports it,default=true"`
 }
 
@@ -333,6 +400,7 @@ type Options struct {
 	DisableNotifications      bool     `json:"disable_notifications,omitempty" jsonschema:"description=Disable desktop notifications,default=false"`
 	DisabledSkills            []string `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=anvil-config"`
 	ExpandedTools             []string `json:"expanded_tools,omitempty" jsonschema:"description=Glob patterns for tools that should render expanded instead of compact,example=bash,example=mcp_*"`
+	RequestTimeout            *int     `json:"request_timeout,omitempty" jsonschema:"description=Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity\\, so slow but active streams are never killed. 0 disables it,default=120,example=300,example=0"`
 
 	BackgroundJobs *BackgroundJobsOptions `json:"background_jobs,omitempty" jsonschema:"description=Background job behaviour"`
 
@@ -374,6 +442,20 @@ type BackgroundJobsOptions struct {
 	// WakeOnEvent starts a turn for an idle session when one of its
 	// background jobs completes or matches a watch.
 	WakeOnEvent *bool `json:"wake_on_event,omitempty" jsonschema:"description=Start a turn for an idle session when its background job completes or matches a watch,default=false"`
+}
+
+// DefaultRequestTimeout bounds each LLM API request when
+// options.request_timeout is unset.
+const DefaultRequestTimeout = 2 * time.Minute
+
+// GetRequestTimeout returns the per-request LLM timeout: a hard deadline for
+// non-streaming calls and an idle timeout for streams. It is zero when
+// disabled; a nil receiver or unset field means DefaultRequestTimeout.
+func (o *Options) GetRequestTimeout() time.Duration {
+	if o == nil || o.RequestTimeout == nil {
+		return DefaultRequestTimeout
+	}
+	return time.Duration(max(*o.RequestTimeout, 0)) * time.Second
 }
 
 // WakeOnJobEvent reports whether idle sessions should be woken by
@@ -901,11 +983,36 @@ func (c *Config) IsConfigured() bool {
 	return len(c.EnabledProviders()) > 0
 }
 
+// ValidateReasoningEffort checks that effort is a reasoning level the
+// given provider/model supports. It returns an error listing the accepted
+// levels when the model cannot use it.
+func (c *Config) ValidateReasoningEffort(provider, modelID, effort string) error {
+	model := c.GetModel(provider, modelID)
+	if model == nil {
+		return fmt.Errorf("model %q not found for provider %q", modelID, provider)
+	}
+	if len(model.ReasoningLevels) == 0 {
+		return fmt.Errorf("model %q does not support reasoning effort", modelID)
+	}
+	if slices.Contains(model.ReasoningLevels, effort) {
+		return nil
+	}
+	return fmt.Errorf(
+		"model %q does not support reasoning effort %q, accepted values: %s",
+		modelID, effort, strings.Join(model.ReasoningLevels, ", "),
+	)
+}
+
+// GetModel finds a model in any of the provider's catalogs: the API-key
+// list, or the ChatGPT/Grok subscription list fetched on login, which
+// lives outside Models.
 func (c *Config) GetModel(provider, model string) *catwalk.Model {
 	if providerConfig, ok := c.Providers.Get(provider); ok {
-		for _, m := range providerConfig.Models {
-			if m.ID == model {
-				return &m
+		for _, catalog := range [][]catwalk.Model{providerConfig.Models, providerConfig.ChatGPTModels, providerConfig.GrokModels} {
+			for _, m := range catalog {
+				if m.ID == model {
+					return &m
+				}
 			}
 		}
 	}
@@ -1203,14 +1310,7 @@ func resolveModelOverride(agent Agent, base SelectedModel, cfg *Config) (Selecte
 			)
 		}
 
-		var found *catwalk.Model
-		for i := range providerCfg.Models {
-			if providerCfg.Models[i].ID == modelID {
-				m := providerCfg.Models[i]
-				found = &m
-				break
-			}
-		}
+		found := providerCfg.FindModel(modelID)
 		if found == nil {
 			return SelectedModel{}, fmt.Errorf(
 				"agent %q: model %q not found in provider %q",

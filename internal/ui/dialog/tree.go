@@ -32,6 +32,9 @@ type treeNode struct {
 
 // Tree is a dialog that displays an ASCII tree of all session messages.
 type Tree struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com                 *common.Common
 	input               textinput.Model
 	list                *list.FilterableList
@@ -297,7 +300,21 @@ func (t *Tree) ID() string {
 // navigation mode (default) where single keys drive tree traversal, and
 // filter mode (activated by /) where keys are typed into the filter
 // input.
+// leaveFilterForClick ends filter mode, keeping the results, before a
+// click selects a row; it matches pressing Enter while filtering.
+func (t *Tree) leaveFilterForClick() {
+	if t.filtering {
+		t.filtering = false
+		t.input.Prompt = " > "
+		t.input.SetStyles(t.com.Styles.TextInput)
+		t.input.Blur()
+	}
+}
+
 func (t *Tree) HandleMsg(msg tea.Msg) Action {
+	if action, ok := t.mouse.handle(msg, t.list, nil, t.leaveFilterForClick, func() Action { return t.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		if t.filtering {
@@ -420,12 +437,16 @@ func (t *Tree) handleFilterKey(msg tea.KeyPressMsg) Action {
 		// Same as above.
 
 	default:
+		prevValue := t.input.Value()
 		var cmd tea.Cmd
 		t.input, cmd = t.input.Update(msg)
-		t.list.SetFilter(t.input.Value())
-		t.setItemsFiltered(t.input.Value() != "")
-		t.list.ScrollToTop()
-		t.list.SetSelected(0)
+		value := t.input.Value()
+		if value != prevValue {
+			t.list.SetFilter(value)
+			t.setItemsFiltered(value != "")
+			t.list.ScrollToTop()
+			t.list.SetSelected(0)
+		}
 		return ActionCmd{cmd}
 	}
 	return nil
@@ -534,9 +555,10 @@ func (t *Tree) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	rc.AddPart(inputView)
 
 	listView := sty.Dialog.List.Height(t.list.Height()).Render(t.list.Render())
-	rc.AddPart(listView)
+	rc.AddList(listView, sty.Dialog.List, t.list.Width(), t.list.Height())
 
 	view := rc.Render()
+	t.mouse.setArea(rc.ListBounds, centerRect(area, view))
 	DrawCenterCursor(scr, area, view, cur)
 	return cur
 }

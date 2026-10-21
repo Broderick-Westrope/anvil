@@ -17,7 +17,8 @@ type promptHistoryLoadedMsg struct {
 	messages []message.Message
 }
 
-// loadPromptHistory loads user messages for history navigation.
+// loadPromptHistory loads user messages for history navigation. Both queries
+// stop at the 200 most recent entries; recall only steps back one at a time.
 func (m *UI) loadPromptHistory() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()

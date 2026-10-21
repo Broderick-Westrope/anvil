@@ -649,7 +649,7 @@ func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, st
 			ProviderOptions:  mergedOptions,
 			Temperature:      temp,
 			TopP:             topP,
-			TopK:             topK,
+			TopK:             callTopK(providerCfg, topK),
 			FrequencyPenalty: freqPenalty,
 			PresencePenalty:  presPenalty,
 			state:            state,
@@ -718,7 +718,7 @@ func (c *coordinator) RunWake(ctx context.Context, sessionID string, eligible fu
 		ProviderOptions:  mergedOptions,
 		Temperature:      temp,
 		TopP:             topP,
-		TopK:             topK,
+		TopK:             callTopK(providerCfg, topK),
 		FrequencyPenalty: freqPenalty,
 		PresencePenalty:  presPenalty,
 		OnAuthRefresh:    c.makeAuthRefreshCallback(providerCfg),
@@ -1051,15 +1051,17 @@ func (c *coordinator) buildToolsWithState(
 	if err != nil {
 		return nil, nil, err
 	}
+	spillDataDir := config.GlobalDataDir()
+	jobOpts := tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive, SpillDir: spillDataDir}
 	candidateTools = append(
 		candidateTools,
 		agenticFetch,
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.jobWakeEnabled),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), spillDataDir, c.jobWakeEnabled),
 		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
 		tools.NewAnvilLogsTool(logFile),
-		tools.NewJobOutputTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
-		tools.NewJobKillTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
-		tools.NewJobListTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
+		tools.NewJobOutputTool(jobOpts),
+		tools.NewJobKillTool(jobOpts),
+		tools.NewJobListTool(jobOpts),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
@@ -1069,7 +1071,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, []string{shell.SpillDir(spillDataDir)}, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 	)
 
@@ -1140,6 +1142,7 @@ func (c *coordinator) buildToolsWithState(
 	// hooks N times per delegated turn. The top-level invocation of the
 	// sub-agent tool itself is still wrapped from the orchestrator's side.
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
+	filteredTools = wrapToolsWithErrorResults(filteredTools)
 
 	return filteredTools, lazyMCPToolMap, nil
 }
@@ -1220,19 +1223,10 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 		return Model{}, Model{}, err
 	}
 
-	var largeCatwalkModel *catwalk.Model
-	var smallCatwalkModel *catwalk.Model
-
-	for _, m := range largeProviderCfg.Models {
-		if m.ID == largeModelCfg.Model {
-			largeCatwalkModel = &m
-		}
-	}
-	for _, m := range smallProviderCfg.Models {
-		if m.ID == smallModelCfg.Model {
-			smallCatwalkModel = &m
-		}
-	}
+	// A ChatGPT or Grok login serves its own catalog, which lives outside
+	// Models; FindModel looks there first.
+	largeCatwalkModel := largeProviderCfg.FindModel(largeModelCfg.Model)
+	smallCatwalkModel := smallProviderCfg.FindModel(smallModelCfg.Model)
 
 	if largeCatwalkModel == nil {
 		return Model{}, Model{}, errLargeModelNotFound
@@ -1261,6 +1255,12 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 	if err != nil {
 		return Model{}, Model{}, err
 	}
+
+	// Bound every request so a hung provider fails instead of blocking the
+	// session. Applied per request, so each retry gets a fresh budget.
+	requestTimeout := c.cfg.Config().Options.GetRequestTimeout()
+	largeModel = newRequestTimeoutModel(largeModel, requestTimeout)
+	smallModel = newRequestTimeoutModel(smallModel, requestTimeout)
 
 	return Model{
 		Model:      largeModel,
@@ -1335,6 +1335,10 @@ func (c *coordinator) Model() Model {
 // UpdateModels rebuilds the orchestrator with the latest model config and
 // clears the lazy agent map so sub-agents are rebuilt on next delegation.
 func (c *coordinator) UpdateModels(ctx context.Context) error {
+	// A ChatGPT or Grok login whose catalog fetch failed at sign-in would
+	// leave its models missing; fill it in. A no-op once it exists.
+	c.cfg.RefetchMissingSubscriptionModels(ctx)
+
 	orchestratorCfg, ok := c.orchestratorConfig()
 	if !ok {
 		return errOrchestratorAgentNotConfigured
@@ -1755,7 +1759,7 @@ func (c *coordinator) subAgentCall(ctx context.Context, agent SessionAgent, sess
 		ProviderOptions:  mergedOptions,
 		Temperature:      temp,
 		TopP:             topP,
-		TopK:             topK,
+		TopK:             callTopK(providerCfg, topK),
 		FrequencyPenalty: freqPenalty,
 		PresencePenalty:  presPenalty,
 		NonInteractive:   true,

@@ -69,6 +69,9 @@ func TestDiagramDetailItemKeys(t *testing.T) {
 	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	require.True(t, handled)
 	require.Equal(t, DiagramOpenMsg{Source: "A\n", External: true}, cmdMsg(t, cmd))
+	handled, cmd = item.HandleKeyEvent(tea.KeyPressMsg{Code: 'y', ShiftedCode: 'Y', Mod: tea.ModShift, Text: "Y"})
+	require.True(t, handled)
+	require.Equal(t, DiagramCopyImageMsg{Source: "A\n"}, cmdMsg(t, cmd))
 	handled, _ = item.HandleKeyEvent(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	require.False(t, handled)
 }
@@ -95,8 +98,8 @@ func TestDiagramDetailItemHints(t *testing.T) {
 		want    []string
 		wantNot []string
 	}{
-		"ready":  {view: DiagramView{State: DiagramReady, Image: "IMG"}, want: []string{"open in browser", "copy source"}},
-		"failed": {view: DiagramView{State: DiagramFailed, Err: "bad"}, want: []string{"copy source"}, wantNot: []string{"open in browser"}},
+		"ready":  {view: DiagramView{State: DiagramReady, Image: "IMG"}, want: []string{"open in browser", "copy source", "Y copy image"}},
+		"failed": {view: DiagramView{State: DiagramFailed, Err: "bad"}, want: []string{"copy source"}, wantNot: []string{"open in browser", "copy image"}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -111,4 +114,21 @@ func TestDiagramDetailItemHints(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDiagramDetailItemWontOpenOrCopyTheImageOfAFailedDiagram(t *testing.T) {
+	t.Parallel()
+
+	const src = "A\n"
+	sty := styles.TokyoNight()
+	item := NewDiagramDetailItem(&sty, src, fakeDiagrams{full: map[string]DiagramView{src: {State: DiagramFailed, Err: "bad"}}})
+	item.RawRender(80)
+	for _, key := range []tea.KeyPressMsg{{Code: 'o', Text: "o"}, {Code: 'y', ShiftedCode: 'Y', Mod: tea.ModShift, Text: "Y"}} {
+		handled, cmd := item.HandleKeyEvent(key)
+		require.True(t, handled, key.Text)
+		require.Nil(t, cmd, "%s: it would fail the same way", key.Text)
+	}
+	handled, cmd := item.HandleKeyEvent(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	require.True(t, handled)
+	require.NotNil(t, cmd, "the source still copies")
 }

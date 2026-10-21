@@ -46,7 +46,7 @@ internal/
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
-  mermaid/                         Mermaid to pixels: Pele in goja, resvg in wazero (vendored)
+  mermaid/                         Mermaid to pixels: pele-go (Go port of Pele), resvg in wazero (vendored)
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -214,12 +214,12 @@ Terms with a specific meaning in this codebase are defined in
   ```` ```mermaid ```` fence becomes its own chat node
   (`chat.NewAssistantMessageItems`, spliced in by
   `Chat.SyncAssistantSegments`); the head keeps the message ID and the
-  rest are `<id>#<n>`. `mermaidFeature` (`internal/ui/model/mermaid.go`
+  rest are `<id>#<n>`. `graphicsFeature` (`internal/ui/model/graphics.go`
   for its cache and messages, `mermaid_render.go` for the worker) renders
-  them on one goroutine with `internal/mermaid` (Pele in goja for SVG, the
-  vendored resvg in wazero for pixels; see
-  `docs/adr/0004-mermaid-rendering.md`) and sends Kitty graphics with
-  Unicode placeholders. Items get the renderer through their constructors
+  them on one goroutine with `internal/mermaid` (pele-go, a Go port of
+  Pele, for SVG, the vendored resvg in wazero for pixels; see
+  `docs/adr/0004-mermaid-rendering.md` and `docs/adr/0006-pele-go.md`)
+  and sends Kitty graphics with Unicode placeholders. Items get the renderer through their constructors
   as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
   code block shows while pending, without Kitty support, or (with a note)
   after a failure. When the view moves, the chat tells the renderer which
@@ -229,18 +229,52 @@ Terms with a specific meaning in this codebase are defined in
   only diagram items (`Chat.InvalidateDiagrams`), which keeps the scroll
   position. The terminal holds the pixels; Anvil keeps none once sent, and
   deletes the least recently drawn images out of view past 128 MB (a wide
-  diagram on a HiDPI screen is ~17 MB). The engines load on
-  the first diagram and drop after 20 seconds idle. resvg's compiled
+  diagram on a HiDPI screen is ~17 MB). resvg loads on the
+  first diagram and drops after 20 seconds idle. Its compiled
   code goes in wazero's compilation cache under the user cache dir
   (`anvil/wasm`), shared by every process, so only the first load after
   an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).
-  Colours come from
-  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a restart:
-  `ConfigStore.DiagramsEnabled` reads the startup snapshot, and both the
-  UI (a nil renderer means no split) and the system prompt line gate on
-  it. Design: `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  `Y` copies a diagram as a PNG: since Anvil keeps no pixels, the worker
+  renders it again (`diagramJobCopy`) at twice its layout size (within
+  `mermaid.MaxPixels`) on an opaque background, then writes it to the
+  clipboard itself, so copies land in order. `writeClipboardImage`
+  writes natively on macOS and Windows and through `wl-copy` or `xclip`
+  on other Unix desktops (the native X11 clipboard can't do large
+  transfers), giving up after 5 seconds. `imageClipboardReady` refuses
+  a copy that can't land before anything renders, and it's refused when
+  `SSH_CONNECTION` or `SSH_TTY` is set, since the clipboard isn't the
+  user's and OSC 52 carries only text. Colours come from
+  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a
+  restart: `ConfigStore.DiagramsEnabled` reads the startup snapshot,
+  and both the UI (a nil renderer means no split) and the system prompt
+  line gate on it. Design:
+  `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
   measurements and resvg workarounds:
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
+- **Tool images**: a tool result carrying image data (`view`, MCP) is
+  drawn as the Output item of its tool drill-in
+  (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any
+  text the tool returned with it, through the
+  same `graphicsFeature` cache as diagrams: each cache key names its
+  producer (Mermaid or bitmap), and bitmaps decode on the worker without
+  loading the Mermaid engines (`internal/ui/model/tool_image.go`). They
+  draw at actual size, shrunk to the drill-in's width, 297 rows and
+  16 Mpx once padded to whole cells, never enlarged; a source over
+  8192 px a side, 32 Mpx, or 128 MB of what its decoder holds at once
+  (`decodeBytesPerPixel`: progressive JPEG and lossless WebP hold far
+  more than their pixels) isn't decoded. Only the drill-in on
+  top holds a full-size image (diagram or bitmap): `UI.Update` tells
+  features which chat is on top after every message, keys included
+  (`drillInFeature.DrillInChanged`), and the cache frees the old one at
+  once. Drill-in items ask through a handle bound to their chat
+  (`graphicsFeature.For`) that queues nothing while it's covered, and a
+  generation in full-size keys keeps late results and deletes from an
+  earlier opening off the current image. `o` writes the result's bytes
+  to the diagram export dir and opens them in the OS viewer, even when
+  Anvil can't draw them, but only when the bytes sniff as a raster type
+  that can't carry scripts (`imageExts`). The cache exists whatever
+  `options.tui.diagrams` says. Design:
+  `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 

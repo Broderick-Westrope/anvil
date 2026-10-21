@@ -108,22 +108,54 @@ type pendingState struct {
 	// the buffer, so the next delta schedules a fresh one.
 	timer *time.Timer
 
-	// lastFlushed is the snapshot most recently written to SQL. Used
-	// as the baseline for terminal-state detection.
-	lastFlushed Message
+	// baseline is the projection of the snapshot most recently
+	// written to SQL that terminal-state detection needs. Used as the
+	// baseline for [shouldFlushNow].
+	baseline flushBaseline
 
 	// hasFlushed is false until the first successful write for this
-	// ID; until then lastFlushed is the zero value and must not be
+	// ID; until then baseline is the zero value and must not be
 	// treated as a real prior state.
 	hasFlushed bool
+}
+
+// flushBaseline is the compact projection of a flushed [Message] that
+// [shouldFlushNow] compares against. Pending state lives for as long
+// as the process does, so it retains this instead of the whole
+// Message: a finished stream would otherwise pin its parts — reasoning
+// text, tool inputs, tool results — on the heap forever.
+type flushBaseline struct {
+	toolCalls           []toolCallBaseline
+	reasoningFinishedAt int64
+}
+
+// toolCallBaseline is the part of a flushed [ToolCall] that
+// [shouldFlushNow] compares against.
+type toolCallBaseline struct {
+	finished  bool
+	startedAt int64
+}
+
+// newFlushBaseline projects the fields [shouldFlushNow] reads out of a
+// flushed message.
+func newFlushBaseline(m *Message) flushBaseline {
+	calls := m.ToolCalls()
+	baselines := make([]toolCallBaseline, len(calls))
+	for i, c := range calls {
+		baselines[i] = toolCallBaseline{finished: c.Finished, startedAt: c.StartedAt}
+	}
+	return flushBaseline{
+		toolCalls:           baselines,
+		reasoningFinishedAt: m.ReasoningContent().FinishedAt,
+	}
 }
 
 // isTerminal reports whether next is a structural change against the
 // last flushed snapshot. See [shouldFlushNow].
 func (p *pendingState) isTerminal(next *Message) bool {
-	var prev *Message
+	var prev *flushBaseline
 	if p.hasFlushed {
-		prev = &p.lastFlushed
+		prev = &p.baseline
 	}
 	return shouldFlushNow(prev, next)
 }
@@ -157,7 +189,7 @@ func (p *pendingState) endFlush(snap Message, err error) bool {
 		p.dirty = true
 		return false
 	}
-	p.lastFlushed = snap
+	p.baseline = newFlushBaseline(&snap)
 	p.hasFlushed = true
 	return snap.IsFinished() && !p.dirty
 }
@@ -504,15 +536,16 @@ func (s *service) PendingCount() int {
 
 // flushOne drains a single message ID. When syncCaller is true the
 // caller is willing to wait through a concurrent in-flight flush so
-// that, on return, lastFlushed equals latest at the moment of return.
+// that, on return, the flushed state equals latest at the moment of
+// return.
 // When false (timer-fired path) we bail if another flusher is already
 // running; that flusher will pick up the trailing dirty bit.
 //
 // Order matters: a sync caller must wait for any in-flight flush to
 // drain even when the buffer is currently clean — that in-flight
 // write has not yet updated the SQL row, so returning early would
-// violate the contract that on success lastFlushed reflects the most
-// recent state.
+// violate the contract that on success the flushed state reflects the
+// most recent state.
 func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) error {
 	for {
 		s.mu.Lock()
@@ -548,6 +581,13 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 		// If a delta arrived during the SQL write and we are a sync
 		// caller, the user expects that delta to land too.
 		wasDirty := p.dirty
+		if !wasDirty {
+			// Nothing left to write, so drop the snapshot. Entries
+			// survive non-terminal flushes and streams that never
+			// reach a terminal flush; holding latest here would pin
+			// those messages' parts on the heap.
+			p.latest = Message{}
+		}
 		s.mu.Unlock()
 
 		if err != nil {
@@ -599,16 +639,16 @@ func (s *service) write(ctx context.Context, msg Message) error {
 // finished, a tool call's start time changed, or reasoning just
 // finished. prev is the last-flushed snapshot (or nil if no write has
 // landed yet).
-func shouldFlushNow(prev, next *Message) bool {
+func shouldFlushNow(prev *flushBaseline, next *Message) bool {
 	if next.IsFinished() {
 		return true
 	}
 
-	var prevCalls []ToolCall
+	var prevCalls []toolCallBaseline
 	var prevReasoningFinishedAt int64
 	if prev != nil {
-		prevCalls = prev.ToolCalls()
-		prevReasoningFinishedAt = prev.ReasoningContent().FinishedAt
+		prevCalls = prev.toolCalls
+		prevReasoningFinishedAt = prev.reasoningFinishedAt
 	}
 	nextCalls := next.ToolCalls()
 	if len(nextCalls) != len(prevCalls) {
@@ -616,12 +656,12 @@ func shouldFlushNow(prev, next *Message) bool {
 	}
 	for i := range nextCalls {
 		// Bounds-safe: lengths are equal here.
-		if nextCalls[i].Finished != prevCalls[i].Finished {
+		if nextCalls[i].Finished != prevCalls[i].finished {
 			return true
 		}
 		// The UI times a running tool from StartedAt, so a start or a
 		// restart after a permission grant must not wait out the debounce.
-		if nextCalls[i].StartedAt != prevCalls[i].StartedAt {
+		if nextCalls[i].StartedAt != prevCalls[i].startedAt {
 			return true
 		}
 		// A tool call's input only matters once it has landed (Finished
@@ -840,6 +880,13 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 	return json.Marshal(wrappedParts)
 }
 
+// rawPartWrapper is [partWrapper] for decoding: the payload stays encoded
+// until the type tag says what to decode it into.
+type rawPartWrapper struct {
+	Type partType        `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
 // partDecoders decodes the data of each stored part type.
 var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
 	reasoningType:           decodePart[ReasoningContent],
@@ -866,29 +913,20 @@ func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
 }
 
 func unmarshalParts(data []byte) ([]ContentPart, error) {
-	temp := []json.RawMessage{}
-
-	if err := json.Unmarshal(data, &temp); err != nil {
+	// One pass gets every type tag and its still-encoded payload. Splitting
+	// into []json.RawMessage first would walk the same bytes twice.
+	var wrapped []rawPartWrapper
+	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, err
 	}
 
-	parts := make([]ContentPart, 0)
-
-	for _, rawPart := range temp {
-		var wrapper struct {
-			Type partType        `json:"type"`
-			Data json.RawMessage `json:"data"`
-		}
-
-		if err := json.Unmarshal(rawPart, &wrapper); err != nil {
-			return nil, err
-		}
-
-		decode, ok := partDecoders[wrapper.Type]
+	parts := make([]ContentPart, 0, len(wrapped))
+	for _, w := range wrapped {
+		decode, ok := partDecoders[w.Type]
 		if !ok {
-			return nil, fmt.Errorf("unknown part type: %s", wrapper.Type)
+			return nil, fmt.Errorf("unknown part type: %s", w.Type)
 		}
-		part, err := decode(wrapper.Data)
+		part, err := decode(w.Data)
 		if err != nil {
 			return nil, err
 		}

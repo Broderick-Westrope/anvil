@@ -18,6 +18,8 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/lock"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
+	"github.com/Broderick-Westrope/anvil/internal/oauth/grok"
+	"github.com/Broderick-Westrope/anvil/internal/oauth/openai"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"golang.org/x/sync/singleflight"
@@ -659,75 +661,127 @@ func (s *ConfigStore) SetTransparentBackground(scope Scope, enabled bool) error 
 }
 
 // SetProviderAPIKey sets the API key for a provider and persists it.
+//
+// OpenAI and xAI hold exactly one credential: storing a ChatGPT or Grok
+// login removes a previously entered API key, and storing an API key
+// removes a previous login and its model catalog.
 func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey any) error {
-	var providerConfig ProviderConfig
-	var exists bool
-	var setKeyOrToken func()
-
+	var cred providerCredential
 	switch v := apiKey.(type) {
 	case string:
-		if err := s.SetConfigField(scope, fmt.Sprintf("providers.%s.api_key", providerID), v); err != nil {
-			return fmt.Errorf("failed to save api key to config file: %w", err)
-		}
-		setKeyOrToken = func() { providerConfig.APIKey = v }
+		cred = apiKeyCredential(v)
 	case *oauth.Token:
-		// Hold the refresh lock across the write so a peer's in-flight
-		// token exchange cannot land on top of a credential the user just
-		// obtained interactively — which would silently invalidate the
-		// login they only just completed.
-		if err := s.withRefreshLock(providerID, func() error {
-			return s.SetConfigFields(scope, map[string]any{
-				fmt.Sprintf("providers.%s.api_key", providerID): v.AccessToken,
-				fmt.Sprintf("providers.%s.oauth", providerID):   v,
-			})
-		}); err != nil {
-			return err
-		}
-		setKeyOrToken = func() {
-			providerConfig.APIKey = v.AccessToken
-			providerConfig.OAuthToken = v
-			switch providerID {
-			case string(catwalk.InferenceProviderAnthropic):
-				providerConfig.SetupAnthropic()
-			}
-		}
+		cred = loginCredential{v}
+	default:
+		return fmt.Errorf("unsupported credential type %T for provider %s", apiKey, providerID)
+	}
+	if err := cred.save(s, scope, providerID); err != nil {
+		return err
+	}
+	// A subscription login also fetches the model catalog it grants, so
+	// the models dialog can offer it straight away. Deferred so the fetch
+	// sees the login in memory.
+	if _, isLogin := cred.(loginCredential); isLogin && HasSubscriptionLogin(providerID) {
+		defer s.refetchSubscriptionModels(context.Background(), scope, providerID)
 	}
 
 	cfg := s.Config()
-	providerConfig, exists = cfg.Providers.Get(providerID)
-	if exists {
-		setKeyOrToken()
-		cfg.Providers.Set(providerID, providerConfig)
-		return nil
-	}
-
-	var foundProvider *catwalk.Provider
-	// KnownProviders takes metaMu; a bare s.knownProviders read here
-	// would race the setMeta republish during a concurrent reload.
-	for _, p := range s.KnownProviders() {
-		if string(p.ID) == providerID {
-			foundProvider = &p
-			break
+	providerConfig, exists := cfg.Providers.Get(providerID)
+	if !exists {
+		// KnownProviders takes metaMu; a bare s.knownProviders read here
+		// would race the setMeta republish during a concurrent reload.
+		known := s.KnownProviders()
+		idx := slices.IndexFunc(known, func(p catwalk.Provider) bool { return string(p.ID) == providerID })
+		if idx < 0 {
+			return fmt.Errorf("provider with ID %s not found in known providers", providerID)
 		}
-	}
-
-	if foundProvider != nil {
+		p := known[idx]
 		providerConfig = ProviderConfig{
 			ID:           providerID,
-			Name:         foundProvider.Name,
-			BaseURL:      foundProvider.APIEndpoint,
-			Type:         foundProvider.Type,
-			Disable:      false,
+			Name:         p.Name,
+			BaseURL:      p.APIEndpoint,
+			Type:         p.Type,
 			ExtraHeaders: make(map[string]string),
 			ExtraParams:  make(map[string]string),
-			Models:       foundProvider.Models,
+			Models:       p.Models,
 		}
-		setKeyOrToken()
-	} else {
-		return fmt.Errorf("provider with ID %s not found in known providers", providerID)
 	}
+	cred.apply(&providerConfig, providerID)
 	cfg.Providers.Set(providerID, providerConfig)
 	return nil
+}
+
+// providerCredential is a credential the user gave a provider. It owns
+// both halves of storing it: what goes to disk, and how the in-memory
+// provider config changes.
+type providerCredential interface {
+	// save persists the credential, removing whichever other credential
+	// it replaces.
+	save(s *ConfigStore, scope Scope, providerID string) error
+	// apply updates the in-memory provider config to match what save
+	// wrote.
+	apply(pc *ProviderConfig, providerID string)
+}
+
+// apiKeyCredential is an API key. For a provider with a subscription
+// login it retires that login and the model catalog it granted.
+type apiKeyCredential string
+
+func (k apiKeyCredential) save(s *ConfigStore, scope Scope, providerID string) error {
+	if err := s.SetConfigField(scope, fmt.Sprintf("providers.%s.api_key", providerID), string(k)); err != nil {
+		return fmt.Errorf("failed to save api key to config file: %w", err)
+	}
+	if !HasSubscriptionLogin(providerID) {
+		return nil
+	}
+	for _, field := range []string{"oauth", subscriptionCatalogField(providerID)} {
+		if err := s.RemoveConfigField(scope, fmt.Sprintf("providers.%s.%s", providerID, field)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (k apiKeyCredential) apply(pc *ProviderConfig, providerID string) {
+	pc.APIKey = string(k)
+	if HasSubscriptionLogin(providerID) {
+		pc.OAuthToken = nil
+		pc.ChatGPTModels = nil
+		pc.GrokModels = nil
+	}
+}
+
+// loginCredential is an OAuth login. An OpenAI (ChatGPT) login retires
+// the API key.
+type loginCredential struct{ token *oauth.Token }
+
+func (l loginCredential) save(s *ConfigStore, scope Scope, providerID string) error {
+	// Hold the refresh lock across the write so a peer's in-flight token
+	// exchange cannot land on top of a credential the user just obtained
+	// interactively — which would silently invalidate the login they only
+	// just completed.
+	write := func() error {
+		return s.SetConfigFields(scope, tokenFields(providerID, l.token))
+	}
+	if err := s.withRefreshLock(providerID, write); err != nil {
+		return err
+	}
+	if providerID != string(catwalk.InferenceProviderOpenAI) {
+		return nil
+	}
+	return s.RemoveConfigField(scope, fmt.Sprintf("providers.%s.api_key", providerID))
+}
+
+func (l loginCredential) apply(pc *ProviderConfig, providerID string) {
+	pc.OAuthToken = l.token
+	if providerID == string(catwalk.InferenceProviderOpenAI) {
+		pc.APIKey = ""
+		return
+	}
+	pc.APIKey = l.token.AccessToken
+	if providerID == string(catwalk.InferenceProviderAnthropic) {
+		pc.SetupAnthropic()
+	}
 }
 
 // RefreshOAuthToken refreshes the OAuth token for the given provider.
@@ -832,13 +886,108 @@ func (s *ConfigStore) refreshOAuthTokenLocked(ctx context.Context, scope Scope, 
 		return err
 	}
 
-	if err := s.SetConfigFields(scope, map[string]any{
-		fmt.Sprintf("providers.%s.api_key", providerID): refreshedToken.AccessToken,
-		fmt.Sprintf("providers.%s.oauth", providerID):   refreshedToken,
-	}); err != nil {
+	if err := s.SetConfigFields(scope, tokenFields(providerID, refreshedToken)); err != nil {
 		return fmt.Errorf("failed to persist refreshed token: %w", err)
 	}
 	return nil
+}
+
+// tokenFields builds the config fields that persist an OAuth token. The
+// OpenAI provider does not mirror the access token into api_key: the
+// coordinator sends ChatGPT logins to the Codex backend with the token
+// itself, and an api_key there would read as a separate credential.
+func tokenFields(providerID string, token *oauth.Token) map[string]any {
+	fields := map[string]any{
+		fmt.Sprintf("providers.%s.oauth", providerID): token,
+	}
+	if providerID != string(catwalk.InferenceProviderOpenAI) {
+		fields[fmt.Sprintf("providers.%s.api_key", providerID)] = token.AccessToken
+	}
+	return fields
+}
+
+// subscriptionCatalogField is the config key, under the provider, holding
+// the model catalog a subscription login grants.
+func subscriptionCatalogField(providerID string) string {
+	if providerID == string(catwalk.InferenceProviderXAI) {
+		return "grok_models"
+	}
+	return "chatgpt_models"
+}
+
+// fetchSubscriptionModels fetches the model catalog a subscription login
+// grants. A package variable so tests can stub the network call.
+var fetchSubscriptionModels = func(ctx context.Context, providerID string, token *oauth.Token) ([]catwalk.Model, error) {
+	if providerID == string(catwalk.InferenceProviderXAI) {
+		return grok.Models(ctx, token)
+	}
+	return openai.Models(ctx, token)
+}
+
+// refetchSubscriptionModels stores the model catalog the provider's
+// ChatGPT or Grok login grants. Best effort: a failure leaves the
+// existing catalog in place and the login still succeeds.
+func (s *ConfigStore) refetchSubscriptionModels(ctx context.Context, scope Scope, providerID string) {
+	pc, ok := s.Config().Providers.Get(providerID)
+	if !ok || pc.OAuthToken == nil {
+		return
+	}
+	// The models endpoint rejects a stale token with a 401, so renew an
+	// expired one first. A failed refresh falls through to the old token,
+	// which keeps the existing catalog in place.
+	if pc.OAuthToken.IsExpired() {
+		if err := s.RefreshOAuthToken(ctx, scope, providerID); err != nil {
+			slog.Warn("Failed to refresh the subscription token before fetching its model catalog", "provider", providerID, "error", err)
+		}
+		if refreshed, ok := s.Config().Providers.Get(providerID); ok && refreshed.OAuthToken != nil {
+			pc = refreshed
+		}
+	}
+	models, err := fetchSubscriptionModels(ctx, providerID, pc.OAuthToken)
+	if err != nil {
+		slog.Warn("Failed to fetch the subscription model catalog", "provider", providerID, "error", err)
+		return
+	}
+	field := subscriptionCatalogField(providerID)
+	store := func(c *Config) map[string]any {
+		p, ok := c.Providers.Get(providerID)
+		if !ok {
+			return nil
+		}
+		if providerID == string(catwalk.InferenceProviderXAI) {
+			p.GrokModels = models
+		} else {
+			p.ChatGPTModels = models
+		}
+		c.Providers.Set(providerID, p)
+		return map[string]any{fmt.Sprintf("providers.%s.%s", providerID, field): models}
+	}
+	if err := s.update(scope, store); err != nil {
+		slog.Warn("Failed to persist the subscription model catalog", "provider", providerID, "error", err)
+	}
+}
+
+// RefreshSubscriptionModels re-fetches the ChatGPT and Grok catalogs of
+// signed-in providers. Those catalogs are otherwise only fetched at login
+// and would go stale as the plans change; run it in the background once
+// per start. Best effort, like refetchSubscriptionModels.
+func (s *ConfigStore) RefreshSubscriptionModels(ctx context.Context) {
+	for _, providerID := range []string{string(catwalk.InferenceProviderOpenAI), string(catwalk.InferenceProviderXAI)} {
+		s.refetchSubscriptionModels(ctx, ScopeGlobal, providerID)
+	}
+}
+
+// RefetchMissingSubscriptionModels fills in the ChatGPT or Grok catalog
+// when a provider is signed in but has none, because the fetch at login
+// failed or the credentials predate it. A no-op once a catalog exists, so
+// callers can run it on every model update.
+func (s *ConfigStore) RefetchMissingSubscriptionModels(ctx context.Context) {
+	for _, providerID := range []string{string(catwalk.InferenceProviderOpenAI), string(catwalk.InferenceProviderXAI)} {
+		if pc, _ := s.Config().Providers.Get(providerID); len(pc.SubscriptionModels()) > 0 {
+			continue
+		}
+		s.refetchSubscriptionModels(ctx, ScopeGlobal, providerID)
+	}
 }
 
 // WaitForTokenChange blocks until SignalAuthComplete is called for the
@@ -963,6 +1112,10 @@ func (s *ConfigStore) exchange(ctx context.Context, providerID string, entryToke
 	switch providerID {
 	case string(catwalk.InferenceProviderAnthropic):
 		return anthropicoauth.RefreshToken(ctx, entryToken)
+	case string(catwalk.InferenceProviderOpenAI):
+		return openai.RefreshToken(ctx, entryToken.RefreshToken)
+	case string(catwalk.InferenceProviderXAI):
+		return grok.RefreshToken(ctx, entryToken.RefreshToken)
 	default:
 		return nil, fmt.Errorf("OAuth refresh not supported for provider %s", providerID)
 	}
@@ -999,7 +1152,10 @@ func (s *ConfigStore) refreshLockPath(providerID string) string {
 // applyToken updates the in-memory provider config with the given token.
 func (s *ConfigStore) applyToken(providerConfig ProviderConfig, token *oauth.Token, providerID string) error {
 	providerConfig.OAuthToken = token
-	providerConfig.APIKey = token.AccessToken
+	// A ChatGPT token is OpenAI's only credential; it is not an API key.
+	if providerID != string(catwalk.InferenceProviderOpenAI) {
+		providerConfig.APIKey = token.AccessToken
+	}
 	switch providerID {
 	case string(catwalk.InferenceProviderAnthropic):
 		providerConfig.SetupAnthropic()

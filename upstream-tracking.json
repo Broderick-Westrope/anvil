@@ -1,8 +1,8 @@
 {
   "last_checked_commit": {
-    "hash": "feb63006e9452be370721c22a0c2a3be008fd475",
-    "author": "Amolith",
-    "date": "2026-08-10T10:08:00-07:00",
-    "message": "telemetry: differentiate invocation types (#3533)"
+    "hash": "140e8cb9707faa6a68d87d0ecc3a85b9c65e25d5",
+    "author": "Kieran Klukas",
+    "date": "2026-10-06T18:42:30-04:00",
+    "message": "fix: stop intermittent CI test failures across all three platforms (#4034)"
   }
 }

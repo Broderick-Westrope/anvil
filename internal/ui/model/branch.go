@@ -105,10 +105,3 @@ func (m *UI) clearBranchState() {
 	m.branchRestoreSnapshot = nil
 	m.branchRestoring = false
 }
-
-// canWriteLeafMetadata reports whether a metadata entry, which is stored
-// under the leaf and so moves it, may be written now: not while an agent
-// runs, and not while a feature guards the leaf.
-func (m *UI) canWriteLeafMetadata() bool {
-	return !m.isAgentBusy() && m.features.blockNavigation() == nil
-}
