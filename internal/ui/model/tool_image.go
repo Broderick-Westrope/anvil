@@ -12,10 +12,8 @@ import (
 	_ "image/jpeg" // Registers the JPEG decoder for tool images.
 	_ "image/png"  // Registers the PNG decoder for tool images.
 	"math"
-	"mime"
 	"os"
 	"path/filepath"
-	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -195,26 +193,30 @@ func fitBitmap(w, h int, req diagramRequest) bitmapFit {
 	}
 }
 
-// imageExts are the file extensions tool images are written with, so the
-// OS opens them in its viewer. Types missing here fall back to the OS's
-// own table.
+// imageExts are the image types o opens, and the extensions they are
+// written with so the OS opens them in its viewer. They are raster types
+// that carry no code: a tool result is untrusted, and the OS opens types
+// such as SVG in a browser, which would run scripts in them.
 var imageExts = map[string]string{
-	"image/png":     ".png",
-	"image/jpeg":    ".jpg",
-	"image/gif":     ".gif",
-	"image/webp":    ".webp",
-	"image/svg+xml": ".svg",
-	"image/avif":    ".avif",
-	"image/bmp":     ".bmp",
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/gif":  ".gif",
+	"image/webp": ".webp",
+	"image/avif": ".avif",
+	"image/bmp":  ".bmp",
 }
 
 // openImage writes a tool image's bytes, exactly as the model saw them, to
 // the export directory and opens them in the OS default viewer. It works
 // for images Anvil can't draw, since the viewer may.
 func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
+	ext, ok := imageExts[msg.MIMEType]
+	if !ok {
+		return util.ReportWarn("Won't open " + msg.MIMEType + " images: they could run code")
+	}
 	dir, open := f.exportDir, f.openURL
 	return func() tea.Msg {
-		path, err := writeImage(dir, msg)
+		path, err := writeImage(dir, msg.Data, ext)
 		if err == nil {
 			err = open(fileURL(path))
 		}
@@ -225,8 +227,8 @@ func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
 	}
 }
 
-func writeImage(dir string, msg chat.ImageOpenMsg) (string, error) {
-	raw, err := base64.StdEncoding.DecodeString(msg.Data)
+func writeImage(dir, data, ext string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
 		return "", fmt.Errorf("decode image data: %w", err)
 	}
@@ -234,12 +236,6 @@ func writeImage(dir string, msg chat.ImageOpenMsg) (string, error) {
 		return "", err
 	}
 	pruneExports(dir)
-	ext, ok := imageExts[msg.MIMEType]
-	if !ok {
-		if exts, _ := mime.ExtensionsByType(msg.MIMEType); len(exts) > 0 {
-			ext = slices.Min(exts)
-		}
-	}
 	h := fnv.New64a()
 	_, _ = h.Write(raw)
 	path := filepath.Join(dir, fmt.Sprintf("image-%x%s", h.Sum64(), ext))

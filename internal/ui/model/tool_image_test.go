@@ -467,10 +467,9 @@ func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 	tests := map[string]struct {
 		mimeType, ext string
 	}{
-		"png":               {mimeType: "image/png", ext: ".png"},
-		"jpeg":              {mimeType: "image/jpeg", ext: ".jpg"},
-		"svg it can't draw": {mimeType: "image/svg+xml", ext: ".svg"},
-		"unknown type":      {mimeType: "image/x-made-up", ext: ""},
+		"png":                {mimeType: "image/png", ext: ".png"},
+		"jpeg":               {mimeType: "image/jpeg", ext: ".jpg"},
+		"avif it can't draw": {mimeType: "image/avif", ext: ".avif"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -809,4 +808,28 @@ func TestGraphicsFeatureKeepsOnlyTheLatestImageAtOneWidth(t *testing.T) {
 	}
 	require.Equal(t, []diagramKey{current.key}, full, "one full-size image, the latest asked for")
 	require.NotContains(t, f.entries, shown.key)
+}
+
+func TestGraphicsFeatureOpensOnlyImagesThatCantRunScripts(t *testing.T) {
+	t.Parallel()
+
+	for name, mimeType := range map[string]string{"svg": "image/svg+xml", "unknown": "image/x-made-up"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
+			f.exportDir = t.TempDir()
+			f.openURL = func(string) error { t.Fatal("opened"); return nil }
+
+			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), MIMEType: mimeType})
+
+			require.True(t, handled)
+			msg, ok := cmd().(util.InfoMsg)
+			require.True(t, ok)
+			require.Equal(t, util.InfoTypeWarn, msg.Type)
+			require.Equal(t, "Won't open "+mimeType+" images: they could run code", msg.Msg)
+			entries, err := os.ReadDir(f.exportDir)
+			require.NoError(t, err)
+			require.Empty(t, entries, "nothing written")
+		})
+	}
 }
