@@ -1,10 +1,12 @@
 package chat
 
 import (
+	"cmp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ImageRenderer draws the images tools return, full size, for a tool
@@ -45,8 +47,30 @@ func (o *toolDetailOutputItem) renderImage(res *message.ToolResult, width int) s
 	view := o.images.FullImage(res.Data, res.MIMEType, max(1, width-lipgloss.Width(prefix)))
 	hint := o.sty.Header.Keystroke.Render("o") + " " + o.sty.Header.KeystrokeTip.Render("open in viewer")
 	lines := []string{prefix + hint, prefix}
-	for ln := range strings.SplitSeq(view.Image, "\n") {
+	for ln := range strings.SplitSeq(o.imageBody(res, view, width-lipgloss.Width(prefix)), "\n") {
 		lines = append(lines, prefix+ln)
 	}
 	return strings.Join(lines, "\n")
 }
+
+// imageBody is the image itself, a placeholder while it loads, or the
+// result's summary line and why it can't be shown.
+func (o *toolDetailOutputItem) imageBody(res *message.ToolResult, view DiagramView, width int) string {
+	var note string
+	switch view.State {
+	case DiagramReady:
+		return view.Image
+	case DiagramPending:
+		return cmp.Or(view.Image, o.sty.Header.KeystrokeTip.Render("Loading image…"))
+	case DiagramFailed:
+		note = "Can't display: " + strings.Join(strings.Fields(view.Err), " ")
+	default:
+		note = "This terminal can't display images."
+	}
+	note = ansi.Truncate(note, width, "…")
+	return toolOutputImageContent(o.sty, res.Data, res.MIMEType) + "\n" + o.sty.Header.KeystrokeTip.Render(note)
+}
+
+// showsDiagram implements DiagramShower, so the item re-renders when its
+// image arrives.
+func (*toolDetailOutputItem) showsDiagram() {}
