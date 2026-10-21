@@ -1,5 +1,8 @@
 # Agents, skills and commands
 
+Specialist agents come from plugins. See [Plugins](./plugins.md) for how to
+install one and how to write an agent file.
+
 ## Agent Models
 
 The orchestrator uses the globally configured `models.large`. Specialist agents

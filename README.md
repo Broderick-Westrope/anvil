@@ -29,9 +29,11 @@ work, on macOS, Linux, Windows and the BSDs.
 ### Specialists instead of one overloaded agent
 
 The orchestrator delegates to agents with focused prompts and tools, which
-you write as Markdown files or install with a plugin. Each can run on its
-own model, so codebase search runs on something cheap and fast while the
-hard reasoning gets the expensive one. Their work collapses into one-line
+come from [plugins](./docs/plugins.md). Start with
+[dotagents](https://github.com/Broderick-Westrope/dotagents), the set I use,
+or write your own as Markdown files. Each agent can run on its own model,
+so codebase search runs on something cheap and fast while the hard
+reasoning gets the expensive one. Their work collapses into one-line
 summaries in the chat, and you can open any of them to see the full input,
 output and reasoning.
 
@@ -64,9 +66,9 @@ out of the context (often 50k+ tokens each) until the agent asks for them.
 - **Workflows:** script multi-step jobs in JavaScript (review, fix, repeat
   until it passes) and run them as slash commands.
 - **Mermaid diagrams** render as images in terminals with Kitty graphics.
-- **Skills and commands:** follows the
-  [Agent Skills](https://agentskills.io) standard and picks up the skills
-  you already have in `~/.claude/skills`.
+- **Skills and commands:** bundle them into plugins, or use the
+  [Agent Skills](https://agentskills.io) you already have in
+  `~/.claude/skills`.
 - **Hooks** gate or rewrite tool calls before they run.
 - **[Herdr](https://herdr.dev) integration** shows which agents are working,
   idle or waiting on you.
@@ -81,6 +83,7 @@ out of the context (often 50k+ tokens each) until the agent asks for them.
 | [Configuration](./docs/configuration.md) | Config files, LSPs, MCPs, notifications, attribution |
 | [Permissions](./docs/permissions.md) | Rules, chained commands, yolo mode, the bouncer |
 | [Sessions](./docs/sessions.md) | Recovery, pinning, [branching](./docs/guides/session-branching.md) |
+| [Plugins](./docs/plugins.md) | Installing plugins, writing agents, name clashes |
 | [Agents, skills and commands](./docs/extending.md) | Per-agent models, skills, custom commands, workflows |
 | [Hooks](./docs/hooks/) | Running your own commands around tool calls |
 | [Troubleshooting](./docs/troubleshooting.md) | Logs, memory diagnostics, clipboard |
