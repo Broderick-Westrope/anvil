@@ -303,7 +303,8 @@ func TestGraphicsFeatureRefusesToolImagesItCantShow(t *testing.T) {
 		data, mimeType string
 		want           string
 	}{
-		"unsupported type":                                             {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type image/svg+xml"},
+		"unsupported type":                                             {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type"},
+		"a type with escape codes in it":                               {data: base64.StdEncoding.EncodeToString([]byte("x")), mimeType: "image/\x1b]52;c;aGk=\a", want: "unsupported image type"},
 		"too wide to decode":                                           {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
 		"too many bytes once decoded":                                  {data: pngIHDROnlyDepth(6000, 4000, 16), mimeType: "image/png", want: "image too large (6000×4000)"},
 		"16-bit grey, which transparency makes 16-bit RGBA":            {data: pngIHDROnlyType(6000, 4000, 16, 0), mimeType: "image/png", want: "image too large (6000×4000)"},
@@ -330,6 +331,7 @@ func TestGraphicsFeatureRefusesToolImagesItCantShow(t *testing.T) {
 			view := f.For(nil).FullImage(tc.data, tc.mimeType, 80)
 			require.Equal(t, chat.DiagramFailed, view.State)
 			require.Contains(t, view.Err, tc.want)
+			require.NotContains(t, view.Err, "\x1b", "nothing the tool chose reaches the screen")
 		})
 	}
 }
@@ -513,7 +515,7 @@ func TestGraphicsFeatureReportsAToolImageItCantOpen(t *testing.T) {
 		"no viewer": {
 			data:   pngData(t, 2, 2),
 			setup:  func(f *graphicsFeature) { f.openURL = func(string) error { return errors.New("no viewer") } },
-			reason: "no viewer",
+			reason: "open image: open viewer: no viewer",
 		},
 		"export dir under a file": {
 			data: pngData(t, 2, 2),
@@ -835,7 +837,7 @@ func TestGraphicsFeatureOpensOnlyImagesThatCantRunScripts(t *testing.T) {
 			msg, ok := cmd().(util.InfoMsg)
 			require.True(t, ok)
 			require.Equal(t, util.InfoTypeWarn, msg.Type)
-			require.Equal(t, "Won't open this image: its bytes aren't a known image type, so they could run code", msg.Msg)
+			require.Equal(t, "Won't open this image: it isn't a known raster image, which can't run code", msg.Msg)
 			entries, err := os.ReadDir(f.exportDir)
 			require.NoError(t, err)
 			require.Empty(t, entries, "nothing written")

@@ -139,7 +139,8 @@ func (e undisplayableError) Error() string { return e.reason }
 func renderBitmap(req diagramRequest) diagramReadyMsg {
 	fail := func(err error) diagramReadyMsg { return diagramReadyMsg{key: req.key, err: err} }
 	if !bitmapTypes[req.mimeType] {
-		return fail(undisplayableError{"unsupported image type " + req.mimeType})
+		// The type is the tool's to choose, so it stays off the screen.
+		return fail(undisplayableError{"unsupported image type"})
 	}
 	raw, err := base64.StdEncoding.DecodeString(req.data)
 	if err != nil {
@@ -225,7 +226,7 @@ func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
 		}
 		ext, ok := imageExts[http.DetectContentType(raw)]
 		if !ok {
-			return util.NewWarnMsg("Won't open this image: its bytes aren't a known image type, so they could run code")
+			return util.NewWarnMsg("Won't open this image: it isn't a known raster image, which can't run code")
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fail(fmt.Errorf("create export dir: %w", err))
@@ -236,7 +237,7 @@ func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
 			return fail(fmt.Errorf("write image: %w", err))
 		}
 		if err := open(fileURL(path)); err != nil {
-			return fail(err)
+			return fail(fmt.Errorf("open viewer: %w", err))
 		}
 		return util.NewInfoMsg("Opened image in viewer")
 	}
