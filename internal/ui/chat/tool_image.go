@@ -19,14 +19,6 @@ type ImageRenderer interface {
 	FullImage(data, mimeType string, width int) DiagramView
 }
 
-// imageOf is the result when it carries an image to draw, or nil.
-func imageOf(res *message.ToolResult) *message.ToolResult {
-	if res == nil || res.Data == "" || !strings.HasPrefix(res.MIMEType, "image/") {
-		return nil
-	}
-	return res
-}
-
 // sourceImage is the image the output item's source returned, or nil.
 func (o *toolDetailOutputItem) sourceImage() *message.ToolResult {
 	if o.images == nil {
@@ -36,21 +28,36 @@ func (o *toolDetailOutputItem) sourceImage() *message.ToolResult {
 	if !ok {
 		return nil
 	}
-	return imageOf(r.Result())
+	res := r.Result()
+	if res == nil || res.Data == "" || !strings.HasPrefix(res.MIMEType, "image/") {
+		return nil
+	}
+	return res
 }
 
 // renderImage is the output for a result carrying an image: a key hint,
-// then the image, prefixed with the focus bar.
+// any text the tool returned with it (an MCP tool's notes, say), then the
+// image, prefixed with the focus bar. Expanding it shows all the text.
 func (o *toolDetailOutputItem) renderImage(res *message.ToolResult, width int) string {
 	prefix := o.sty.Messages.ToolCallBlurred.Render()
 	if o.focused {
 		prefix = o.sty.Messages.ToolCallFocused.Render()
 	}
-	view := o.images.FullImage(res.Data, res.MIMEType, max(1, width-lipgloss.Width(prefix)))
+	inner := max(1, width-lipgloss.Width(prefix))
+	view := o.images.FullImage(res.Data, res.MIMEType, inner)
 	hint := o.sty.Header.Keystroke.Render("o") + " " + o.sty.Header.KeystrokeTip.Render("open in viewer")
-	lines := []string{prefix + hint, prefix}
-	for ln := range strings.SplitSeq(o.imageBody(res, view, width-lipgloss.Width(prefix)), "\n") {
-		lines = append(lines, prefix+ln)
+	parts := []string{hint, ""}
+	// The agent writes this placeholder when a tool returns an image
+	// without text (internal/agent/agent.go); it says nothing the image
+	// doesn't.
+	if res.Content != "" && res.Content != "Loaded "+res.MIMEType+" content" {
+		widths := toolResultContentWidths{Body: inner - toolBodyLeftPaddingTotal, Diff: inner}
+		parts = append(parts, renderToolResultTextContent(o.sty, res.Content, widths, o.expanded, true), "")
+	}
+	parts = append(parts, o.imageBody(res, view, inner))
+	lines := strings.Split(strings.Join(parts, "\n"), "\n")
+	for i, ln := range lines {
+		lines[i] = prefix + ln
 	}
 	return strings.Join(lines, "\n")
 }

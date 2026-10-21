@@ -218,3 +218,34 @@ func TestToolDetailOutputLinesTheNoteUpWithTheImageLine(t *testing.T) {
 	}
 	require.Equal(t, indent("Loaded Image"), indent("This terminal"))
 }
+
+func TestToolDetailOutputShowsTheTextBesideAnImage(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	tests := map[string]struct {
+		content string
+		want    bool
+	}{
+		"text the tool returned":      {content: "Screenshot of example.com", want: true},
+		"the placeholder Anvil wrote": {content: "Loaded image/png content", want: false},
+		"no text":                     {content: "", want: false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			res := imageResult()
+			res.Content = tc.content
+			source := helperToolItem(t, "mcp_playwright_screenshot", `{}`, res, ToolStatusSuccess)
+			out := ansi.Strip(outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{view: DiagramView{State: DiagramReady, Image: "[[IMAGE]]"}})).Render(80))
+
+			require.Contains(t, out, "[[IMAGE]]")
+			if tc.want {
+				require.Contains(t, out, tc.content)
+				require.Less(t, strings.Index(out, tc.content), strings.Index(out, "[[IMAGE]]"), "text above the image")
+			} else if tc.content != "" {
+				require.NotContains(t, out, tc.content)
+			}
+		})
+	}
+}
