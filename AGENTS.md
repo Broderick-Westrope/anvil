@@ -272,7 +272,10 @@ Terms with a specific meaning in this codebase are defined in
   earlier opening off the current image. `o` writes the result's bytes
   to the diagram export dir and opens them in the OS viewer, even when
   Anvil can't draw them, but only when the bytes sniff as a raster type
-  that can't carry scripts (`imageExts`). The cache exists whatever
+  that can't carry scripts (`imageExts`). `Y` copies it through the
+  diagram copy path (`diagramJobCopy`, same SSH and clipboard checks): a
+  PNG's own bytes, anything else decoded within the same limits
+  (`decodeBitmap`) and encoded as PNG. The cache exists whatever
   `options.tui.diagrams` says. Design:
   `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and

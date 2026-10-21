@@ -175,7 +175,7 @@ Which tools an agent may use: built-in tools by its `allowed_tools` filter and t
 
 An image a tool result carries as base64 data with an `image/*` type, from `view` or an MCP tool. It is drawn full size as the Output of the tool's drill-in, by the bitmap producer of the graphics cache; the chat shows only its "Loaded Image" line.
 
-- **Code:** `toolDetailOutputItem`, `chat.ImageRenderer`, `chat.ImageOpenMsg` (`internal/ui/chat/tool_image.go`); `producerBitmap`, `renderBitmap` (`internal/ui/model/tool_image.go`)
+- **Code:** `toolDetailOutputItem`, `chat.ImageRenderer`, `chat.ImageOpenMsg`, `chat.ImageCopyMsg` (`internal/ui/chat/tool_image.go`); `producerBitmap`, `renderBitmap`, `copyBitmap` (`internal/ui/model/tool_image.go`)
 - **Not:** an attachment, which the user adds to a prompt; a diagram node.
 
 ## Turn
