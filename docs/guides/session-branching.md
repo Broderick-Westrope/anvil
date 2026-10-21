@@ -45,4 +45,4 @@ return to it and send or clear it before choosing another branch point.
 > The normal quit confirmation warns when a nonempty saved draft would be lost, but the pinned-session
 > quit dialog does not show that warning. Branching and returning never roll back files or undo tool effects.
 
-[Back to Anvil](../../README.md#features-of-anvil)
+[Back to sessions](../sessions.md)
