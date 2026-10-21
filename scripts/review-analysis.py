@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Analyse past /review runs stored in the Anvil database.
 
-Produces the numbers behind docs/review-subagent-analysis.md, split by
+Produces the numbers behind plans/analysis-2026-08-30-review-subagents.md, split by
 review-setup period.
 
 Usage:
