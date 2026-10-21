@@ -243,7 +243,8 @@ Terms with a specific meaning in this codebase are defined in
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
 - **Tool images**: a tool result carrying image data (`view`, MCP) is
   drawn as the Output item of its tool drill-in
-  (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), through the
+  (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any
+  text the tool returned with it, through the
   same `graphicsFeature` cache as diagrams: each cache key names its
   producer (Mermaid or bitmap), and bitmaps decode on the worker without
   loading the Mermaid engines (`internal/ui/model/tool_image.go`). They

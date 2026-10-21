@@ -172,6 +172,9 @@ Out:
   the view height makes tall screenshots unreadable, and enlarging blurs
   icons. Same caps as the diagram drill-in so "one full-size image, at
   most 64 MB, freed on close" stays a single rule.
+- **Text the tool returned with an image shows above it.** MCP tools send
+  notes beside a screenshot, and the Docker MCP drill-in showed them
+  before; the placeholder the agent writes for a bare image is skipped.
 - **Image is the Output item, not a second drill-in.** The image is the
   output; a nested drill-in adds a keypress and breadcrumb for nothing.
   `BuildToolDetailItems` takes the renderer. The existing
