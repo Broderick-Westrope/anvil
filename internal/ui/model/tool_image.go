@@ -57,20 +57,35 @@ const (
 
 // decodeBytesPerPixel is the most a decoder of format holds at once per
 // pixel. Progressive JPEG keeps a 256-byte coefficient block for every
-// 8×8 block of every component, up to four, besides the image; lossless
-// WebP builds the image through whole-image buffers of four bytes a pixel,
-// one per transform step. Baseline JPEG, PNG and GIF decode straight into
-// the image.
+// 8×8 block of every component, up to four, besides the image, and CMYK
+// JPEG its four planes besides the CMYK image; lossless WebP builds the
+// image through whole-image buffers of four bytes a pixel, one per
+// transform step; interlaced PNG holds the image and a pass. Otherwise
+// the decoders write straight into the image.
 func decodeBytesPerPixel(format string, m color.Model, raw []byte) int {
 	switch format {
 	case "jpeg":
 		if jpegProgressive(raw) {
 			return 20
 		}
+		if m == color.CMYKModel {
+			return 8
+		}
 	case "webp":
 		return 12
+	case "png":
+		if pngInterlaced(raw) {
+			return 2 * decodedBytesPerPixel(m)
+		}
 	}
 	return decodedBytesPerPixel(m)
+}
+
+// pngInterlaced reports whether the PNG in raw is interlaced, from its
+// IHDR, which always comes first.
+func pngInterlaced(raw []byte) bool {
+	const interlaceAt = 8 + 8 + 12 // Signature, chunk header, then the field.
+	return len(raw) > interlaceAt && raw[interlaceAt] != 0
 }
 
 // jpegProgressive reports whether the JPEG in raw is progressive, from its
