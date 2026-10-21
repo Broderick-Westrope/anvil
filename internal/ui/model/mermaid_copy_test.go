@@ -39,17 +39,13 @@ func TestMermaidFeatureCopiesADiagramAsAPNG(t *testing.T) {
 			require.Greater(t, img.Bounds().Dx(), 100, "drawn at more than the layout's size")
 			require.Empty(t, f.entries, "copying caches nothing")
 
-			r, g, b, a := img.At(0, 0).RGBA()
+			corner := img.At(0, 0)
+			_, _, _, a := corner.RGBA()
 			require.Equal(t, uint32(0xffff), a, "opaque, so it reads on any background")
-			require.Equal(t, f.theme()["pele-bg"], hexColor(rgba{r, g, b}))
+			require.Equal(t, f.theme()["pele-bg"], hexColor(corner))
 		})
 	}
 }
-
-// rgba is a colour from RGBA's 16-bit channels.
-type rgba struct{ r, g, b uint32 }
-
-func (c rgba) RGBA() (uint32, uint32, uint32, uint32) { return c.r, c.g, c.b, 0xffff }
 
 func TestMermaidFeatureWritesACopiedImageToTheClipboard(t *testing.T) {
 	t.Parallel()

@@ -154,8 +154,8 @@ type diagramCopiedMsg struct {
 }
 
 // mermaidFeature renders ```mermaid fences in finished assistant messages
-// as Kitty graphics, shows one full size in a drill-in, and opens one in
-// the browser. See internal/mermaid.
+// as Kitty graphics, shows one full size in a drill-in, opens one in the
+// browser, and copies one to the clipboard. See internal/mermaid.
 type mermaidFeature struct {
 	host featureHost
 	caps *common.Capabilities
@@ -478,16 +478,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	case chat.DiagramOpenMsg:
 		return f.open(msg), true
 	case chat.DiagramCopyImageMsg:
-		if f.overSSH() {
-			// The clipboard is the remote machine's, and OSC 52, which
-			// copies the source over SSH, only carries text.
-			return util.ReportWarn("Can't copy a diagram image over SSH; c/y copies its source"), true
-		}
-		req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy}
-		if !f.enqueue(req) {
-			return util.ReportWarn("Diagram renderer is busy; try again"), true
-		}
-		return util.ReportInfo("Copying diagram image"), true
+		return f.copyImage(msg), true
 	case diagramCopiedMsg:
 		if msg.err != nil {
 			slog.Warn("Failed to render mermaid diagram for the clipboard", "err", msg.err)
@@ -567,6 +558,20 @@ func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 	}
 	f.drill = c
 	return cmd
+}
+
+// copyImage queues a render of the diagram for the clipboard.
+func (f *mermaidFeature) copyImage(msg chat.DiagramCopyImageMsg) tea.Cmd {
+	if f.overSSH() {
+		// The clipboard is the remote machine's, and OSC 52, which copies
+		// the source over SSH, only carries text.
+		return util.ReportWarn("Can't copy a diagram image over SSH; c/y copies its source")
+	}
+	req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy}
+	if !f.enqueue(req) {
+		return util.ReportWarn("Diagram renderer is busy; try again")
+	}
+	return util.ReportInfo("Copying diagram image")
 }
 
 func (f *mermaidFeature) tmux() bool {
