@@ -586,3 +586,70 @@ func TestGraphicsFeatureGivesAWidthItReturnsToANewTerminalID(t *testing.T) {
 
 	require.NotEqual(t, first.key.id(), again.key.id())
 }
+
+func TestGraphicsFeatureKeepsOnlyTheCurrentWidthsImageThroughAResize(t *testing.T) {
+	t.Parallel()
+
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	images := f.ImagesFor(drill)
+	data := pngData(t, 900, 30)
+
+	// Resized 80 → 60 → 80 while all three renders are in flight.
+	for _, width := range []int{80, 60, 80} {
+		require.Equal(t, chat.DiagramPending, images.FullImage(data, "image/png", width).State)
+	}
+	var results []diagramReadyMsg
+	for range 3 {
+		results = append(results, waitReady(t, f))
+	}
+	for _, ready := range results {
+		f.HandleMsg(ready)
+		transmit(ready)
+		cmd, _ := f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
+		if ready != results[2] {
+			require.Len(t, rawMsgs(cmd), 1, "a stale image that reached the terminal is freed")
+		}
+	}
+
+	require.Equal(t, chat.DiagramReady, images.FullImage(data, "image/png", 80).State)
+	var full []diagramKey
+	for key := range f.entries {
+		if key.kind == diagramFull {
+			full = append(full, key)
+		}
+	}
+	require.Equal(t, []diagramKey{results[2].key}, full, "one full-size image, the current one")
+}
+
+func TestGraphicsFeatureFreesAShownImageWhenItsWidthComesBackDuringARender(t *testing.T) {
+	t.Parallel()
+
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	images := f.ImagesFor(drill)
+	data := pngData(t, 900, 30)
+	show := func(ready diagramReadyMsg) tea.Cmd {
+		f.HandleMsg(ready)
+		transmit(ready)
+		cmd, _ := f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
+		return cmd
+	}
+
+	images.FullImage(data, "image/png", 80)
+	first := waitReady(t, f)
+	show(first)
+	// Resized to 60 and back to 80 before the 60 render came back.
+	images.FullImage(data, "image/png", 60)
+	images.FullImage(data, "image/png", 80)
+	narrow, current := waitReady(t, f), waitReady(t, f)
+	show(narrow)
+
+	evict := show(current)
+
+	require.Len(t, rawMsgs(evict), 1, "the first image is freed")
+	require.NotContains(t, f.entries, first.key)
+	require.Contains(t, f.entries, current.key)
+}

@@ -542,8 +542,9 @@ func (f *graphicsFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		e := f.entries[msg.key]
-		if e == nil || msg.key.width != f.widths[msg.key.kind] {
-			// Resized while it rendered; it would be evicted at once.
+		if e == nil || !f.currentLocked(msg.key) {
+			// Resized or reopened while it rendered; it would be evicted
+			// at once.
 			delete(f.entries, msg.key)
 			return f.listen, true
 		}
@@ -556,10 +557,12 @@ func (f *graphicsFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	case diagramShownMsg:
 		f.mu.Lock()
 		e, ok := f.entries[msg.key]
-		if !ok {
+		if !ok || !f.currentLocked(msg.key) {
+			delete(f.entries, msg.key)
 			f.mu.Unlock()
-			// Forgotten while it transmitted (its drill-in closed or it
-			// was evicted), so the transmit put it back: free it again.
+			// Forgotten while it transmitted (its drill-in closed, it was
+			// evicted, or the drill-in moved on to a newer image), so the
+			// transmit put it back: free it again.
 			return fimage.EncodingKitty.Forget(msg.key.id(), msg.cols, msg.rows, f.tmux()), true
 		}
 		e.state = diagramReady
@@ -653,8 +656,8 @@ func (f *graphicsFeature) tmux() bool {
 	return ok
 }
 
-// evictLocked drops transmitted diagrams drawn at a width their kind no
-// longer uses, then the least recently drawn until the rest fit
+// evictLocked drops transmitted images their kind no longer draws (see
+// currentLocked), then the least recently drawn until the rest fit
 // cacheBudget. keep and diagrams in view are never dropped, even when they
 // alone pass the budget: dropping one on screen would show its code block
 // until it rendered again, and that would evict the next. It returns the commands that free
@@ -665,7 +668,7 @@ func (f *graphicsFeature) evictLocked(keep diagramKey) tea.Cmd {
 		switch {
 		case e.bytes > 0:
 			sent = append(sent, key)
-		case e.state == diagramFailed && key.width != f.widths[key.kind]:
+		case e.state == diagramFailed && !f.currentLocked(key):
 			// Nothing to free in the terminal.
 			delete(f.entries, key)
 		}
@@ -679,7 +682,7 @@ func (f *graphicsFeature) evictLocked(keep diagramKey) tea.Cmd {
 	total := 0
 	var cmds []tea.Cmd
 	for _, key := range sent {
-		if key.width != f.widths[key.kind] && key != keep {
+		if !f.currentLocked(key) && key != keep {
 			cmds = append(cmds, f.forgetLocked(key))
 			continue
 		}
@@ -693,6 +696,13 @@ func (f *graphicsFeature) evictLocked(keep diagramKey) tea.Cmd {
 		}
 	}
 	return tea.Batch(cmds...)
+}
+
+// currentLocked reports whether key is an image its kind still draws: at
+// the width the kind was last drawn at and, for a full-size image, from
+// the drill-in's current generation.
+func (f *graphicsFeature) currentLocked(key diagramKey) bool {
+	return key.width == f.widths[key.kind] && (key.kind != diagramFull || key.gen == f.gen)
 }
 
 // forgetKind drops every diagram of kind.
