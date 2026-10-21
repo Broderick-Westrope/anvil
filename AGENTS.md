@@ -247,7 +247,8 @@ Terms with a specific meaning in this codebase are defined in
   `Styles.Diagram`. `options.tui.diagrams` (default on) needs a
   restart: `ConfigStore.DiagramsEnabled` reads the startup snapshot,
   and both the UI (a nil renderer means no split) and the system prompt
-  line gate on it. Design: `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  line gate on it. Design:
+  `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
   measurements and resvg workarounds:
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
