@@ -136,7 +136,8 @@ func (f *mermaidFeature) serve(engines *diagramEngines, req diagramRequest) (*di
 	if engines == nil {
 		pele, err := f.newRenderer()
 		if err != nil {
-			return nil, requestFailed(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
+			_, fail := f.job(req)
+			return nil, fail(fmt.Errorf("%w: %w", errEnginesUnavailable, err))
 		}
 		engines = &diagramEngines{pele: pele, cacheDir: f.compileCacheDir}
 	}
@@ -150,34 +151,32 @@ func (f *mermaidFeature) serve(engines *diagramEngines, req diagramRequest) (*di
 	return engines, msg
 }
 
-// runRequest renders or exports req. Pele and resvg run model-written
-// source, so a panic in either is reported as the request failing, and ok
-// is false, rather than taking the TUI down.
+// runRequest does req's job. Pele and resvg run model-written source, so a
+// panic in either is reported as the request failing, and ok is false,
+// rather than taking the TUI down.
 func (f *mermaidFeature) runRequest(e *diagramEngines, req diagramRequest) (msg tea.Msg, ok bool) {
+	run, fail := f.job(req)
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Mermaid renderer panicked", "panic", r)
-			msg, ok = requestFailed(req, fmt.Errorf("diagram renderer crashed: %v", r)), false
+			msg, ok = fail(fmt.Errorf("diagram renderer crashed: %v", r)), false
 		}
 	}()
-	switch req.job {
-	case diagramJobExport:
-		return f.export(e, req), true
-	case diagramJobCopy:
-		return copyDiagram(e, req), true
-	}
-	return renderDiagram(e, req), true
+	return run(e), true
 }
 
-// requestFailed is the result for req when it fails with err.
-func requestFailed(req diagramRequest, err error) tea.Msg {
+// job is how the worker answers req, and what it answers when that fails.
+func (f *mermaidFeature) job(req diagramRequest) (run func(*diagramEngines) tea.Msg, fail func(error) tea.Msg) {
 	switch req.job {
 	case diagramJobExport:
-		return diagramExportedMsg{err: err}
+		return func(e *diagramEngines) tea.Msg { return f.export(e, req) },
+			func(err error) tea.Msg { return diagramExportedMsg{err: err} }
 	case diagramJobCopy:
-		return diagramCopiedMsg{err: err}
+		return func(e *diagramEngines) tea.Msg { return copyDiagram(e, req) },
+			func(err error) tea.Msg { return diagramCopiedMsg{seq: req.seq, err: err} }
 	}
-	return diagramReadyMsg{key: req.key, err: err}
+	return func(e *diagramEngines) tea.Msg { return renderDiagram(e, req) },
+		func(err error) tea.Msg { return diagramReadyMsg{key: req.key, err: err} }
 }
 
 // copyDiagram draws the diagram at diagramCopyScale on the theme's
