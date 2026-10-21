@@ -3,6 +3,8 @@ package chat
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -135,4 +137,30 @@ func TestToolDetailOutputWithoutAnImageIsUnchanged(t *testing.T) {
 			require.NotContains(t, ansi.Strip(out.Render(80)), "open in viewer")
 		})
 	}
+}
+
+func TestToolDetailOutputOpensItsImageInTheViewer(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
+	out := outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{view: DiagramView{State: DiagramFailed, Err: "x"}}))
+
+	handled, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
+
+	require.True(t, handled)
+	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8=", MIMEType: "image/png"}, cmd())
+}
+
+func TestToolDetailOutputWithoutAnImageLeavesTheViewerKey(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "bash", `{"command":"ls"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
+	out := outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{}))
+
+	handled, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
+
+	require.False(t, handled)
+	require.Nil(t, cmd)
 }

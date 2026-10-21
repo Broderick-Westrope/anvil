@@ -11,8 +11,14 @@ import (
 	_ "image/jpeg" // Registers the JPEG decoder for tool images.
 	_ "image/png"  // Registers the PNG decoder for tool images.
 	"math"
+	"mime"
+	"os"
+	"path/filepath"
+	"slices"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/disintegration/imaging"
 	_ "golang.org/x/image/webp" // Registers the WebP decoder for tool images.
 )
@@ -113,4 +119,58 @@ func fitBitmap(w, h int, req diagramRequest) bitmapFit {
 		}
 		scale *= math.Sqrt(diagramFullMaxPixels/float64(padded)) * 0.999
 	}
+}
+
+// imageExts are the file extensions tool images are written with, so the
+// OS opens them in its viewer. Types missing here fall back to the OS's
+// own table.
+var imageExts = map[string]string{
+	"image/png":     ".png",
+	"image/jpeg":    ".jpg",
+	"image/gif":     ".gif",
+	"image/webp":    ".webp",
+	"image/svg+xml": ".svg",
+	"image/avif":    ".avif",
+	"image/bmp":     ".bmp",
+}
+
+// openImage writes a tool image's bytes, exactly as the model saw them, to
+// the export directory and opens them in the OS default viewer. It works
+// for images Anvil can't draw, since the viewer may.
+func (f *mermaidFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
+	dir, open := f.exportDir, f.openURL
+	return func() tea.Msg {
+		path, err := writeImage(dir, msg)
+		if err == nil {
+			err = open(fileURL(path))
+		}
+		if err != nil {
+			return util.NewErrorMsg(fmt.Errorf("open image: %w", err))
+		}
+		return util.NewInfoMsg("Opened image in viewer")
+	}
+}
+
+func writeImage(dir string, msg chat.ImageOpenMsg) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(msg.Data)
+	if err != nil {
+		return "", fmt.Errorf("decode image data: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	pruneExports(dir)
+	ext, ok := imageExts[msg.MIMEType]
+	if !ok {
+		if exts, _ := mime.ExtensionsByType(msg.MIMEType); len(exts) > 0 {
+			ext = slices.Min(exts)
+		}
+	}
+	h := fnv.New64a()
+	_, _ = h.Write(raw)
+	path := filepath.Join(dir, fmt.Sprintf("image-%x%s", h.Sum64(), ext))
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
 }

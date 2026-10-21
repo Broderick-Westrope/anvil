@@ -498,6 +498,8 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case chat.DiagramOpenMsg:
 		return f.open(msg), true
+	case chat.ImageOpenMsg:
+		return f.openImage(msg), true
 	case diagramExportedMsg:
 		if msg.err != nil {
 			slog.Warn("Failed to export mermaid diagram", "err", msg.err)

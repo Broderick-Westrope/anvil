@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/charmbracelet/x/ansi"
@@ -74,3 +75,21 @@ func (o *toolDetailOutputItem) imageBody(res *message.ToolResult, view DiagramVi
 // showsDiagram implements DiagramShower, so the item re-renders when its
 // image arrives.
 func (*toolDetailOutputItem) showsDiagram() {}
+
+// ImageOpenMsg asks for a tool image, base64 data of type MIMEType, to be
+// opened in the OS default viewer.
+type ImageOpenMsg struct {
+	Data     string
+	MIMEType string
+}
+
+// HandleKeyEvent implements KeyEventHandler: o opens a result's image in
+// the viewer, even when Anvil can't draw it.
+func (o *toolDetailOutputItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
+	res := o.sourceImage()
+	if res == nil || key.String() != "o" {
+		return false, nil
+	}
+	msg := ImageOpenMsg{Data: res.Data, MIMEType: res.MIMEType}
+	return true, func() tea.Msg { return msg }
+}

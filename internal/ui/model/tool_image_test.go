@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -11,6 +12,8 @@ import (
 	"image/jpeg"
 	"image/png"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -371,4 +374,82 @@ func TestMermaidFeatureADiagramDrillInFreesAToolImage(t *testing.T) {
 
 	require.Len(t, deletes, 1)
 	require.NotContains(t, f.entries, ready.key)
+}
+
+func TestMermaidFeatureOpensAToolImageInTheViewer(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		mimeType, ext string
+	}{
+		"png":               {mimeType: "image/png", ext: ".png"},
+		"jpeg":              {mimeType: "image/jpeg", ext: ".jpg"},
+		"svg it can't draw": {mimeType: "image/svg+xml", ext: ".svg"},
+		"unknown type":      {mimeType: "image/x-made-up", ext: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+			f.exportDir = t.TempDir()
+			var opened string
+			f.openURL = func(u string) error { opened = u; return nil }
+			data := base64.StdEncoding.EncodeToString([]byte("the bytes the model saw"))
+
+			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: data, MIMEType: tc.mimeType})
+			require.True(t, handled)
+			require.Equal(t, util.NewInfoMsg("Opened image in viewer"), cmd())
+
+			entries, err := os.ReadDir(f.exportDir)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			path := filepath.Join(f.exportDir, entries[0].Name())
+			require.Equal(t, tc.ext, filepath.Ext(path))
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, "the bytes the model saw", string(got))
+			require.Equal(t, fileURL(path), opened)
+		})
+	}
+}
+
+func TestMermaidFeatureReportsAToolImageItCantOpen(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		data   string
+		setup  func(f *mermaidFeature)
+		reason string
+	}{
+		"invalid data": {data: "!!!", setup: func(*mermaidFeature) {}, reason: "decode image data"},
+		"no viewer": {
+			data:   base64.StdEncoding.EncodeToString([]byte("x")),
+			setup:  func(f *mermaidFeature) { f.openURL = func(string) error { return errors.New("no viewer") } },
+			reason: "no viewer",
+		},
+		"export dir under a file": {
+			data: base64.StdEncoding.EncodeToString([]byte("x")),
+			setup: func(f *mermaidFeature) {
+				file := filepath.Join(f.exportDir, "file")
+				_ = os.WriteFile(file, nil, 0o600)
+				f.exportDir = filepath.Join(file, "images")
+			},
+			reason: "open image",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+			f.exportDir = t.TempDir()
+			f.openURL = func(string) error { return nil }
+			tc.setup(f)
+
+			cmd, _ := f.HandleMsg(chat.ImageOpenMsg{Data: tc.data, MIMEType: "image/png"})
+			msg, ok := cmd().(util.InfoMsg)
+			require.True(t, ok)
+			require.Equal(t, util.InfoTypeError, msg.Type)
+			require.Contains(t, msg.Msg, tc.reason)
+		})
+	}
 }
