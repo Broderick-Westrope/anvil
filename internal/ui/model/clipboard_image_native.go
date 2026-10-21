@@ -1,4 +1,4 @@
-//go:build (darwin || windows) && !arm && !386 && !ios
+//go:build (darwin || windows) && !ios && !arm && !386
 
 package model
 
