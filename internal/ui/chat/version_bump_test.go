@@ -494,7 +494,7 @@ func TestToolDetailItems_MutatorsBumpVersion(t *testing.T) {
 	source := helperToolItem(t, "bash",
 		`{"command":"echo hello\necho world","description":"run echo"}`,
 		&message.ToolResult{Content: "ok"}, ToolStatusSuccess)
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	for _, item := range items {
 		v, ok := item.(versionedItem)

@@ -1282,7 +1282,7 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 			} else {
 				content := r.Text
 				if content == "" {
-					content = fmt.Sprintf("Loaded %s content", r.MediaType)
+					content = message.MediaPlaceholder(r.MediaType)
 				}
 				baseResult.Content = content
 				baseResult.Data = r.Data

@@ -113,7 +113,7 @@ func TestBuildToolDetailItems_Structure(t *testing.T) {
 			t.Parallel()
 			source := helperToolItem(t, tt.toolName, tt.input, tt.result, tt.status)
 			sty := styles.TokyoNight()
-			items := BuildToolDetailItems(&sty, source)
+			items := BuildToolDetailItems(&sty, source, nil)
 
 			require.Len(t, items, tt.wantTotal, "total item count")
 
@@ -143,7 +143,7 @@ func TestBuildToolDetailItems_ParamsSortedByKey(t *testing.T) {
 	t.Parallel()
 	source := helperToolItem(t, "bash", `{"zebra":"z","alpha":"a","mid":"m"}`, &message.ToolResult{Content: "ok"}, ToolStatusSuccess)
 	sty := styles.TokyoNight()
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	var paramKeys []string
 	for _, item := range items {
@@ -158,7 +158,7 @@ func TestBuildToolDetailItems_AllItemsRenderable(t *testing.T) {
 	t.Parallel()
 	source := helperToolItem(t, "edit", `{"file_path":"main.go","old_string":"a","new_string":"b"}`, &message.ToolResult{Content: "edited"}, ToolStatusSuccess)
 	sty := styles.TokyoNight()
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	for _, item := range items {
 		rendered := item.Render(80)
@@ -170,7 +170,7 @@ func TestBuildToolDetailItems_UniqueIDs(t *testing.T) {
 	t.Parallel()
 	source := helperToolItem(t, "bash", `{"command":"ls","description":"list files"}`, &message.ToolResult{Content: "ok"}, ToolStatusSuccess)
 	sty := styles.TokyoNight()
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	ids := make(map[string]struct{})
 	for _, item := range items {
@@ -248,7 +248,7 @@ func TestToolDetailItems_CacheInvalidation(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	const width = 80
 
@@ -263,7 +263,7 @@ func TestToolDetailItems_WidthSensitive(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	// Section dividers pad with "─" to fill width, so they're always
 	// width-sensitive.
@@ -281,7 +281,7 @@ func TestToolDetailItems_FocusChangesRender(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	const width = 80
 
@@ -305,7 +305,7 @@ func TestToolDetailItems_AllFinished(t *testing.T) {
 	t.Parallel()
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
-	items := BuildToolDetailItems(&sty, source)
+	items := BuildToolDetailItems(&sty, source, nil)
 
 	for _, item := range items {
 		require.True(t, item.Finished(), "%T should be Finished", item)

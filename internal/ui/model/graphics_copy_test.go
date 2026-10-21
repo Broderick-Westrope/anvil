@@ -42,7 +42,7 @@ func (c *clipboardRecorder) images() [][]byte {
 	return c.written
 }
 
-func TestMermaidFeatureCopiesADiagramAsAPNG(t *testing.T) {
+func TestGraphicsFeatureCopiesADiagramAsAPNG(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -55,7 +55,7 @@ func TestMermaidFeatureCopiesADiagramAsAPNG(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			f := newTestMermaidFeature(t, &fakeDiagramHost{}, tc.caps)
+			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, tc.caps)
 			clip := &clipboardRecorder{}
 			f.writeImage = clip.write
 			const src = "flowchart LR\n A --> B\n"
@@ -111,10 +111,10 @@ func TestMermaidFeatureCopiesADiagramAsAPNG(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureCopiesInTheOrderAsked(t *testing.T) {
+func TestGraphicsFeatureCopiesInTheOrderAsked(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	clip := &clipboardRecorder{}
 	f.writeImage = clip.write
 	sources := []string{"flowchart LR\n A --> B\n", "flowchart LR\n A --> B --> C --> D\n"}
@@ -135,28 +135,28 @@ func TestMermaidFeatureCopiesInTheOrderAsked(t *testing.T) {
 	require.Less(t, first.Bounds().Dx(), last.Bounds().Dx(), "the newest copy is written last")
 }
 
-func TestMermaidFeatureReportsACopiedImage(t *testing.T) {
+func TestGraphicsFeatureReportsACopiedImage(t *testing.T) {
 	t.Parallel()
 
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 	cmd, handled := f.HandleMsg(diagramCopiedMsg{})
 	require.True(t, handled)
 	require.Equal(t, util.NewInfoMsg("Diagram image copied to clipboard"), browserCmdMsg(t, cmd))
 }
 
-func TestMermaidFeatureReportsAFailedCopy(t *testing.T) {
+func TestGraphicsFeatureReportsAFailedCopy(t *testing.T) {
 	t.Parallel()
 
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 	cmd, handled := f.HandleMsg(diagramCopiedMsg{err: errors.New("no clipboard")})
 	require.True(t, handled)
 	require.Equal(t, util.NewErrorMsg(errors.New("copy diagram image: no clipboard")), browserCmdMsg(t, cmd))
 }
 
-func TestMermaidFeatureReportsAClipboardThatWontTakeTheImage(t *testing.T) {
+func TestGraphicsFeatureReportsAClipboardThatWontTakeTheImage(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	clip := &clipboardRecorder{err: errors.New("clipboard is busy")}
 	f.writeImage = clip.write
 	f.HandleMsg(chat.DiagramCopyImageMsg{Source: "flowchart LR\n A --> B\n"})
@@ -165,10 +165,10 @@ func TestMermaidFeatureReportsAClipboardThatWontTakeTheImage(t *testing.T) {
 	require.EqualError(t, copied.err, "clipboard is busy")
 }
 
-func TestMermaidFeatureReportsADiagramThatWontRenderForCopying(t *testing.T) {
+func TestGraphicsFeatureReportsADiagramThatWontRenderForCopying(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	clip := &clipboardRecorder{}
 	f.writeImage = clip.write
 	f.HandleMsg(chat.DiagramCopyImageMsg{Source: "notADiagram at all\n"})
@@ -178,17 +178,17 @@ func TestMermaidFeatureReportsADiagramThatWontRenderForCopying(t *testing.T) {
 	require.Empty(t, clip.images(), "nothing reaches the clipboard")
 }
 
-func TestMermaidFeatureWarnsWhenTooBusyToCopy(t *testing.T) {
+func TestGraphicsFeatureWarnsWhenTooBusyToCopy(t *testing.T) {
 	t.Parallel()
 
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 	f.requests = make(chan diagramRequest)
 	cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "A"})
 	require.True(t, handled)
 	require.Equal(t, util.NewWarnMsg("Diagram renderer is busy; try again"), cmd())
 }
 
-func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
+func TestGraphicsFeatureWontCopyAnImageOverSSH(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"SSH_CONNECTION", "SSH_TTY"} {
@@ -197,7 +197,7 @@ func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
 
 			caps := kittyCaps()
 			caps.Env = uv.Environ{name + "=x"}
-			f := newIdleMermaidFeature(&fakeDiagramHost{}, caps)
+			f := newIdleGraphicsFeature(&fakeDiagramHost{}, caps)
 			cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "A"})
 			require.True(t, handled)
 			require.Equal(t, util.NewWarnMsg("Can't copy a diagram image over SSH; c/y copies its source"), cmd())
@@ -206,10 +206,10 @@ func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureWontRenderForAClipboardItCantUse(t *testing.T) {
+func TestGraphicsFeatureWontRenderForAClipboardItCantUse(t *testing.T) {
 	t.Parallel()
 
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 	f.clipboardReady = func() error { return errors.New("no clipboard tool") }
 	cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "A"})
 	require.True(t, handled)
@@ -218,13 +218,13 @@ func TestMermaidFeatureWontRenderForAClipboardItCantUse(t *testing.T) {
 }
 
 // Not parallel: it swaps the default logger.
-func TestMermaidFeatureLogsAFailedCopy(t *testing.T) {
+func TestGraphicsFeatureLogsAFailedCopy(t *testing.T) {
 	rec := &warnRecorder{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(rec))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 	f.HandleMsg(diagramCopiedMsg{err: errors.New("no clipboard")})
 	require.Equal(t, []string{"Failed to copy mermaid diagram image"}, rec.warns)
 }

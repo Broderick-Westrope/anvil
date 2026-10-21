@@ -47,6 +47,7 @@ func newTestUI() *UI {
 		width:    140,
 		height:   45,
 	}
+	u.graphics = newGraphicsFeature(uiHost{u}, &u.caps, com)
 
 	return u
 }

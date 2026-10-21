@@ -60,10 +60,11 @@ type KeyMap struct {
 		FocusChat      key.Binding
 		Branch         key.Binding
 
-		// OpenDiagram and CopyDiagramImage are handled by the selected
-		// diagram node itself; the bindings are only shown in the help.
+		// OpenDiagram, CopyDiagramImage and OpenImage are handled by the
+		// selected item itself; the bindings are only shown in the help.
 		OpenDiagram      key.Binding
 		CopyDiagramImage key.Binding
+		OpenImage        key.Binding
 	}
 
 	// Global key maps
@@ -321,6 +322,10 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.CopyDiagramImage = key.NewBinding(
 		key.WithKeys("Y"),
 		key.WithHelp("Y", "copy image"),
+	)
+	km.Chat.OpenImage = key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open in viewer"),
 	)
 	km.Chat.ClearHighlight = key.NewBinding(
 		key.WithKeys("esc", "alt+esc"),

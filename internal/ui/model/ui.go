@@ -353,6 +353,9 @@ type UI struct {
 	// diagrams renders Mermaid diagrams in the chat, or is nil when
 	// options.tui.diagrams is off.
 	diagrams chat.DiagramRenderer
+	// graphics draws diagrams and the images tools return. It exists
+	// whether or not diagrams are on.
+	graphics *graphicsFeature
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -478,11 +481,12 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
+	graphics := newGraphicsFeature(uiHost{ui}, &ui.caps, com)
+	ui.features.register(graphics)
+	ui.graphics = graphics
 	if com.Workspace.DiagramsEnabled() {
-		diagrams := newMermaidFeature(uiHost{ui}, &ui.caps, com)
-		ui.features.register(diagrams)
-		ui.diagrams = diagrams
-		ui.chat.SetDiagrams(diagrams)
+		ui.diagrams = graphics
+		ui.chat.SetDiagrams(graphics)
 	}
 
 	// Initialize slash-command autocomplete.
@@ -682,6 +686,14 @@ func (m *UI) isDrilledIn() bool {
 	return len(m.drillStack) > 0
 }
 
+// topDrillIn is the chat of the drill-in on top, or nil.
+func (m *UI) topDrillIn() *Chat {
+	if len(m.drillStack) == 0 {
+		return nil
+	}
+	return m.drillStack[len(m.drillStack)-1].chat
+}
+
 // clearDrillStack pops all drill-in entries and restores root state.
 func (m *UI) clearDrillStack() {
 	m.drillStack = nil
@@ -751,7 +763,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	observed := m.features.observe(msg)
 	model, cmd := m.update(msg)
 	m.trackHerdrState()
-	return model, tea.Batch(observed, cmd, m.ensureAnimating(), m.herdrTickCmd())
+	drill := m.features.drillInTop(m.topDrillIn())
+	return model, tea.Batch(observed, cmd, drill, m.ensureAnimating(), m.herdrTickCmd())
 }
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1435,8 +1448,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			break
 		}
-		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem)
 		newChat := NewChat(m.com)
+		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem, m.graphics.For(newChat))
 		// Follow when the tool is still running so streaming output
 		// auto-scrolls; otherwise start at the top.
 		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)
@@ -3976,8 +3989,12 @@ func (m *UI) ShortHelp() []key.Binding {
 // selectedItemBindings are the help entries for keys only the selected chat
 // item handles.
 func (m *UI) selectedItemBindings() []key.Binding {
-	if diagram, ok := m.activeChat().SelectedItem().(*chat.DiagramItem); ok && !diagram.Failed() {
+	selected := m.activeChat().SelectedItem()
+	if diagram, ok := selected.(*chat.DiagramItem); ok && !diagram.Failed() {
 		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyDiagramImage}
+	}
+	if chat.ShowsToolImage(selected) {
+		return []key.Binding{m.keyMap.Chat.OpenImage}
 	}
 	return nil
 }

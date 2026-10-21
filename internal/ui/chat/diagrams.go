@@ -61,9 +61,9 @@ type WholeSelectable interface {
 	SelectedText() string
 }
 
-// DiagramShower marks the items that draw a diagram, so they can be
-// re-rendered alone when its image changes. Its method is unexported, so
-// only this package's diagram items implement it.
+// DiagramShower marks the items that draw a diagram or a tool image, so
+// they can be re-rendered alone when an image changes. Its method is
+// unexported, so only this package's items implement it.
 type DiagramShower interface {
 	showsDiagram()
 }

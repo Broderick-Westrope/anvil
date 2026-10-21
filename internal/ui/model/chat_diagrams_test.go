@@ -22,7 +22,7 @@ import (
 func newSplitTestUI() *UI {
 	m := newTestUI()
 	m.com.Workspace = &testWorkspace{cfg: &config.Config{}}
-	m.diagrams = newMermaidFeature(uiHost{m}, &m.caps, m.com)
+	m.diagrams = newGraphicsFeature(uiHost{m}, &m.caps, m.com)
 	return m
 }
 
@@ -570,16 +570,6 @@ func TestUIHostInvalidatesDiagramsInEveryChat(t *testing.T) {
 	uiHost{m}.InvalidateDiagrams()
 	require.NotEqual(t, mainVersion, main.Version())
 	require.NotEqual(t, drillVersion, drilled.Version())
-}
-
-func TestUIHostDrillInOpen(t *testing.T) {
-	t.Parallel()
-
-	m := newSplitTestUI()
-	open, other := NewChat(m.com), NewChat(m.com)
-	m.drillStack = []drillInEntry{{chat: open}}
-	require.True(t, uiHost{m}.DrillInOpen(open))
-	require.False(t, uiHost{m}.DrillInOpen(other))
 }
 
 func TestChatReportsTheDiagramsInViewAsItScrolls(t *testing.T) {

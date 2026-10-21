@@ -2,7 +2,6 @@ package model
 
 import (
 	"image/color"
-	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
@@ -55,8 +54,6 @@ type featureHost interface {
 	// top, focuses it and blurs the editor, as the tool and thinking
 	// drill-ins do.
 	PushDrillIn(c *Chat, label string)
-	// DrillInOpen reports whether c is still on the drill-in stack.
-	DrillInOpen(c *Chat) bool
 }
 
 // uiHost is UI as a featureHost.
@@ -134,8 +131,4 @@ func (h uiHost) PushDrillIn(c *Chat, label string) {
 	h.m.updateLayoutAndSize()
 	// Sizing a new chat pins it to the bottom; start at the top.
 	c.ScrollToTop()
-}
-
-func (h uiHost) DrillInOpen(c *Chat) bool {
-	return slices.ContainsFunc(h.m.drillStack, func(e drillInEntry) bool { return e.chat == c })
 }

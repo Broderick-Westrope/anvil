@@ -214,7 +214,7 @@ Terms with a specific meaning in this codebase are defined in
   ```` ```mermaid ```` fence becomes its own chat node
   (`chat.NewAssistantMessageItems`, spliced in by
   `Chat.SyncAssistantSegments`); the head keeps the message ID and the
-  rest are `<id>#<n>`. `mermaidFeature` (`internal/ui/model/mermaid.go`
+  rest are `<id>#<n>`. `graphicsFeature` (`internal/ui/model/graphics.go`
   for its cache and messages, `mermaid_render.go` for the worker) renders
   them on one goroutine with `internal/mermaid` (pele-go, a Go port of
   Pele, for SVG, the vendored resvg in wazero for pixels; see
@@ -251,6 +251,30 @@ Terms with a specific meaning in this codebase are defined in
   `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
   measurements and resvg workarounds:
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
+- **Tool images**: a tool result carrying image data (`view`, MCP) is
+  drawn as the Output item of its tool drill-in
+  (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any
+  text the tool returned with it, through the
+  same `graphicsFeature` cache as diagrams: each cache key names its
+  producer (Mermaid or bitmap), and bitmaps decode on the worker without
+  loading the Mermaid engines (`internal/ui/model/tool_image.go`). They
+  draw at actual size, shrunk to the drill-in's width, 297 rows and
+  16 Mpx once padded to whole cells, never enlarged; a source over
+  8192 px a side, 32 Mpx, or 128 MB of what its decoder holds at once
+  (`decodeBytesPerPixel`: progressive JPEG and lossless WebP hold far
+  more than their pixels) isn't decoded. Only the drill-in on
+  top holds a full-size image (diagram or bitmap): `UI.Update` tells
+  features which chat is on top after every message, keys included
+  (`drillInFeature.DrillInChanged`), and the cache frees the old one at
+  once. Drill-in items ask through a handle bound to their chat
+  (`graphicsFeature.For`) that queues nothing while it's covered, and a
+  generation in full-size keys keeps late results and deletes from an
+  earlier opening off the current image. `o` writes the result's bytes
+  to the diagram export dir and opens them in the OS viewer, even when
+  Anvil can't draw them, but only when the bytes sniff as a raster type
+  that can't carry scripts (`imageExts`). The cache exists whatever
+  `options.tui.diagrams` says. Design:
+  `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
