@@ -167,3 +167,20 @@ func TestMermaidFeatureLeavesTheNewestCopyOnTheClipboard(t *testing.T) {
 		})
 	}
 }
+
+func TestMermaidFeatureReportsADiagramThatWontRenderForCopying(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f.writeImage = func([]byte) error { t.Fatal("a failed render reached the clipboard"); return nil }
+	f.HandleMsg(chat.DiagramCopyImageMsg{Source: "notADiagram at all\n"})
+	copied, ok := waitResult(t, f).(diagramCopiedMsg)
+	require.True(t, ok)
+	require.ErrorContains(t, copied.err, "No diagram type detected")
+	require.Nil(t, copied.png)
+
+	cmd, _ := f.HandleMsg(copied)
+	info, ok := browserCmdMsg(t, cmd).(util.InfoMsg)
+	require.True(t, ok)
+	require.Equal(t, util.InfoTypeError, info.Type)
+}
