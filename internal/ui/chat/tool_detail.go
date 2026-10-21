@@ -489,6 +489,9 @@ type toolDetailOutputItem struct {
 	sty    *styles.Styles
 	source ToolMessageItem
 	images ImageRenderer
+	// shownImage is the image result last rendered, which o opens, or nil
+	// when the output last rendered as text.
+	shownImage *message.ToolResult
 
 	expanded      bool
 	focused       bool
@@ -516,8 +519,9 @@ func (o *toolDetailOutputItem) RawRender(width int) string {
 
 // Render implements list.Item.
 func (o *toolDetailOutputItem) Render(width int) string {
-	if res := o.sourceImage(); res != nil {
-		return o.renderImage(res, width)
+	o.shownImage = o.sourceImage()
+	if o.shownImage != nil {
+		return o.renderImage(o.shownImage, width)
 	}
 	status := o.source.Status()
 	tc := o.source.ToolCall()

@@ -83,10 +83,10 @@ type ImageOpenMsg struct {
 	MIMEType string
 }
 
-// HandleKeyEvent implements KeyEventHandler: o opens a result's image in
-// the viewer, even when Anvil can't draw it.
+// HandleKeyEvent implements KeyEventHandler: o opens the image on screen
+// in the viewer, even when Anvil can't draw it.
 func (o *toolDetailOutputItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	res := o.sourceImage()
+	res := o.shownImage
 	if res == nil || key.String() != "o" {
 		return false, nil
 	}

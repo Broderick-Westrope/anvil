@@ -145,6 +145,7 @@ func TestToolDetailOutputOpensItsImageInTheViewer(t *testing.T) {
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
 	out := outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{view: DiagramView{State: DiagramFailed, Err: "x"}}))
+	out.Render(80)
 
 	handled, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
 
@@ -163,4 +164,37 @@ func TestToolDetailOutputWithoutAnImageLeavesTheViewerKey(t *testing.T) {
 
 	require.False(t, handled)
 	require.Nil(t, cmd)
+}
+
+func TestToolDetailOutputOpensTheImageItLastRendered(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
+	out := outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{}))
+	out.Render(80)
+
+	later := imageResult()
+	later.Data = "bGF0ZXI="
+	source.SetResult(later)
+	_, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
+
+	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8=", MIMEType: "image/png"}, cmd(), "what's on screen, not what arrived since")
+}
+
+func TestToolDetailOutputDrawsAResultThatArrivesAfterOpening(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, nil, ToolStatusRunning)
+	images := &fakeImages{view: DiagramView{State: DiagramReady, Image: "[[IMAGE]]"}}
+	out := outputItem(t, BuildToolDetailItems(&sty, source, images))
+	require.NotContains(t, out.Render(80), "[[IMAGE]]")
+
+	source.SetResult(imageResult())
+	source.SetStatus(ToolStatusSuccess)
+
+	require.Contains(t, out.Render(80), "[[IMAGE]]", "once something re-renders it")
+	_, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8=", MIMEType: "image/png"}, cmd())
 }
