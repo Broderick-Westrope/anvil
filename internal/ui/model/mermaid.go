@@ -396,11 +396,7 @@ func (f *graphicsFeature) imageKey(source string, width int, kind diagramKind) (
 	if !ok {
 		return diagramKey{}, false
 	}
-	key := diagramKey{hash: f.imageHash(source, f.background()), width: width, kind: kind, cellW: cellW, cellH: cellH}
-	if kind == diagramFull {
-		key.gen = f.gen
-	}
-	return key, true
+	return diagramKey{hash: f.imageHash(source, f.background()), width: width, kind: kind, cellW: cellW, cellH: cellH}, true
 }
 
 // drawable is the cell size images are drawn at width with, or false when
@@ -423,11 +419,21 @@ func (f *graphicsFeature) lookup(source string, width int, kind diagramKind, dra
 	return f.lookupRequest(req, draw)
 }
 
-// lookupRequest is lookup for the image req asks for.
+// lookupRequest is lookup for the image req asks for. A full-size image
+// gets the current generation, which moves on when the drill-in's width
+// does: the image at a width it returns to must not share its terminal ID
+// with the one evicted when it left, whose delete may still be on its way.
 func (f *graphicsFeature) lookupRequest(req diagramRequest, draw bool) chat.DiagramView {
-	key, kind, width := req.key, req.key.kind, req.maxCols
+	kind, width := req.key.kind, req.maxCols
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if kind == diagramFull {
+		if f.widths[kind] != width {
+			f.gen++
+		}
+		req.key.gen = f.gen
+	}
+	key := req.key
 	f.widths[kind] = width
 	f.clock++
 	if e, ok := f.entries[key]; ok {

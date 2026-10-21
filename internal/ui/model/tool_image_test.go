@@ -29,13 +29,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// pngData is a w×h PNG, base64-encoded as tool results carry it.
+// pngData is a w×h PNG, base64-encoded as tool results carry it. Its
+// pixels depend on the test's name: the Kitty image cache is global, so
+// parallel tests showing the same image would free each other's.
 func pngData(t *testing.T, w, h int) string {
 	t.Helper()
+	name := crc32.ChecksumIEEE([]byte(t.Name()))
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for x := range w {
 		for y := range h {
-			img.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 200, A: 255})
+			img.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: uint8(name), A: uint8(name >> 8)})
 		}
 	}
 	var buf bytes.Buffer
@@ -557,4 +560,29 @@ func TestBitmapLimits(t *testing.T) {
 	require.Equal(t, 8192, bitmapMaxSide)
 	require.Equal(t, 33_554_432, bitmapMaxPixels)
 	require.Equal(t, 134_217_728, bitmapMaxDecodedBytes)
+}
+
+func TestGraphicsFeatureGivesAWidthItReturnsToANewTerminalID(t *testing.T) {
+	t.Parallel()
+
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	images := f.ImagesFor(drill)
+	data := pngData(t, 900, 30)
+
+	show := func(width int) diagramReadyMsg {
+		t.Helper()
+		require.Equal(t, chat.DiagramPending, images.FullImage(data, "image/png", width).State)
+		ready := waitReady(t, f)
+		f.HandleMsg(ready)
+		transmit(ready)
+		f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
+		return ready
+	}
+	first := show(80)
+	show(60) // Its shown message evicts the first, whose delete may land late.
+	again := show(80)
+
+	require.NotEqual(t, first.key.id(), again.key.id())
 }

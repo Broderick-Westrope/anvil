@@ -42,7 +42,7 @@ func (f *graphicsFeature) fullImage(owner *Chat, data, mimeType string, width in
 	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(data))
-	key := diagramKey{producer: producerBitmap, hash: h.Sum64(), width: width, kind: diagramFull, cellW: cellW, cellH: cellH, gen: f.gen}
+	key := diagramKey{producer: producerBitmap, hash: h.Sum64(), width: width, kind: diagramFull, cellW: cellW, cellH: cellH}
 	req := diagramRequest{key: key, data: data, mimeType: mimeType, cellW: cellW, cellH: cellH, maxCols: width}
 	return f.lookupRequest(req, true)
 }
