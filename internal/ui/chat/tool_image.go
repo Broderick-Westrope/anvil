@@ -47,10 +47,9 @@ func (o *toolDetailOutputItem) renderImage(res *message.ToolResult, width int) s
 	view := o.images.FullImage(res.Data, res.MIMEType, inner)
 	hint := o.sty.Header.Keystroke.Render("o") + " " + o.sty.Header.KeystrokeTip.Render("open in viewer")
 	parts := []string{hint, ""}
-	// The agent writes this placeholder when a tool returns an image
-	// without text (internal/agent/agent.go); it says nothing the image
+	// The placeholder for an image without text says nothing the image
 	// doesn't.
-	if res.Content != "" && res.Content != "Loaded "+res.MIMEType+" content" {
+	if res.Content != "" && res.Content != message.MediaPlaceholder(res.MIMEType) {
 		widths := toolResultContentWidths{Body: inner - toolBodyLeftPaddingTotal, Diff: inner}
 		parts = append(parts, renderToolResultTextContent(o.sty, res.Content, widths, o.expanded, true), "")
 	}

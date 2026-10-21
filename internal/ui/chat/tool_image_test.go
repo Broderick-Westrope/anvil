@@ -27,7 +27,7 @@ func (f *fakeImages) FullImage(data, mimeType string, width int) DiagramView {
 }
 
 func imageResult() *message.ToolResult {
-	return &message.ToolResult{ToolCallID: "tc-test", Content: "Loaded image/png content", Data: "aGVsbG8=", MIMEType: "image/png"}
+	return &message.ToolResult{ToolCallID: "tc-test", Content: message.MediaPlaceholder("image/png"), Data: "aGVsbG8=", MIMEType: "image/png"}
 }
 
 func outputItem(t *testing.T, items []MessageItem) *toolDetailOutputItem {
@@ -228,7 +228,7 @@ func TestToolDetailOutputShowsTheTextBesideAnImage(t *testing.T) {
 		want    bool
 	}{
 		"text the tool returned":      {content: "Screenshot of example.com", want: true},
-		"the placeholder Anvil wrote": {content: "Loaded image/png content", want: false},
+		"the placeholder Anvil wrote": {content: message.MediaPlaceholder("image/png"), want: false},
 		"no text":                     {content: "", want: false},
 	}
 	for name, tc := range tests {

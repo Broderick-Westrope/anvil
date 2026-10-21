@@ -441,3 +441,9 @@ func TestToAIMessage_ByRole(t *testing.T) {
 		})
 	}
 }
+
+func TestMediaPlaceholderNamesTheType(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "Loaded image/png content", MediaPlaceholder("image/png"))
+}
