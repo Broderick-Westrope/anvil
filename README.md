@@ -22,7 +22,9 @@ anvil
 Pick a provider, paste an API key, and start asking. Anthropic, OpenAI,
 Gemini, Bedrock, Vertex, OpenRouter, Groq, local models through Ollama or
 LM Studio, and anything with an OpenAI- or Anthropic-compatible API all
-work, on macOS, Linux, Windows and the BSDs.
+work, on macOS, Linux, Windows and the BSDs. The
+[getting started guide](./docs/getting-started.md) covers picking models,
+project instructions and the keys you'll use most.
 
 ## Why Anvil
 
@@ -79,11 +81,14 @@ out of the context (often 50k+ tokens each) until the agent asks for them.
 
 | Guide | Covers |
 | --- | --- |
+| [Getting started](./docs/getting-started.md) | First run, picking models, project instructions, the basics |
+| [Keybindings](./docs/keybindings.md) | Every shortcut and built-in slash command |
+| [CLI reference](./docs/cli.md) | `anvil run`, sessions, permissions, MCP sign-in and the rest |
 | [Providers and models](./docs/providers.md) | API keys, subscriptions, custom and local providers |
-| [Configuration](./docs/configuration.md) | Config files, LSPs, MCPs, notifications, attribution |
+| [Configuration](./docs/configuration.md) | Config files, context files, LSPs, MCPs, TUI and tool options |
 | [Permissions](./docs/permissions.md) | Rules, chained commands, yolo mode, the bouncer |
-| [Sessions](./docs/sessions.md) | Recovery, pinning, [branching](./docs/guides/session-branching.md) |
-| [Plugins](./docs/plugins.md) | Installing plugins, writing agents, name clashes |
+| [Sessions](./docs/sessions.md) | Recovery, pinning, titles, [branching](./docs/guides/session-branching.md) |
+| [Plugins](./docs/plugins.md) | Installing plugins, writing agents, skills and commands |
 | [Agents, skills and commands](./docs/extending.md) | Per-agent models, skills, custom commands, workflows |
 | [Hooks](./docs/hooks/) | Running your own commands around tool calls |
 | [Troubleshooting](./docs/troubleshooting.md) | Logs, memory diagnostics, clipboard |
