@@ -306,6 +306,7 @@ func TestGraphicsFeatureRefusesToolImagesItCantShow(t *testing.T) {
 		"unsupported type":                                             {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type"},
 		"a type with escape codes in it":                               {data: base64.StdEncoding.EncodeToString([]byte("x")), mimeType: "image/\x1b]52;c;aGk=\a", want: "unsupported image type"},
 		"too wide to decode":                                           {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
+		"too tall to decode":                                           {data: pngIHDROnly(10, 8193), mimeType: "image/png", want: "image too large (10×8193)"},
 		"too many bytes once decoded":                                  {data: pngIHDROnlyDepth(6000, 4000, 16), mimeType: "image/png", want: "image too large (6000×4000)"},
 		"16-bit grey, which transparency makes 16-bit RGBA":            {data: pngIHDROnlyType(6000, 4000, 16, 0), mimeType: "image/png", want: "image too large (6000×4000)"},
 		"8-bit grey, which transparency makes RGBA":                    {data: pngIHDROnlyType(8000, 4200, 8, 0), mimeType: "image/png", want: "image too large (8000×4200)"},
@@ -474,6 +475,7 @@ func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 		"png":  {raw: []byte("\x89PNG\r\n\x1a\nthe bytes"), ext: ".png"},
 		"jpeg": {raw: []byte("\xff\xd8\xffthe bytes"), ext: ".jpg"},
 		"gif":  {raw: []byte("GIF89athe bytes"), ext: ".gif"},
+		"webp": {raw: []byte("RIFF\x00\x00\x00\x00WEBPVPthe bytes"), ext: ".webp"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -722,6 +724,8 @@ func TestGraphicsFeatureDecodesImagesWithinTheirDecodersBudget(t *testing.T) {
 	tests := map[string]struct{ data, mimeType string }{
 		"baseline JPEG the progressive limit would refuse":     {data: jpegHeaderOnly(4000, 3000, false), mimeType: "image/jpeg"},
 		"non-interlaced PNG the interlaced limit would refuse": {data: pngIHDROnly(6000, 4000), mimeType: "image/png"},
+		"as wide as the side limit":                            {data: pngIHDROnly(8192, 10), mimeType: "image/png"},
+		"as tall as the side limit":                            {data: pngIHDROnly(10, 8192), mimeType: "image/png"},
 		"YCbCr JPEG the CMYK limit would refuse":               {data: jpegHeaderOnly(6000, 4000, false), mimeType: "image/jpeg"},
 		"lossless WebP under its limit":                        {data: webpLosslessHeaderOnly(3000, 3000), mimeType: "image/webp"},
 	}
