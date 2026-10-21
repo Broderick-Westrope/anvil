@@ -102,8 +102,9 @@ Out:
       images.
 - [x] An unsupported MIME type or a decode failure shows the "Loaded
       Image" line plus "Can't display: <reason>". The reason never
-      includes the tool's MIME type, which could carry escape codes. Unsupported types are not
-      logged at warn level; decode failures are.
+      includes the tool's MIME type, which could carry escape codes.
+      Unsupported types are not logged at warn level; decode failures
+      are.
 - [x] `o` writes the result's bytes, with an extension matching the type
       they sniff as, to the export directory (`diagramExportDir`, pruned
       after 24 h) and opens it with the OS default handler, including when
@@ -175,7 +176,7 @@ Out:
   the file changing or being deleted. Unlike diagrams, `o` stays available
   when display fails, since the OS viewer often handles formats Anvil
   can't. It only opens raster types that carry no code (PNG, JPEG, GIF,
-  WebP, BMP), judged by sniffing the bytes rather than trusting the
+  WebP; not BMP, since anything starting "BM" sniffs as one), judged by sniffing the bytes rather than trusting the
   result's MIME type: tool results are untrusted, the OS opens SVG or
   HTML in a browser where scripts in it would run, and some openers
   (xdg-open) go by content. Anything else gets a warning.
