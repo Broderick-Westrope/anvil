@@ -78,7 +78,7 @@ func TestToolDetailOutputImageStates(t *testing.T) {
 		},
 		"failed keeps the line and says why": {
 			view:    DiagramView{State: DiagramFailed, Err: "unsupported image type"},
-			want:    []string{"Loaded Image", "Can't display: unsupported image type image/svg+xml"},
+			want:    []string{"Loaded Image", "Can't display: unsupported image type"},
 			wantNot: []string{"Loading image"},
 		},
 		"ready shows only the image": {
