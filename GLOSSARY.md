@@ -48,21 +48,21 @@ A provider the user defines in `anvil.json` that isn't in the Catwalk catalog, o
 
 A chat item showing one top-level Mermaid fence from a finished assistant message, as an image where the terminal can show it and as its code block otherwise. The message stays one `message.Message`; the UI shows it as several nodes in document order. The first node is the head and keeps the message ID; the others are `<id>#<n>`.
 
-- **Code:** `chat.DiagramItem`, `chat.NewAssistantMessageItems` (`internal/ui/chat/diagrams.go`); `mermaidFeature` (`internal/ui/model/mermaid.go`)
+- **Code:** `chat.DiagramItem`, `chat.NewAssistantMessageItems` (`internal/ui/chat/diagrams.go`); `graphicsFeature` (`internal/ui/model/mermaid.go`)
 - **Not:** a message. Lookups by message ID find the head, and branching from any node branches from the message.
 
 ## Drill-in
 
-A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, a message's thinking, or a diagram at full size.
+A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, a message's thinking, or a diagram at full size. Drill-ins stack; the one on top is the only one that may hold a full-size image.
 
-- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`), `chat.DiagramOpenMsg`
+- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`), `chat.DiagramOpenMsg`; `drillInFeature`, `UI.topDrillIn` (`internal/ui/model`)
 - **Not:** dialog. Dialogs ask for input; drill-ins show detail.
 
 ## Feature
 
-In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows and Mermaid diagrams are features.
+In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows and graphics (Mermaid diagrams and tool images) are features.
 
-- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `mermaidFeature` (`internal/ui/model/mermaid.go`)
+- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `graphicsFeature` (`internal/ui/model/mermaid.go`)
 - **Not:** sub-component such as `Chat` or `Attachments`, which `UI` calls directly; feature flag.
 
 ## Hook
@@ -170,6 +170,13 @@ Which tools an agent may use: built-in tools by its `allowed_tools` filter and t
 
 - **Code:** `toolAccess` (`internal/agent/tool_access.go`)
 - **Not:** permissions. Tool access decides which tools the model sees; the permission service decides whether one call may run.
+
+## Tool Image
+
+An image a tool result carries as base64 data with an `image/*` type, from `view` or an MCP tool. It is drawn full size as the Output of the tool's drill-in, by the bitmap producer of the graphics cache; the chat shows only its "Loaded Image" line.
+
+- **Code:** `toolDetailOutputItem`, `chat.ImageRenderer`, `chat.ImageOpenMsg` (`internal/ui/chat/tool_image.go`); `producerBitmap`, `renderBitmap` (`internal/ui/model/tool_image.go`)
+- **Not:** an attachment, which the user adds to a prompt; a diagram node.
 
 ## Turn
 
