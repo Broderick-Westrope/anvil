@@ -83,12 +83,11 @@ Out:
       arrives, the items that show images (diagram items and tool image
       outputs, via the shared marker interface that replaces
       `DiagramShower`) re-render, as diagrams do today; other items don't.
-- [ ] A tool drill-in opened while the tool is still running shows the
-      image once the result arrives, without reopening it. Opened while
-      awaiting permission, it reaches the same state text output reaches
-      in that transition today (if text output doesn't update there
-      either, that's pre-existing and out of scope). Tested through
-      `UI.Update`.
+- [ ] A tool drill-in shows a snapshot of the tool at the time it was
+      opened, as text output does today (`thinking_detail.go`: "Tool
+      drill-ins don't need this because they show a snapshot"). A result
+      that arrives after opening appears on the next opening; making tool
+      drill-ins live is out of scope.
 - [ ] Tool image outputs work in tool drill-ins nested under a subagent
       drill-in.
 - [ ] Without Kitty graphics or a reported cell size, the item shows the
@@ -111,6 +110,12 @@ Out:
       an image in the terminal. Tested for tool → diagram and diagram →
       tool transitions, resize while rendering, and close/reopen with
       messages in flight.
+- [ ] A covered drill-in never queues or transmits a full-size image:
+      re-rendering it (through `InvalidateDiagrams`, which visits every
+      chat on the stack, or `ClampOffset`) leaves it pending. Tested.
+- [ ] Forgetting an earlier opening's image never deletes the current
+      opening's image of the same content and size. Tested with the old
+      forget landing after the new transmit.
 - [ ] A change of cell size, Kitty support or (for diagrams) background
       forgets and redraws images as diagrams do today.
 - [ ] With `options.tui.diagrams` off, tool images still display.
@@ -163,13 +168,14 @@ Out:
 - **Image is the Output item, not a second drill-in.** The image is the
   output; a nested drill-in adds a keypress and breadcrumb for nothing.
   `BuildToolDetailItems` takes the renderer. The existing
-  `toolDetailOutputItem` decides on every render, from its source's
-  current result, whether to draw an image; a separate item chosen at
-  build time would miss results that arrive after the drill-in opens.
-  While it draws an image it reports `Finished() == false` (as
-  `DiagramDetailItem` does) so the list never freezes it, and its own
-  render cache keys on the renderer's view state as well as the result
-  version. `ToolMessageItem` gains whatever result accessor this needs.
+  `toolDetailOutputItem` decides at render time, from its source's
+  result, whether to draw an image. Tool drill-ins stay snapshots, so the
+  item's list version changes only when the image's view state does: the
+  shared marker interface lets `InvalidateDiagrams` clear its cache and
+  bump its version like the diagram items. It reports `Finished() ==
+  false` while it draws an image (as `DiagramDetailItem` does) so the list
+  never freezes it, and its own render cache keys on the renderer's view
+  state too. `ToolMessageItem` gains whatever result accessor this needs.
 - **Drill-in ownership is reconciled synchronously, not polled.**
   Today `mermaidFeature.Observe` notices a closed diagram drill-in by
   polling `DrillInOpen`, but `features.observe` skips input messages and
@@ -178,11 +184,17 @@ Out:
   membership, not whether the drill-in is on top. Instead, every place
   the UI changes `drillStack` (push for tool, agent, thinking and diagram
   drill-ins, and pop) tells the cache which chat is now on top, and the
-  cache frees any full-size image not owned by it. Full-size requests
-  carry a generation that increments on every ownership change; results
-  and shown messages from an older generation are dropped (and a shown
-  one forgotten again). This changes Mermaid's drill-in only in freeing
-  sooner, which no existing test should observe. Producer identity and
+  cache frees any full-size image not owned by it. Each drill-in's items
+  get a renderer scoped to their chat (a handle bound to the owner), so
+  the cache knows who asks: full-size lookups from a chat that isn't on
+  top return pending and queue nothing. Full-size requests carry a
+  generation that increments on every ownership change; results and
+  shown messages from an older generation are dropped (and a shown one
+  forgotten again). The generation is part of a full-size image's
+  terminal ID, so forgetting an old opening can't delete a new opening's
+  image of the same content. This changes Mermaid's drill-in only in
+  freeing sooner, which no existing test should observe. Producer
+  identity and
   kind (inline/full) are separate key fields, and the per-kind width
   tracking (`mermaidFeature.widths`) stays per kind: the one full-size
   slot is shared by both producers, so a tool image and a diagram
