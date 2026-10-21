@@ -47,8 +47,8 @@ Press `tab` to focus the chat first.
 | `l` (`right`) | Drill in: a subagent's session, a tool's full detail, or a diagram at full size |
 | `h` (`left`) | Back out one level |
 | `c` or `y` | Copy the item (a diagram copies its source) |
-| `Y` | Copy a diagram as a PNG |
-| `o` | Open a diagram in the browser |
+| `Y` | Copy a diagram, or the image in a tool's detail, as a PNG |
+| `o` | Open a diagram in the browser, or the image in a tool's detail in your image viewer |
 | `B` | Branch from the selected message |
 | `J` / `K` | Scroll one line |
 | `d` / `u`, `f` / `b` | Half page, full page |
