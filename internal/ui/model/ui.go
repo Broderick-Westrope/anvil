@@ -3989,8 +3989,12 @@ func (m *UI) ShortHelp() []key.Binding {
 // selectedItemBindings are the help entries for keys only the selected chat
 // item handles.
 func (m *UI) selectedItemBindings() []key.Binding {
-	if diagram, ok := m.activeChat().SelectedItem().(*chat.DiagramItem); ok && !diagram.Failed() {
+	selected := m.activeChat().SelectedItem()
+	if diagram, ok := selected.(*chat.DiagramItem); ok && !diagram.Failed() {
 		return []key.Binding{m.keyMap.Chat.OpenDiagram}
+	}
+	if chat.ShowsToolImage(selected) {
+		return []key.Binding{m.keyMap.Chat.OpenImage}
 	}
 	return nil
 }

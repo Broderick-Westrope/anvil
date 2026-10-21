@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -77,6 +78,13 @@ func (o *toolDetailOutputItem) imageBody(res *message.ToolResult, view DiagramVi
 // showsDiagram implements DiagramShower, so the item re-renders when its
 // image arrives.
 func (*toolDetailOutputItem) showsDiagram() {}
+
+// ShowsToolImage reports whether item is a tool drill-in's output that last
+// drew an image, so o opens it.
+func ShowsToolImage(item list.Item) bool {
+	o, ok := item.(*toolDetailOutputItem)
+	return ok && o.shownImage != nil
+}
 
 // ImageOpenMsg asks for a tool image, base64 data of type MIMEType, to be
 // opened in the OS default viewer.

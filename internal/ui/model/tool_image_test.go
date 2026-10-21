@@ -24,6 +24,7 @@ import (
 	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
 	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
@@ -856,4 +857,24 @@ func TestRenderBitmapRefusesCellsBiggerThanTheDrillInPixels(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("fitting never finished")
 	}
+}
+
+func TestHelpShowsTheViewerKeyOnAToolImage(t *testing.T) {
+	t.Parallel()
+
+	u := New(common.DefaultCommon(newWorkflowTestWorkspace()), "", false)
+	u.keyMap = DefaultKeyMap()
+	u.state = uiChat
+	sty := uistyles.TokyoNight()
+	result := &message.ToolResult{ToolCallID: "tc-1", Data: pngData(t, 4, 4), MIMEType: "image/png"}
+	item := chat.NewToolMessageItem(&sty, "msg-1", message.ToolCall{ID: "tc-1", Name: "view", Input: `{"file_path":"a.png"}`, Finished: true}, result, false, chat.ToolItemOptions{})
+	u.Update(util.ToolDrillInMsg{ToolItem: item, Label: "View"})
+	drill := u.drillStack[len(u.drillStack)-1].chat
+	drill.Draw(uv.NewScreenBuffer(100, 40), uv.Rect(0, 0, 100, 40))
+
+	drill.SetSelected(drill.Len() - 1)
+	require.Contains(t, helpTexts(u.ShortHelp()), "o open in viewer")
+
+	drill.SetSelected(0)
+	require.NotContains(t, helpTexts(u.ShortHelp()), "o open in viewer", "the header")
 }
