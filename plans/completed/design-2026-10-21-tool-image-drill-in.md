@@ -203,9 +203,10 @@ Out:
   polling `DrillInOpen`, but `features.observe` skips input messages and
   runs before `update`, so after a back-key pop the image stays in the
   terminal until some later non-input message. `DrillInOpen` also checks
-  membership, not whether the drill-in is on top. Instead, every place
-  the UI changes `drillStack` (push for tool, agent, thinking and diagram
-  drill-ins, and pop) tells the cache which chat is now on top, and the
+  membership, not whether the drill-in is on top. Instead, `UI.Update`
+  tells features which chat is on top after every message, keys included
+  (`drillInFeature`; the registry calls them only when it changes), so
+  every push and pop is covered without touching each site, and the
   cache frees any full-size image not owned by it. Each drill-in's items
   get a renderer scoped to their chat (a handle bound to the owner), so
   the cache knows who asks: full-size lookups from a chat that isn't on
