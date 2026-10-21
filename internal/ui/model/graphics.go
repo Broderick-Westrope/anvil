@@ -496,9 +496,9 @@ func (f *graphicsFeature) enqueue(req diagramRequest) bool {
 
 func (f *graphicsFeature) listen() tea.Msg { return <-f.results }
 
-// Observe starts listening for rendered diagrams, asks the terminal for its
-// background, re-renders the chat when Kitty graphics support is first
-// detected, and frees the full-size image once its drill-in closes.
+// Observe starts listening for rendered images, asks the terminal for its
+// background, and redraws every image when Kitty support, the cell size
+// or the background changes. DrillInChanged frees full-size images.
 func (f *graphicsFeature) Observe(msg tea.Msg) tea.Cmd {
 	if bg, ok := msg.(tea.BackgroundColorMsg); ok {
 		f.termBg = hexColor(bg.Color)
@@ -665,8 +665,8 @@ func (f *graphicsFeature) tmux() bool {
 // currentLocked), then the least recently drawn until the rest fit
 // cacheBudget. keep and diagrams in view are never dropped, even when they
 // alone pass the budget: dropping one on screen would show its code block
-// until it rendered again, and that would evict the next. It returns the commands that free
-// them in the terminal.
+// until it rendered again, and that would evict the next. It returns the
+// commands that free them in the terminal.
 func (f *graphicsFeature) evictLocked(keep diagramKey) tea.Cmd {
 	var sent []diagramKey
 	for key, e := range f.entries {

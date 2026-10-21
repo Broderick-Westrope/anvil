@@ -89,21 +89,24 @@ to `UI` and cases to the dispatchers. That keeps upstream's cases in
 `update`, `handleDialogMsg` and `handleKeyPressMsg` in their Crush shape,
 so cherry-picks still apply. See `docs/adr/0003-ui-complexity.md`. The
 workflow feature (`model/workflow.go`) is the worked example. The graphics
-feature (`model/mermaid.go`), which draws Mermaid diagrams and tool images,
+feature (`model/graphics.go`), which draws Mermaid diagrams and tool images,
 is the other.
 
 Diagrams are the one exception that touches upstream-shaped code
 directly, because chat items are built in `UI` (`ExtractMessageItems`):
 
 - `UI` holds the feature in `m.graphics` whether or not diagrams are on,
-  and passes `m.graphics.For(chat)` to `BuildToolDetailItems` for a
-  tool drill-in. It holds the feature's `chat.DiagramRenderer` in
-  `m.diagrams`, set in `New` (nil when `options.tui.diagrams` is off),
-  gives it to the root chat
-  with `Chat.SetDiagrams`, and passes it to every `ExtractMessageItems` call
-  except `loadNestedToolCalls`, whose assistant text is never shown.
+  and passes `m.graphics.For(chat)` to `BuildToolDetailItems` for a tool
+  drill-in. It holds the feature's `chat.DiagramRenderer` in `m.diagrams`,
+  set in `New` (nil when `options.tui.diagrams` is off), gives it to the
+  root chat with `Chat.SetDiagrams`, and passes it to every
+  `ExtractMessageItems` call except `loadNestedToolCalls`, whose assistant
+  text is never shown.
+- `UI.Update` tells `drillInFeature`s which drill-in is on top after
+  every message (`features.drillInTop`).
 - `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
-- `selectedItemBindings` adds the diagram node's help entry.
+- `selectedItemBindings` adds the help entry of a diagram node or a tool
+  image (`chat.ShowsToolImage`).
 - `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
   message's `<id>#<n>` nodes, `Chat.HandleDelayedClick` opens drill-ins
   through `chat.ClickDrillInHandler`, and `sourceSelection` copies a

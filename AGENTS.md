@@ -214,7 +214,7 @@ Terms with a specific meaning in this codebase are defined in
   ```` ```mermaid ```` fence becomes its own chat node
   (`chat.NewAssistantMessageItems`, spliced in by
   `Chat.SyncAssistantSegments`); the head keeps the message ID and the
-  rest are `<id>#<n>`. `graphicsFeature` (`internal/ui/model/mermaid.go`
+  rest are `<id>#<n>`. `graphicsFeature` (`internal/ui/model/graphics.go`
   for its cache and messages, `mermaid_render.go` for the worker) renders
   them on one goroutine with `internal/mermaid` (pele-go, a Go port of
   Pele, for SVG, the vendored resvg in wazero for pixels; see

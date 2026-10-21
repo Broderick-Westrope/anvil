@@ -22,7 +22,7 @@ import (
 
 // This file is the graphics feature's worker side: it owns the Mermaid
 // render engines, turns requests into images or browser pages, and never
-// touches the feature's cache, which mermaid.go owns.
+// touches the feature's cache, which graphics.go owns.
 
 // diagramExportDir is where pages for the browser are written: the user's
 // own cache directory, not a shared temp directory another user could
@@ -47,7 +47,8 @@ func diagramCompileCacheDir() string {
 	return filepath.Join(dir, "anvil", "wasm")
 }
 
-// pruneExports deletes pages in dir older than diagramExportMaxAge.
+// pruneExports deletes exports (diagram pages and tool images) in dir older
+// than diagramExportMaxAge.
 func pruneExports(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -60,7 +61,7 @@ func pruneExports(dir string) {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
-			slog.Warn("Failed to remove old diagram page", "err", err)
+			slog.Warn("Failed to remove old export", "err", err)
 		}
 	}
 }

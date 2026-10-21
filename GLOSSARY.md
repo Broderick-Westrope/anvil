@@ -48,7 +48,7 @@ A provider the user defines in `anvil.json` that isn't in the Catwalk catalog, o
 
 A chat item showing one top-level Mermaid fence from a finished assistant message, as an image where the terminal can show it and as its code block otherwise. The message stays one `message.Message`; the UI shows it as several nodes in document order. The first node is the head and keeps the message ID; the others are `<id>#<n>`.
 
-- **Code:** `chat.DiagramItem`, `chat.NewAssistantMessageItems` (`internal/ui/chat/diagrams.go`); `graphicsFeature` (`internal/ui/model/mermaid.go`)
+- **Code:** `chat.DiagramItem`, `chat.NewAssistantMessageItems` (`internal/ui/chat/diagrams.go`); `graphicsFeature` (`internal/ui/model/graphics.go`)
 - **Not:** a message. Lookups by message ID find the head, and branching from any node branches from the message.
 
 ## Drill-in
@@ -62,7 +62,7 @@ A view that opens on top of the chat to show one item in detail: a subagent's se
 
 In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows and graphics (Mermaid diagrams and tool images) are features.
 
-- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `graphicsFeature` (`internal/ui/model/mermaid.go`)
+- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `graphicsFeature` (`internal/ui/model/graphics.go`)
 - **Not:** sub-component such as `Chat` or `Attachments`, which `UI` calls directly; feature flag.
 
 ## Hook
