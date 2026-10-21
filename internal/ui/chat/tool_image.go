@@ -68,8 +68,10 @@ func (o *toolDetailOutputItem) imageBody(res *message.ToolResult, view DiagramVi
 	default:
 		note = "This terminal can't display images."
 	}
-	note = ansi.Truncate(note, width, "…")
-	return toolOutputImageContent(o.sty, res.Data, res.MIMEType) + "\n" + o.sty.Header.KeystrokeTip.Render(note)
+	line := toolOutputImageContent(o.sty, res.Data, res.MIMEType)
+	indent := lipgloss.Width(line) - lipgloss.Width(strings.TrimLeft(ansi.Strip(line), " "))
+	note = ansi.Truncate(note, width-indent, "…")
+	return line + "\n" + strings.Repeat(" ", indent) + o.sty.Header.KeystrokeTip.Render(note)
 }
 
 // showsDiagram implements DiagramShower, so the item re-renders when its

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -197,4 +198,23 @@ func TestToolDetailOutputDrawsAResultThatArrivesAfterOpening(t *testing.T) {
 	require.Contains(t, out.Render(80), "[[IMAGE]]", "once something re-renders it")
 	_, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8=", MIMEType: "image/png"}, cmd())
+}
+
+func TestToolDetailOutputLinesTheNoteUpWithTheImageLine(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
+	out := ansi.Strip(outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{view: DiagramView{State: DiagramUnsupported}})).Render(80))
+
+	indent := func(prefix string) int {
+		for ln := range strings.SplitSeq(out, "\n") {
+			if i := strings.Index(ln, prefix); i >= 0 {
+				return i
+			}
+		}
+		t.Fatalf("no line with %q in %q", prefix, out)
+		return 0
+	}
+	require.Equal(t, indent("Loaded Image"), indent("This terminal"))
 }
