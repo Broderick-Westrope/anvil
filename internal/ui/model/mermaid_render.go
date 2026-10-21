@@ -1,11 +1,14 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
+	"image/png"
 	"log/slog"
 	"math"
 	"net/url"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid/resvg"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -139,7 +143,8 @@ func (f *graphicsFeature) serve(engines *diagramEngines, req diagramRequest) (*d
 	if engines == nil {
 		pele, err := f.newRenderer()
 		if err != nil {
-			return nil, requestFailed(req, fmt.Errorf("%w: %w", errEnginesUnavailable, err))
+			_, fail := f.job(req)
+			return nil, fail(fmt.Errorf("%w: %w", errEnginesUnavailable, err))
 		}
 		engines = &diagramEngines{pele: pele, cacheDir: f.compileCacheDir}
 	}
@@ -153,32 +158,66 @@ func (f *graphicsFeature) serve(engines *diagramEngines, req diagramRequest) (*d
 	return engines, msg
 }
 
-// runRequest renders, decodes or exports req. Pele, resvg and the image
-// decoders run on model- or tool-written input, so a panic in any is
-// reported as the request failing, and ok is false, rather than taking
-// the TUI down.
+// runRequest does req's job. Pele, resvg and the image decoders run on
+// model- or tool-written input, so a panic in any is reported as the
+// request failing, and ok is false, rather than taking the TUI down.
 func (f *graphicsFeature) runRequest(e *diagramEngines, req diagramRequest) (msg tea.Msg, ok bool) {
+	run, fail := f.job(req)
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Graphics request panicked", "engine", req.key.producer.engine(), "panic", r)
-			msg, ok = requestFailed(req, fmt.Errorf("%s crashed: %v", req.key.producer.engine(), r)), false
+			msg, ok = fail(fmt.Errorf("%s crashed: %v", req.key.producer.engine(), r)), false
 		}
 	}()
-	switch {
-	case req.export:
-		return f.export(e, req), true
-	case req.key.producer == producerBitmap:
-		return renderBitmap(req), true
-	}
-	return renderDiagram(e, req), true
+	return run(e), true
 }
 
-// requestFailed is the result for req when it fails with err.
-func requestFailed(req diagramRequest, err error) tea.Msg {
-	if req.export {
-		return diagramExportedMsg{err: err}
+// job is how the worker answers req, and what it answers when that fails.
+func (f *graphicsFeature) job(req diagramRequest) (run func(*diagramEngines) tea.Msg, fail func(error) tea.Msg) {
+	if req.key.producer == producerBitmap {
+		return func(*diagramEngines) tea.Msg { return renderBitmap(req) },
+			func(err error) tea.Msg { return diagramReadyMsg{key: req.key, err: err} }
 	}
-	return diagramReadyMsg{key: req.key, err: err}
+	switch req.job {
+	case diagramJobExport:
+		return func(e *diagramEngines) tea.Msg { return f.export(e, req) },
+			func(err error) tea.Msg { return diagramExportedMsg{err: err} }
+	case diagramJobCopy:
+		return func(e *diagramEngines) tea.Msg { return f.copyDiagram(e, req) },
+			func(err error) tea.Msg { return diagramCopiedMsg{err: err} }
+	}
+	return func(e *diagramEngines) tea.Msg { return renderDiagram(e, req) },
+		func(err error) tea.Msg { return diagramReadyMsg{key: req.key, err: err} }
+}
+
+// copyDiagram draws the diagram at diagramCopyScale on the theme's
+// background, which the chat leaves transparent: pasted somewhere else, a
+// diagram drawn for a dark theme would be unreadable on a light page. It
+// writes the clipboard here, on the worker, so copies land in the order
+// they were asked for.
+func (f *graphicsFeature) copyDiagram(e *diagramEngines, req diagramRequest) diagramCopiedMsg {
+	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{err: err} }
+	raster, err := e.rasterizer()
+	if err != nil {
+		return fail(err)
+	}
+	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{})
+	if err != nil {
+		return fail(err)
+	}
+	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: diagramCopyScale})
+	if err != nil {
+		return fail(err)
+	}
+	fillBehind(img, color.RGBAModel.Convert(lipgloss.Color(req.theme["pele-bg"])).(color.RGBA))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return fail(err)
+	}
+	if err := f.writeImage(buf.Bytes()); err != nil {
+		return fail(err)
+	}
+	return diagramCopiedMsg{}
 }
 
 func (f *graphicsFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
@@ -288,4 +327,17 @@ func fileURL(path string) string {
 		slashed = "/" + slashed
 	}
 	return (&url.URL{Scheme: "file", Path: slashed}).String()
+}
+
+// fillBehind draws opaque bg under img in place, sparing a second
+// full-size image. img's pixels are premultiplied, so each channel gains
+// bg's in proportion to what the pixel leaves uncovered.
+func fillBehind(img *image.RGBA, bg color.RGBA) {
+	under := [4]uint32{uint32(bg.R), uint32(bg.G), uint32(bg.B), 0xff}
+	for i := 0; i < len(img.Pix); i += 4 {
+		uncovered := 0xff - uint32(img.Pix[i+3])
+		for c := range under {
+			img.Pix[i+c] += uint8((under[c]*uncovered + 0x7f) / 0xff)
+		}
+	}
 }

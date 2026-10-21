@@ -3991,7 +3991,7 @@ func (m *UI) ShortHelp() []key.Binding {
 func (m *UI) selectedItemBindings() []key.Binding {
 	selected := m.activeChat().SelectedItem()
 	if diagram, ok := selected.(*chat.DiagramItem); ok && !diagram.Failed() {
-		return []key.Binding{m.keyMap.Chat.OpenDiagram}
+		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyDiagramImage}
 	}
 	if chat.ShowsToolImage(selected) {
 		return []key.Binding{m.keyMap.Chat.OpenImage}
