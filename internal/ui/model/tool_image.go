@@ -51,21 +51,19 @@ func (f *graphicsFeature) fullImage(owner *Chat, data, mimeType string, width in
 // all its pixels before it is shrunk to fit.
 const (
 	bitmapMaxSide         = 8192
+	bitmapMaxPixels       = 32 << 20
 	bitmapMaxDecodedBytes = 128 << 20
 )
 
-// decodedBytesPerPixel is what the decoders allocate per pixel for an
-// image of model m. A 16-bit PNG takes twice an 8-bit one; models it
-// doesn't know are taken as RGBA, which is at least what JPEG and WebP
-// use.
+// decodedBytesPerPixel is the most the decoders allocate per pixel for an
+// image of model m. A 16-bit PNG takes twice an 8-bit one, and a grey
+// PNG with a transparent colour decodes to RGBA of its depth, which
+// DecodeConfig can't tell. Anything else but a palette is taken as RGBA,
+// which is at least what JPEG and WebP use.
 func decodedBytesPerPixel(m color.Model) int {
 	switch m {
-	case color.RGBA64Model, color.NRGBA64Model:
+	case color.RGBA64Model, color.NRGBA64Model, color.Gray16Model:
 		return 8
-	case color.Gray16Model:
-		return 2
-	case color.GrayModel, color.AlphaModel:
-		return 1
 	}
 	if _, ok := m.(color.Palette); ok {
 		return 1
@@ -98,8 +96,9 @@ func renderBitmap(req diagramRequest) diagramReadyMsg {
 	if err != nil {
 		return fail(fmt.Errorf("decode image: %w", err))
 	}
-	if cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide ||
-		cfg.Width*cfg.Height*decodedBytesPerPixel(cfg.ColorModel) > bitmapMaxDecodedBytes {
+	pixels := cfg.Width * cfg.Height
+	if cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide || pixels > bitmapMaxPixels ||
+		pixels*decodedBytesPerPixel(cfg.ColorModel) > bitmapMaxDecodedBytes {
 		return fail(undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)})
 	}
 	// For an animated GIF this is the first frame.

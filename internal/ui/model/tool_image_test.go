@@ -105,17 +105,32 @@ func encodeImage(t *testing.T, img image.Image, format string) string {
 func pngIHDROnly(w, h uint32) string { return pngIHDROnlyDepth(w, h, 8) }
 
 // pngIHDROnlyDepth is pngIHDROnly with depth bits per channel.
-func pngIHDROnlyDepth(w, h uint32, depth byte) string {
+func pngIHDROnlyDepth(w, h uint32, depth byte) string { return pngIHDROnlyType(w, h, depth, 6) }
+
+// pngIHDROnlyType is pngIHDROnly with depth bits per channel of PNG colour
+// type colorType (0 grey, 6 RGBA).
+func pngIHDROnlyType(w, h uint32, depth, colorType byte) string {
 	var ihdr bytes.Buffer
 	ihdr.WriteString("IHDR")
 	_ = binary.Write(&ihdr, binary.BigEndian, w)
 	_ = binary.Write(&ihdr, binary.BigEndian, h)
-	ihdr.Write([]byte{depth, 6, 0, 0, 0})
+	ihdr.Write([]byte{depth, colorType, 0, 0, 0})
 	var buf bytes.Buffer
 	buf.WriteString("\x89PNG\r\n\x1a\n")
 	_ = binary.Write(&buf, binary.BigEndian, uint32(ihdr.Len()-4))
 	buf.Write(ihdr.Bytes())
 	_ = binary.Write(&buf, binary.BigEndian, crc32.ChecksumIEEE(ihdr.Bytes()))
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+// gifHeaderOnly is a GIF that is only a header claiming w×h with a
+// two-colour palette, so it decodes to one byte a pixel.
+func gifHeaderOnly(w, h uint16) string {
+	var buf bytes.Buffer
+	buf.WriteString("GIF89a")
+	_ = binary.Write(&buf, binary.LittleEndian, w)
+	_ = binary.Write(&buf, binary.LittleEndian, h)
+	buf.Write([]byte{0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff})
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
@@ -229,13 +244,16 @@ func TestGraphicsFeatureRefusesToolImagesItCantShow(t *testing.T) {
 		data, mimeType string
 		want           string
 	}{
-		"unsupported type":            {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type image/svg+xml"},
-		"too wide to decode":          {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
-		"too many bytes once decoded": {data: pngIHDROnlyDepth(6000, 4000, 16), mimeType: "image/png", want: "image too large (6000×4000)"},
-		"too many pixels":             {data: pngIHDROnly(8000, 4200), mimeType: "image/png", want: "image too large (8000×4200)"},
-		"corrupt data":                {data: base64.StdEncoding.EncodeToString([]byte("not a png")), mimeType: "image/png", want: "decode image"},
-		"truncated after header":      {data: pngIHDROnly(10, 10), mimeType: "image/png", want: "decode image"},
-		"invalid base64":              {data: "!!!", mimeType: "image/png", want: "decode image data"},
+		"unsupported type":                                  {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type image/svg+xml"},
+		"too wide to decode":                                {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
+		"too many bytes once decoded":                       {data: pngIHDROnlyDepth(6000, 4000, 16), mimeType: "image/png", want: "image too large (6000×4000)"},
+		"16-bit grey, which transparency makes 16-bit RGBA": {data: pngIHDROnlyType(6000, 4000, 16, 0), mimeType: "image/png", want: "image too large (6000×4000)"},
+		"8-bit grey, which transparency makes RGBA":         {data: pngIHDROnlyType(8000, 4200, 8, 0), mimeType: "image/png", want: "image too large (8000×4200)"},
+		"too many pixels, though few bytes":                 {data: gifHeaderOnly(8000, 8000), mimeType: "image/gif", want: "image too large (8000×8000)"},
+		"too many pixels":                                   {data: pngIHDROnly(8000, 4200), mimeType: "image/png", want: "image too large (8000×4200)"},
+		"corrupt data":                                      {data: base64.StdEncoding.EncodeToString([]byte("not a png")), mimeType: "image/png", want: "decode image"},
+		"truncated after header":                            {data: pngIHDROnly(10, 10), mimeType: "image/png", want: "decode image"},
+		"invalid base64":                                    {data: "!!!", mimeType: "image/png", want: "decode image data"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -517,14 +535,13 @@ func TestDecodedBytesPerPixel(t *testing.T) {
 		model color.Model
 		want  int
 	}{
-		"16-bit RGBA":    {model: color.RGBA64Model, want: 8},
-		"16-bit NRGBA":   {model: color.NRGBA64Model, want: 8},
-		"16-bit grey":    {model: color.Gray16Model, want: 2},
-		"grey":           {model: color.GrayModel, want: 1},
-		"alpha":          {model: color.AlphaModel, want: 1},
-		"paletted":       {model: color.Palette{color.Black}, want: 1},
-		"8-bit RGBA":     {model: color.RGBAModel, want: 4},
-		"YCbCr, as JPEG": {model: color.YCbCrModel, want: 4},
+		"16-bit RGBA":  {model: color.RGBA64Model, want: 8},
+		"16-bit NRGBA": {model: color.NRGBA64Model, want: 8},
+		"16-bit grey, which transparency can make 16-bit RGBA": {model: color.Gray16Model, want: 8},
+		"grey, which transparency can make RGBA":               {model: color.GrayModel, want: 4},
+		"paletted":                                             {model: color.Palette{color.Black}, want: 1},
+		"8-bit RGBA":                                           {model: color.RGBAModel, want: 4},
+		"YCbCr, as JPEG":                                       {model: color.YCbCrModel, want: 4},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -538,5 +555,6 @@ func TestBitmapLimits(t *testing.T) {
 	t.Parallel()
 
 	require.Equal(t, 8192, bitmapMaxSide)
+	require.Equal(t, 33_554_432, bitmapMaxPixels)
 	require.Equal(t, 134_217_728, bitmapMaxDecodedBytes)
 }
