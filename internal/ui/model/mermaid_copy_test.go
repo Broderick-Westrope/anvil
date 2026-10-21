@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
+	"log/slog"
 	"math"
 	"sync"
 	"testing"
@@ -203,4 +204,27 @@ func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
 			require.Empty(t, f.requests, "nothing renders")
 		})
 	}
+}
+
+func TestMermaidFeatureWontRenderForAClipboardItCantUse(t *testing.T) {
+	t.Parallel()
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f.clipboardReady = func() error { return errors.New("no clipboard tool") }
+	cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "A"})
+	require.True(t, handled)
+	require.Equal(t, util.NewErrorMsg(errors.New("copy diagram image: no clipboard tool")), cmd())
+	require.Empty(t, f.requests, "nothing renders")
+}
+
+// Not parallel: it swaps the default logger.
+func TestMermaidFeatureLogsAFailedCopy(t *testing.T) {
+	rec := &warnRecorder{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+	f.HandleMsg(diagramCopiedMsg{err: errors.New("no clipboard")})
+	require.Equal(t, []string{"Failed to copy mermaid diagram image"}, rec.warns)
 }
