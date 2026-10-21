@@ -42,7 +42,7 @@ func writeClipboardImage(png []byte) error {
 	// doesn't.
 	stderr, err := os.CreateTemp("", "anvil-clipboard-*")
 	if err != nil {
-		return fmt.Errorf("%s: %w", args[0], err)
+		return fmt.Errorf("create file for %s's errors: %w", args[0], err)
 	}
 	defer os.Remove(stderr.Name())
 	defer stderr.Close()
@@ -52,6 +52,8 @@ func writeClipboardImage(png []byte) error {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stdin = bytes.NewReader(png)
 	cmd.Stderr = stderr
+	// Bounds Run after a kill, should a child still hold stdin open.
+	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf("%s didn't take the image within %s", args[0], clipboardToolTimeout)
