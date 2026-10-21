@@ -731,8 +731,7 @@ func TestGraphicsFeatureDecodesImagesWithinTheirDecodersBudget(t *testing.T) {
 			require.NoError(t, err, "the header alone is a valid config")
 			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 			ready := requestImage(t, f, tc.data, tc.mimeType, 80)
-			require.Error(t, ready.err)
-			require.NotContains(t, ready.err.Error(), "too large", "it got past the size check to the pixels")
+			require.ErrorContains(t, ready.err, "decode image:", "it got past the size check to the pixels")
 		})
 	}
 }
