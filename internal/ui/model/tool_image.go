@@ -24,12 +24,6 @@ import (
 	_ "golang.org/x/image/webp" // Registers the WebP decoder for tool images.
 )
 
-// FullImage implements chat.ImageRenderer, for when no drill-in is open;
-// drill-ins ask through ImagesFor.
-func (f *graphicsFeature) FullImage(data, mimeType string, width int) chat.DiagramView {
-	return f.fullImage(nil, data, mimeType, width)
-}
-
 // fullImage is a tool image as owner's drill-in shows it. It only renders
 // while owner is on top.
 func (f *graphicsFeature) fullImage(owner *Chat, data, mimeType string, width int) chat.DiagramView {

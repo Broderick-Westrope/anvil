@@ -275,7 +275,7 @@ func (f *graphicsFeature) fullDiagram(owner *Chat, source string, width int) cha
 	if inline != "" && !squeezed {
 		return chat.DiagramView{State: chat.DiagramReady, Image: inline}
 	}
-	if _, ok := f.imageKey(source, width, diagramFull); ok && owner != f.top {
+	if _, _, ok := f.drawable(width); ok && owner != f.top {
 		return chat.DiagramView{State: chat.DiagramPending, Image: inline}
 	}
 	view := f.lookup(source, width, diagramFull, true)
@@ -606,7 +606,7 @@ func (f *graphicsFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 		return util.ReportInfo("Opening diagram in browser")
 	}
 	c := NewChat(f.com)
-	c.SetMessages(chat.NewDiagramDetailItem(f.com.Styles, msg.Source, f.ForChat(c)))
+	c.SetMessages(chat.NewDiagramDetailItem(f.com.Styles, msg.Source, f.For(c)))
 	c.SelectLast()
 	f.host.PushDrillIn(c, "Diagram")
 	return nil
@@ -626,17 +626,9 @@ func (f *graphicsFeature) DrillInChanged(top *Chat) tea.Cmd {
 	return cmd
 }
 
-// ForChat is the renderer for the items of c, a drill-in: they get
-// full-size images only while c is on top.
-func (f *graphicsFeature) ForChat(c *Chat) chat.DiagramRenderer { return ownedGraphics{f: f, owner: c} }
-
-// ImagesFor is ForChat for tool images, or nil when f is.
-func (f *graphicsFeature) ImagesFor(c *Chat) chat.ImageRenderer {
-	if f == nil {
-		return nil
-	}
-	return ownedGraphics{f: f, owner: c}
-}
+// For is the renderer of diagrams and tool images for the items of c, a
+// drill-in: they get full-size images only while c is on top.
+func (f *graphicsFeature) For(c *Chat) ownedGraphics { return ownedGraphics{f: f, owner: c} }
 
 // ownedGraphics is the feature as one drill-in's items see it.
 type ownedGraphics struct {

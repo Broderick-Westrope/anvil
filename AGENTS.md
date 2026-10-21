@@ -256,7 +256,7 @@ Terms with a specific meaning in this codebase are defined in
   features which chat is on top after every message, keys included
   (`drillInFeature.DrillInChanged`), and the cache frees the old one at
   once. Drill-in items ask through a handle bound to their chat
-  (`ForChat`, `ImagesFor`) that queues nothing while it's covered, and a
+  (`graphicsFeature.For`) that queues nothing while it's covered, and a
   generation in full-size keys keeps late results and deletes from an
   earlier opening off the current image. `o` writes the result's bytes
   to the diagram export dir and opens them in the OS viewer, even when

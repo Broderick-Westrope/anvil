@@ -1449,7 +1449,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		newChat := NewChat(m.com)
-		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem, m.graphics.ImagesFor(newChat))
+		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem, m.graphics.For(newChat))
 		// Follow when the tool is still running so streaming output
 		// auto-scrolls; otherwise start at the top.
 		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)

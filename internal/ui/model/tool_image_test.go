@@ -52,7 +52,7 @@ func TestGraphicsFeatureDrawsAToolImage(t *testing.T) {
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	data := pngData(t, 35, 30)
 
-	require.Equal(t, chat.DiagramPending, f.FullImage(data, "image/png", 80).State)
+	require.Equal(t, chat.DiagramPending, f.For(nil).FullImage(data, "image/png", 80).State)
 	ready := waitReady(t, f)
 	require.Equal(t, diagramFull, ready.key.kind)
 	// Cells are 10×20 px: actual size, padded to whole cells.
@@ -65,7 +65,7 @@ func TestGraphicsFeatureDrawsAToolImage(t *testing.T) {
 	transmit(ready)
 	f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
 
-	view := f.FullImage(data, "image/png", 80)
+	view := f.For(nil).FullImage(data, "image/png", 80)
 	require.Equal(t, chat.DiagramReady, view.State)
 	require.Contains(t, view.Image, string(kitty.Placeholder))
 }
@@ -198,7 +198,7 @@ const tinyWebP = "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA=="
 // requestImage asks f for an image and returns the worker's answer.
 func requestImage(t *testing.T, f *graphicsFeature, data, mimeType string, width int) diagramReadyMsg {
 	t.Helper()
-	require.Equal(t, chat.DiagramPending, f.FullImage(data, mimeType, width).State)
+	require.Equal(t, chat.DiagramPending, f.For(nil).FullImage(data, mimeType, width).State)
 	ready, ok := waitResult(t, f).(diagramReadyMsg)
 	require.True(t, ok)
 	return ready
@@ -326,7 +326,7 @@ func TestGraphicsFeatureRefusesToolImagesItCantShow(t *testing.T) {
 
 			_, handled := f.HandleMsg(ready)
 			require.True(t, handled)
-			view := f.FullImage(tc.data, tc.mimeType, 80)
+			view := f.For(nil).FullImage(tc.data, tc.mimeType, 80)
 			require.Equal(t, chat.DiagramFailed, view.State)
 			require.Contains(t, view.Err, tc.want)
 		})
@@ -355,7 +355,7 @@ func TestGraphicsFeatureWarnsOnlyAboutImagesThatShouldHaveDecoded(t *testing.T) 
 // showToolImage drives a tool image owned by c from request to shown.
 func showToolImage(t *testing.T, f *graphicsFeature, c *Chat, data string) diagramReadyMsg {
 	t.Helper()
-	images := f.ImagesFor(c)
+	images := f.For(c)
 	require.Equal(t, chat.DiagramPending, images.FullImage(data, "image/png", 80).State)
 	ready := waitReady(t, f)
 	_, handled := f.HandleMsg(ready)
@@ -402,8 +402,8 @@ func TestGraphicsFeatureACoveredDrillInQueuesNothing(t *testing.T) {
 	f.DrillInChanged(top)
 
 	data := pngData(t, 30, 30)
-	require.Equal(t, chat.DiagramPending, f.ImagesFor(covered).FullImage(data, "image/png", 80).State)
-	require.Equal(t, chat.DiagramPending, f.ForChat(covered).FullDiagram("flowchart LR\n A --> B\n", 80).State)
+	require.Equal(t, chat.DiagramPending, f.For(covered).FullImage(data, "image/png", 80).State)
+	require.Equal(t, chat.DiagramPending, f.For(covered).FullDiagram("flowchart LR\n A --> B\n", 80).State)
 	requireNothingQueued(t, f)
 
 	// Back on top, it renders again.
@@ -418,20 +418,20 @@ func TestGraphicsFeatureDropsAResultFromAnEarlierOpening(t *testing.T) {
 	drill := NewChat(f.com)
 	data := pngData(t, 30, 30)
 	f.DrillInChanged(drill)
-	f.ImagesFor(drill).FullImage(data, "image/png", 80)
+	f.For(drill).FullImage(data, "image/png", 80)
 	stale := waitReady(t, f)
 
 	// Closed and opened again while the first render was in flight.
 	f.DrillInChanged(nil)
 	f.DrillInChanged(drill)
-	require.Equal(t, chat.DiagramPending, f.ImagesFor(drill).FullImage(data, "image/png", 80).State)
+	require.Equal(t, chat.DiagramPending, f.For(drill).FullImage(data, "image/png", 80).State)
 	fresh := waitReady(t, f)
 	require.NotEqual(t, stale.key.id(), fresh.key.id(), "each opening has its own terminal image")
 
 	_, handled := f.HandleMsg(stale)
 	require.True(t, handled)
 	require.NotContains(t, f.entries, stale.key)
-	require.Equal(t, chat.DiagramPending, f.ImagesFor(drill).FullImage(data, "image/png", 80).State, "the stale result shows nothing")
+	require.Equal(t, chat.DiagramPending, f.For(drill).FullImage(data, "image/png", 80).State, "the stale result shows nothing")
 
 	// The fresh one is shown, then the stale one's late transmit lands and
 	// is freed again, which leaves the fresh one in the terminal.
@@ -441,7 +441,7 @@ func TestGraphicsFeatureDropsAResultFromAnEarlierOpening(t *testing.T) {
 	transmit(stale)
 	cmd, _ := f.HandleMsg(diagramShownMsg{key: stale.key, cols: stale.cols, rows: stale.rows})
 	require.Len(t, rawMsgs(cmd), 1)
-	require.Equal(t, chat.DiagramReady, f.ImagesFor(drill).FullImage(data, "image/png", 80).State)
+	require.Equal(t, chat.DiagramReady, f.For(drill).FullImage(data, "image/png", 80).State)
 	require.NotEmpty(t, fimage.EncodingKitty.Render(fresh.key.id(), fresh.cols, fresh.rows))
 }
 
@@ -627,7 +627,7 @@ func TestGraphicsFeatureGivesAWidthItReturnsToANewTerminalID(t *testing.T) {
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	drill := NewChat(f.com)
 	f.DrillInChanged(drill)
-	images := f.ImagesFor(drill)
+	images := f.For(drill)
 	data := pngData(t, 900, 30)
 
 	show := func(width int) diagramReadyMsg {
@@ -652,7 +652,7 @@ func TestGraphicsFeatureKeepsOnlyTheCurrentWidthsImageThroughAResize(t *testing.
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	drill := NewChat(f.com)
 	f.DrillInChanged(drill)
-	images := f.ImagesFor(drill)
+	images := f.For(drill)
 	data := pngData(t, 900, 30)
 
 	// Resized 80 → 60 → 80 while all three renders are in flight.
@@ -688,7 +688,7 @@ func TestGraphicsFeatureFreesAShownImageWhenItsWidthComesBackDuringARender(t *te
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	drill := NewChat(f.com)
 	f.DrillInChanged(drill)
-	images := f.ImagesFor(drill)
+	images := f.For(drill)
 	data := pngData(t, 900, 30)
 	show := func(ready diagramReadyMsg) tea.Cmd {
 		f.HandleMsg(ready)
@@ -783,7 +783,7 @@ func TestGraphicsFeatureKeepsOnlyTheLatestImageAtOneWidth(t *testing.T) {
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	drill := NewChat(f.com)
 	f.DrillInChanged(drill)
-	images := f.ImagesFor(drill)
+	images := f.For(drill)
 	shown := showToolImage(t, f, drill, pngData(t, 20, 30))
 
 	// The result changed twice at the same width, the second time while the

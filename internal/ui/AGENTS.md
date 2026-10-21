@@ -96,7 +96,7 @@ Diagrams are the one exception that touches upstream-shaped code
 directly, because chat items are built in `UI` (`ExtractMessageItems`):
 
 - `UI` holds the feature in `m.graphics` whether or not diagrams are on,
-  and passes `m.graphics.ImagesFor(chat)` to `BuildToolDetailItems` for a
+  and passes `m.graphics.For(chat)` to `BuildToolDetailItems` for a
   tool drill-in. It holds the feature's `chat.DiagramRenderer` in
   `m.diagrams`, set in `New` (nil when `options.tui.diagrams` is off),
   gives it to the root chat
