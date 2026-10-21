@@ -79,6 +79,19 @@ them elsewhere with `--cwd`.
 Pinned sessions also sort to the top of the in-TUI session switcher with a
 `●` marker, and deleting one asks for extra confirmation.
 
+## Titles
+
+Anvil names a session after its first exchange, not just your opening
+prompt, so "can you look at this?" still gets a useful title. The small
+model writes it, falling back to the large model.
+
+From the command palette (`ctrl+p`):
+
+- **Rename Session** sets your own title, which Anvil then never changes.
+  `anvil session rename <id> <title>` does the same from the shell.
+- **Regenerate Title** writes a fresh one from the whole conversation so
+  far. It replaces a title you set yourself and hands naming back to Anvil.
+
 ## Branching
 
 See the [session branching guide](./guides/session-branching.md).

@@ -231,13 +231,45 @@ of context. Add `lazy_description` to defer their tools until needed:
 }
 ```
 
-Lazy servers connect at startup but their tool schemas stay out of the LLM
-context. The agent sees an `enable_mcp` tool listing available lazy servers
+Lazy servers don't connect at startup, and their tool schemas stay out of
+the LLM context until the server is enabled; the first enable connects it.
+The agent sees an `enable_mcp` tool listing available lazy servers
 and calls it when needed. You can also toggle servers manually via the MCP
 palette (Ctrl+P → "MCP Servers").
 
-Enabled state is branch-scoped — it persists for the current conversation
+Enabled state is branch-scoped: it persists for the current conversation
 branch and survives restarts.
+
+### OAuth
+
+Set `"auth": "oauth"` on an `http` or `sse` server to sign in with OAuth
+instead of a static header. Anvil discovers the server's OAuth endpoints,
+registers itself as a client, opens your browser, and stores the token in
+its database:
+
+```bash
+anvil mcp auth linear           # sign in
+anvil mcp auth linear --force   # sign in again even if the token is valid
+```
+
+You don't have to run it up front. When a server needs signing in, Anvil
+shows a toast; open **MCP Servers** from the palette (`ctrl+p`), select the
+server, and press `enter` to sign in without leaving the TUI. Tokens on
+`http` servers refresh on their own.
+
+Most servers need nothing more. For servers that don't support dynamic
+client registration, or that need specific scopes or a fixed callback,
+set these alongside `auth`:
+
+| Key | Meaning |
+| --- | --- |
+| `clientId`, `clientSecret` | A client you registered with the server yourself. The secret expands `$VAR` and `$(command)`. |
+| `scopes` | Scopes to request. Defaults to what the server asks for. |
+| `redirectUri` | A fixed callback such as `http://localhost:3118/callback`. Defaults to a random local port. |
+| `clientName` | The name Anvil registers under (default `Anvil MCP Client`). |
+
+OAuth servers get a 30 second connection `timeout` by default instead of
+10, to leave room for the token exchange.
 
 
 ## Ignoring Files
@@ -303,6 +335,36 @@ To disable desktop notifications, set `disable_notifications` to `true` in your
 configuration. On macOS, notifications currently lack icons due to platform
 limitations.
 
+## Context files
+
+Anvil adds these files from the working directory to every session's
+system prompt, so instructions written for other tools work as they are:
+
+- `AGENTS.md`, `agents.md`, `Agents.md`
+- `ANVIL.md`, `Anvil.md`, `anvil.md`, and their `.local.md` variants
+- `CLAUDE.md`, `CLAUDE.local.md`
+- `GEMINI.md`, `gemini.md`
+- `.github/copilot-instructions.md`, `.cursorrules`, and every file under
+  `.cursor/rules/`
+
+Every one that exists is loaded; none takes precedence over another. Anvil
+doesn't look in parent directories or in a global location, so add
+anything else with `options.context_paths`. Entries add to the defaults
+rather than replacing them, can be relative to the working directory or
+absolute (`~` and `$VAR` expand), and a directory loads every file inside
+it:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Broderick-Westrope/anvil/main/schema.json",
+  "options": {
+    "context_paths": ["~/.config/anvil/AGENTS.md", "docs/agents/"]
+  }
+}
+```
+
+Missing files are skipped silently.
+
 ## Initialization
 
 When you initialize a project, Anvil analyzes your codebase and creates
@@ -350,6 +412,47 @@ it creates. You can customize this behavior with the `attribution` option:
 - `generated_with`: When true (default), adds `💘 Generated with Anvil` line to
   commit messages and PR descriptions
 
+
+## TUI
+
+Options under `options.tui`:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `diagrams` | `true` | Render Mermaid diagrams as images. Needs a terminal with Kitty graphics; elsewhere the code block shows. |
+| `mouse` | `true` | Capture the mouse for clicks and scrolling. Turn it off to let your terminal or tmux handle selection. |
+| `compact_mode` | `false` | A denser layout |
+| `diff_mode` | Automatic | `unified` or `split` diffs in permission prompts. Unset picks split on windows 140 columns or wider. |
+| `transparent` | `false` | Don't paint a background. On by default in Apple Terminal. |
+| `completions.max_depth`, `completions.max_items` | Unlimited | Limit how far `@` file completion walks |
+
+`diagrams`, `compact_mode` and `transparent` take effect after
+`/reload-instance`; the rest apply on **Reload Config & Plugins**.
+
+To always show some tools' output in full rather than as one line, list
+them in `options.expanded_tools` (globs work, such as `"mcp_*"`).
+
+## Tools
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `tools.agentic_fetch.model` | The small model | `provider/model` for the web research subagent |
+| `tools.agentic_fetch.reasoning_effort` | The model's default | Its reasoning effort |
+| `tools.grep.timeout` | `"5s"` | How long a search may run |
+| `tools.glob.timeout` | `"30s"` | How long a file match may run |
+| `tools.ls.max_depth`, `tools.ls.max_items` | Unlimited (2 and 100 outside a git repo) | How much a directory listing returns |
+
+## Other options
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `options.request_timeout` | `120` | Seconds a model request may go without data before it's abandoned. `0` disables. |
+| `options.disable_auto_summarize` | `false` | Stop Anvil summarizing long conversations when the context fills |
+| `options.auto_lsp` | `true` | Start language servers automatically from project markers like `go.mod` |
+| `options.progress` | `true` | Show the terminal's progress indicator during long operations |
+| `options.background_jobs.wake_on_event` | `false` | Start a turn in an idle session when one of its background jobs finishes |
+| `options.project_directory` | `.anvil` at the git root | Where project state (logs, workspace config) lives |
+| `options.disable_default_providers` | `false` | Ignore the built-in provider list and use only the providers you configure |
 
 ## Environment Variables
 

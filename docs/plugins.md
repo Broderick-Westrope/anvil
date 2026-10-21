@@ -122,6 +122,66 @@ and `disabled_agents` to drop agents you don't want:
 }
 ```
 
+## Building your own
+
+A plugin can start as a single file. This walks through one agent, one
+skill and one command; each step works on its own.
+
+1. Make the directory and point Anvil at it:
+
+   ```bash
+   mkdir -p ~/dev/my-agents/{agents,skills/release-notes,commands/explain}
+   ```
+
+   ```json
+   { "plugins": [{ "path": "~/dev/my-agents" }] }
+   ```
+
+2. Add an agent at `agents/scout.md`, using the frontmatter in
+   [Writing an agent](#writing-an-agent). The `role` and `delegate_when`
+   lines are what the orchestrator reads when deciding whether to hand it
+   work, so be specific about the job. Keep `tools` as narrow as the job
+   allows; a read-only searcher doesn't need `bash` or `edit`.
+
+3. Add a skill at `skills/release-notes/SKILL.md`. The `description` is
+   what triggers it, so say when to use it rather than what it contains:
+
+   ```markdown
+   ---
+   name: release-notes
+   description: Writes release notes from merged PRs. Use when the user asks for a changelog or release notes.
+   ---
+
+   Gather merged PRs since the last tag with `gh pr list --state merged`...
+   ```
+
+   Put long reference material in files beside `SKILL.md` and point to
+   them by relative path; agents read them without a permission prompt.
+
+4. Add a command at `commands/explain/COMMAND.md`. Typing `/explain
+   main.go` sends the body with `$ARGUMENTS` replaced by `main.go`:
+
+   ```markdown
+   ---
+   description: Explain code in detail with examples
+   argument_hint: "<file-path-or-concept>"
+   ---
+
+   Explain $ARGUMENTS: what it does, why, and how it fits the codebase.
+   ```
+
+5. Run **Reload Config & Plugins** from the palette and check that
+   `/explain`, the skill and the agent show up. The reload message names
+   any plugin file Anvil couldn't load.
+
+dotagents has fuller examples of each:
+[agents](https://github.com/Broderick-Westrope/dotagents/tree/main/anvil/agents),
+[skills](https://github.com/Broderick-Westrope/dotagents/tree/main/skills)
+and
+[commands](https://github.com/Broderick-Westrope/dotagents/tree/main/anvil/commands),
+including [workflow commands](./extending.md#workflow-commands) like
+`/build`.
+
 ## Name clashes
 
 Between plugins, the one listed first in `plugins` wins. Your own skills
