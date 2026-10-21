@@ -61,12 +61,20 @@ func newTestMermaidFeature(t *testing.T, host *fakeDiagramHost, caps *common.Cap
 	f := newMermaidFeature(host, caps, &common.Common{Styles: &st})
 	f.exportDir = t.TempDir()
 	f.compileCacheDir = t.TempDir()
+	stubClipboard(f)
 	// Free the engines soon after a test stops using them.
 	f.idleTimeout = 200 * time.Millisecond
 	// Tests read results straight off the channel, so Observe mustn't
 	// hand back the blocking listen command.
 	f.listening = true
 	return f
+}
+
+// stubClipboard keeps tests off the system clipboard: CI may have none, and
+// a developer's shouldn't change.
+func stubClipboard(f *mermaidFeature) {
+	f.clipboardReady = func() error { return nil }
+	f.writeImage = func([]byte) error { return errors.New("no clipboard in tests") }
 }
 
 func kittyCaps() *common.Capabilities {
@@ -689,7 +697,8 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 	broken := &diagramEngines{}
 	tests := map[string]diagramRequest{
 		"image":  {key: diagramKey{hash: 1}, source: "A"},
-		"export": {key: diagramKey{hash: 2}, source: "A", export: true},
+		"export": {key: diagramKey{hash: 2}, source: "A", job: diagramJobExport},
+		"copy":   {key: diagramKey{hash: 3}, source: "A", job: diagramJobCopy},
 	}
 	for name, req := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -699,9 +708,14 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 			require.False(t, ok, "the engines are dropped")
 			switch msg := msg.(type) {
 			case diagramReadyMsg:
+				require.Equal(t, diagramJobRender, req.job)
 				require.Equal(t, req.key, msg.key)
 				require.ErrorContains(t, msg.err, "diagram renderer crashed")
 			case diagramExportedMsg:
+				require.Equal(t, diagramJobExport, req.job)
+				require.ErrorContains(t, msg.err, "diagram renderer crashed")
+			case diagramCopiedMsg:
+				require.Equal(t, diagramJobCopy, req.job)
 				require.ErrorContains(t, msg.err, "diagram renderer crashed")
 			default:
 				t.Fatalf("unexpected %T", msg)
@@ -795,6 +809,7 @@ func newIdleMermaidFeature(host *fakeDiagramHost, caps *common.Capabilities) *me
 	f := newMermaidFeature(host, caps, &common.Common{Styles: &st})
 	f.listening = true
 	f.openURL = func(string) error { return errors.New("no browser in tests") }
+	stubClipboard(f)
 	return f
 }
 

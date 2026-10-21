@@ -234,11 +234,21 @@ Terms with a specific meaning in this codebase are defined in
   code goes in wazero's compilation cache under the user cache dir
   (`anvil/wasm`), shared by every process, so only the first load after
   an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).
-  Colours come from
-  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a restart:
-  `ConfigStore.DiagramsEnabled` reads the startup snapshot, and both the
-  UI (a nil renderer means no split) and the system prompt line gate on
-  it. Design: `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  `Y` copies a diagram as a PNG: since Anvil keeps no pixels, the worker
+  renders it again (`diagramJobCopy`) at twice its layout size (within
+  `mermaid.MaxPixels`) on an opaque background, then writes it to the
+  clipboard itself, so copies land in order. `writeClipboardImage`
+  writes natively on macOS and Windows and through `wl-copy` or `xclip`
+  on other Unix desktops (the native X11 clipboard can't do large
+  transfers), giving up after 5 seconds. `imageClipboardReady` refuses
+  a copy that can't land before anything renders, and it's refused when
+  `SSH_CONNECTION` or `SSH_TTY` is set, since the clipboard isn't the
+  user's and OSC 52 carries only text. Colours come from
+  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a
+  restart: `ConfigStore.DiagramsEnabled` reads the startup snapshot,
+  and both the UI (a nil renderer means no split) and the system prompt
+  line gate on it. Design:
+  `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
   measurements and resvg workarounds:
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and

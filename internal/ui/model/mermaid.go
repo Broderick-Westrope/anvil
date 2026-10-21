@@ -53,6 +53,9 @@ const (
 	// diagramExportMaxAge is how long a page exported for the browser is
 	// kept; older ones are deleted when the next is written.
 	diagramExportMaxAge = 24 * time.Hour
+	// diagramCopyScale is the scale a copied image is drawn at: twice the
+	// layout's size, so it stays sharp on HiDPI screens.
+	diagramCopyScale = 2
 )
 
 // diagramKind is where a diagram is drawn.
@@ -108,10 +111,20 @@ type diagramRequest struct {
 	theme        mermaid.Theme
 	cellW, cellH int
 	maxCols      int
-	// export writes the diagram as a page to open in the browser instead
-	// of rasterizing it.
-	export bool
+	job          diagramJob
 }
+
+// diagramJob is what the worker makes of a request.
+type diagramJob int
+
+const (
+	// diagramJobRender rasterizes the diagram for the terminal.
+	diagramJobRender diagramJob = iota
+	// diagramJobExport writes it as a page to open in the browser.
+	diagramJobExport
+	// diagramJobCopy encodes it as a PNG for the clipboard.
+	diagramJobCopy
+)
 
 type diagramReadyMsg struct {
 	key        diagramKey
@@ -135,9 +148,13 @@ type diagramExportedMsg struct {
 	err  error
 }
 
+type diagramCopiedMsg struct {
+	err error
+}
+
 // mermaidFeature renders ```mermaid fences in finished assistant messages
-// as Kitty graphics, shows one full size in a drill-in, and opens one in
-// the browser. See internal/mermaid.
+// as Kitty graphics, shows one full size in a drill-in, opens one in the
+// browser, and copies one to the clipboard. See internal/mermaid.
 type mermaidFeature struct {
 	host featureHost
 	caps *common.Capabilities
@@ -180,8 +197,13 @@ type mermaidFeature struct {
 	// newRenderer loads the layout engine; tests make it fail.
 	newRenderer func() (*mermaid.Renderer, error)
 	// openURL opens a page in the user's browser.
-	openURL   func(string) error
-	listening bool
+	openURL func(string) error
+	// writeImage puts a PNG on the system clipboard. The worker calls it.
+	writeImage func([]byte) error
+	// clipboardReady says why writeImage can't work, if it can't, before
+	// a diagram renders for it.
+	clipboardReady func() error
+	listening      bool
 	// drawn is what diagrams were last drawn under.
 	drawn drawConditions
 }
@@ -218,6 +240,8 @@ func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.
 		returnMemory:    debug.FreeOSMemory,
 		newRenderer:     mermaid.NewRenderer,
 		openURL:         browser.OpenURL,
+		writeImage:      writeClipboardImage,
+		clipboardReady:  imageClipboardReady,
 	}
 }
 
@@ -456,6 +480,14 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case chat.DiagramOpenMsg:
 		return f.open(msg), true
+	case chat.DiagramCopyImageMsg:
+		return f.copyImage(msg), true
+	case diagramCopiedMsg:
+		if msg.err != nil {
+			slog.Warn("Failed to copy mermaid diagram image", "err", msg.err)
+			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("copy diagram image: %w", msg.err))), true
+		}
+		return tea.Batch(f.listen, util.ReportInfo("Diagram image copied to clipboard")), true
 	case diagramExportedMsg:
 		if msg.err != nil {
 			slog.Warn("Failed to export mermaid diagram", "err", msg.err)
@@ -512,7 +544,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 	if msg.External {
 		theme := f.theme()
-		req := diagramRequest{key: diagramKey{hash: f.imageHash(msg.Source, theme["pele-bg"])}, source: msg.Source, theme: theme, export: true}
+		req := diagramRequest{key: diagramKey{hash: f.imageHash(msg.Source, theme["pele-bg"])}, source: msg.Source, theme: theme, job: diagramJobExport}
 		if !f.enqueue(req) {
 			return util.ReportWarn("Diagram renderer is busy; try again")
 		}
@@ -531,9 +563,32 @@ func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 	return cmd
 }
 
+// copyImage queues a render of the diagram for the clipboard.
+func (f *mermaidFeature) copyImage(msg chat.DiagramCopyImageMsg) tea.Cmd {
+	if f.overSSH() {
+		// The clipboard is the remote machine's, and OSC 52, which copies
+		// the source over SSH, only carries text.
+		return util.ReportWarn("Can't copy a diagram image over SSH; c/y copies its source")
+	}
+	if err := f.clipboardReady(); err != nil {
+		return util.ReportError(fmt.Errorf("copy diagram image: %w", err))
+	}
+	req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy}
+	if !f.enqueue(req) {
+		return util.ReportWarn("Diagram renderer is busy; try again")
+	}
+	return util.ReportInfo("Copying diagram image")
+}
+
 func (f *mermaidFeature) tmux() bool {
 	_, ok := f.caps.Env.LookupEnv("TMUX")
 	return ok
+}
+
+func (f *mermaidFeature) overSSH() bool {
+	_, conn := f.caps.Env.LookupEnv("SSH_CONNECTION")
+	_, tty := f.caps.Env.LookupEnv("SSH_TTY")
+	return conn || tty
 }
 
 // evictLocked drops transmitted diagrams drawn at a width their kind no
