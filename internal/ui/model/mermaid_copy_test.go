@@ -2,10 +2,14 @@ package model
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"image/png"
+	"math"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -27,16 +31,23 @@ func TestMermaidFeatureCopiesADiagramAsAPNG(t *testing.T) {
 			t.Parallel()
 
 			f := newTestMermaidFeature(t, &fakeDiagramHost{}, tc.caps)
-			cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "flowchart LR\n A --> B\n"})
+			const src = "flowchart LR\n A --> B\n"
+			cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: src})
 			require.True(t, handled)
 			require.Equal(t, util.NewInfoMsg("Copying diagram image"), cmd())
 
 			copied, ok := waitResult(t, f).(diagramCopiedMsg)
 			require.True(t, ok)
 			require.NoError(t, copied.err)
+			require.Equal(t, uint64(1), copied.seq, "the first copy")
 			img, err := png.Decode(bytes.NewReader(copied.png))
 			require.NoError(t, err)
-			require.Greater(t, img.Bounds().Dx(), 100, "drawn at more than the layout's size")
+			pele, err := mermaid.NewRenderer()
+			require.NoError(t, err)
+			layout, err := pele.Render(context.Background(), src, mermaid.Options{})
+			require.NoError(t, err)
+			require.Equal(t, int(math.Ceil(2*layout.Width)), img.Bounds().Dx(), "twice the layout's size")
+			require.Equal(t, int(math.Ceil(2*layout.Height)), img.Bounds().Dy(), "twice the layout's size")
 			require.Empty(t, f.entries, "copying caches nothing")
 
 			corner := img.At(0, 0)
@@ -115,6 +126,44 @@ func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
 			require.True(t, handled)
 			require.Equal(t, util.NewWarnMsg("Can't copy a diagram image over SSH; c/y copies its source"), cmd())
 			require.Empty(t, f.requests, "nothing renders")
+		})
+	}
+}
+
+func TestMermaidFeatureLeavesTheNewestCopyOnTheClipboard(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		order []int
+		want  [][]byte
+	}{
+		"in order":          {order: []int{0, 1}, want: [][]byte{[]byte("A"), []byte("B")}},
+		"older one is late": {order: []int{1, 0}, want: [][]byte{[]byte("B")}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+			var written [][]byte
+			f.writeImage = func(png []byte) error {
+				written = append(written, png)
+				return nil
+			}
+			var writes []tea.Cmd
+			for _, source := range []string{"A", "B"} {
+				f.HandleMsg(chat.DiagramCopyImageMsg{Source: source})
+				req := <-f.requests
+				require.Equal(t, diagramJobCopy, req.job)
+				cmd, _ := f.HandleMsg(diagramCopiedMsg{png: []byte(req.source), seq: req.seq})
+				writes = append(writes, cmd)
+			}
+			// The two writes are batched separately, so Bubble Tea may run
+			// them in either order.
+			for _, i := range tc.order {
+				browserCmdMsg(t, writes[i])
+			}
+			require.Equal(t, tc.want, written)
 		})
 	}
 }

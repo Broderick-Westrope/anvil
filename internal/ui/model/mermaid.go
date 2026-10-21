@@ -112,6 +112,9 @@ type diagramRequest struct {
 	cellW, cellH int
 	maxCols      int
 	job          diagramJob
+	// seq orders copies, so an older one can't replace a newer one on the
+	// clipboard.
+	seq uint64
 }
 
 // diagramJob is what the worker makes of a request.
@@ -150,6 +153,7 @@ type diagramExportedMsg struct {
 
 type diagramCopiedMsg struct {
 	png []byte
+	seq uint64
 	err error
 }
 
@@ -201,7 +205,14 @@ type mermaidFeature struct {
 	openURL func(string) error
 	// writeImage puts a PNG on the system clipboard.
 	writeImage func([]byte) error
-	listening  bool
+	// copies numbers copy requests. Their writes run as separate commands,
+	// in no set order, so written, the newest one on the clipboard, lets
+	// an older one that comes late give way; copyMu covers written and
+	// the write itself.
+	copies    uint64
+	copyMu    sync.Mutex
+	written   uint64
+	listening bool
 	// drawn is what diagrams were last drawn under.
 	drawn drawConditions
 }
@@ -484,7 +495,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 			slog.Warn("Failed to render mermaid diagram for the clipboard", "err", msg.err)
 			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("copy diagram image: %w", msg.err))), true
 		}
-		return tea.Batch(f.listen, f.writeToClipboard(msg.png)), true
+		return tea.Batch(f.listen, f.writeToClipboard(msg.seq, msg.png)), true
 	case diagramExportedMsg:
 		if msg.err != nil {
 			slog.Warn("Failed to export mermaid diagram", "err", msg.err)
@@ -567,7 +578,8 @@ func (f *mermaidFeature) copyImage(msg chat.DiagramCopyImageMsg) tea.Cmd {
 		// the source over SSH, only carries text.
 		return util.ReportWarn("Can't copy a diagram image over SSH; c/y copies its source")
 	}
-	req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy}
+	f.copies++
+	req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy, seq: f.copies}
 	if !f.enqueue(req) {
 		return util.ReportWarn("Diagram renderer is busy; try again")
 	}

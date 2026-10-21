@@ -184,7 +184,7 @@ func requestFailed(req diagramRequest, err error) tea.Msg {
 // background, which the chat leaves transparent: pasted somewhere else, a
 // diagram drawn for a dark theme would be unreadable on a light page.
 func copyDiagram(e *diagramEngines, req diagramRequest) diagramCopiedMsg {
-	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{err: err} }
+	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{seq: req.seq, err: err} }
 	raster, err := e.rasterizer()
 	if err != nil {
 		return fail(err)
@@ -204,7 +204,7 @@ func copyDiagram(e *diagramEngines, req diagramRequest) diagramCopiedMsg {
 	if err := png.Encode(&buf, out); err != nil {
 		return fail(err)
 	}
-	return diagramCopiedMsg{png: buf.Bytes()}
+	return diagramCopiedMsg{png: buf.Bytes(), seq: req.seq}
 }
 
 func (f *mermaidFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
@@ -306,8 +306,16 @@ func (f *mermaidFeature) openInBrowser(path string) tea.Cmd {
 	}
 }
 
-func (f *mermaidFeature) writeToClipboard(png []byte) tea.Cmd {
+// writeToClipboard writes copy seq's PNG, unless a newer copy is already
+// there.
+func (f *mermaidFeature) writeToClipboard(seq uint64, png []byte) tea.Cmd {
 	return func() tea.Msg {
+		f.copyMu.Lock()
+		defer f.copyMu.Unlock()
+		if seq < f.written {
+			return nil
+		}
+		f.written = seq
 		if err := f.writeImage(png); err != nil {
 			return util.NewErrorMsg(fmt.Errorf("copy diagram image: %w", err))
 		}
