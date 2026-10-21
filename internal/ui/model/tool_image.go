@@ -17,15 +17,25 @@ import (
 	_ "golang.org/x/image/webp" // Registers the WebP decoder for tool images.
 )
 
-// FullImage implements chat.ImageRenderer.
+// FullImage implements chat.ImageRenderer, for when no drill-in is open;
+// drill-ins ask through ImagesFor.
 func (f *mermaidFeature) FullImage(data, mimeType string, width int) chat.DiagramView {
+	return f.fullImage(nil, data, mimeType, width)
+}
+
+// fullImage is a tool image as owner's drill-in shows it. It only renders
+// while owner is on top.
+func (f *mermaidFeature) fullImage(owner *Chat, data, mimeType string, width int) chat.DiagramView {
 	cellW, cellH := f.caps.CellSize()
 	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
+	if owner != f.top {
+		return chat.DiagramView{State: chat.DiagramPending}
+	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(data))
-	key := diagramKey{producer: producerBitmap, hash: h.Sum64(), width: width, kind: diagramFull, cellW: cellW, cellH: cellH}
+	key := diagramKey{producer: producerBitmap, hash: h.Sum64(), width: width, kind: diagramFull, cellW: cellW, cellH: cellH, gen: f.gen}
 	req := diagramRequest{key: key, data: data, mimeType: mimeType, cellW: cellW, cellH: cellH, maxCols: width}
 	return f.lookupRequest(req, true)
 }

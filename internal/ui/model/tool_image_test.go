@@ -12,10 +12,12 @@ import (
 	"image/png"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
+	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
 	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
@@ -260,4 +262,113 @@ func TestMermaidFeatureWarnsOnlyAboutImagesThatShouldHaveDecoded(t *testing.T) {
 
 	f.HandleMsg(requestImage(t, f, base64.StdEncoding.EncodeToString([]byte("not a png")), "image/png", 80))
 	require.Len(t, rec.warns, 1)
+}
+
+// showToolImage drives a tool image owned by c from request to shown.
+func showToolImage(t *testing.T, f *mermaidFeature, c *Chat, data string) diagramReadyMsg {
+	t.Helper()
+	images := f.ImagesFor(c)
+	require.Equal(t, chat.DiagramPending, images.FullImage(data, "image/png", 80).State)
+	ready := waitReady(t, f)
+	_, handled := f.HandleMsg(ready)
+	require.True(t, handled)
+	transmit(ready)
+	f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
+	require.Equal(t, chat.DiagramReady, images.FullImage(data, "image/png", 80).State)
+	return ready
+}
+
+// requireNothingQueued fails if f's worker was asked for anything.
+func requireNothingQueued(t *testing.T, f *mermaidFeature) {
+	t.Helper()
+	select {
+	case msg := <-f.results:
+		t.Fatalf("the worker was asked for something: %T", msg)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestMermaidFeatureFreesAToolImageWhenItsDrillInLeavesTheTop(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	ready := showToolImage(t, f, drill, pngData(t, 30, 30))
+
+	invalidations := host.invalidations
+	deletes := rawMsgs(f.DrillInChanged(nil))
+
+	require.Len(t, deletes, 1)
+	require.NotContains(t, f.entries, ready.key)
+	require.Empty(t, fimage.EncodingKitty.Render(ready.key.id(), ready.cols, ready.rows))
+	require.Greater(t, host.invalidations, invalidations, "chats re-render without it")
+}
+
+func TestMermaidFeatureACoveredDrillInQueuesNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	covered, top := NewChat(f.com), NewChat(f.com)
+	f.DrillInChanged(top)
+
+	data := pngData(t, 30, 30)
+	require.Equal(t, chat.DiagramPending, f.ImagesFor(covered).FullImage(data, "image/png", 80).State)
+	require.Equal(t, chat.DiagramPending, f.ForChat(covered).FullDiagram("flowchart LR\n A --> B\n", 80).State)
+	requireNothingQueued(t, f)
+
+	// Back on top, it renders again.
+	f.DrillInChanged(covered)
+	showToolImage(t, f, covered, data)
+}
+
+func TestMermaidFeatureDropsAResultFromAnEarlierOpening(t *testing.T) {
+	t.Parallel()
+
+	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	drill := NewChat(f.com)
+	data := pngData(t, 30, 30)
+	f.DrillInChanged(drill)
+	f.ImagesFor(drill).FullImage(data, "image/png", 80)
+	stale := waitReady(t, f)
+
+	// Closed and opened again while the first render was in flight.
+	f.DrillInChanged(nil)
+	f.DrillInChanged(drill)
+	require.Equal(t, chat.DiagramPending, f.ImagesFor(drill).FullImage(data, "image/png", 80).State)
+	fresh := waitReady(t, f)
+	require.NotEqual(t, stale.key.id(), fresh.key.id(), "each opening has its own terminal image")
+
+	_, handled := f.HandleMsg(stale)
+	require.True(t, handled)
+	require.NotContains(t, f.entries, stale.key)
+	require.Equal(t, chat.DiagramPending, f.ImagesFor(drill).FullImage(data, "image/png", 80).State, "the stale result shows nothing")
+
+	// The fresh one is shown, then the stale one's late transmit lands and
+	// is freed again, which leaves the fresh one in the terminal.
+	f.HandleMsg(fresh)
+	transmit(fresh)
+	f.HandleMsg(diagramShownMsg{key: fresh.key, cols: fresh.cols, rows: fresh.rows})
+	transmit(stale)
+	cmd, _ := f.HandleMsg(diagramShownMsg{key: stale.key, cols: stale.cols, rows: stale.rows})
+	require.Len(t, rawMsgs(cmd), 1)
+	require.Equal(t, chat.DiagramReady, f.ImagesFor(drill).FullImage(data, "image/png", 80).State)
+	require.NotEmpty(t, fimage.EncodingKitty.Render(fresh.key.id(), fresh.cols, fresh.rows))
+}
+
+func TestMermaidFeatureADiagramDrillInFreesAToolImage(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{}
+	f := newTestMermaidFeature(t, host, kittyCaps())
+	tool := NewChat(f.com)
+	f.DrillInChanged(tool)
+	ready := showToolImage(t, f, tool, pngData(t, 30, 30))
+
+	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n"})
+	deletes := rawMsgs(f.DrillInChanged(host.drills[0]))
+
+	require.Len(t, deletes, 1)
+	require.NotContains(t, f.entries, ready.key)
 }

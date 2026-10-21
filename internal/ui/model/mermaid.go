@@ -72,10 +72,13 @@ type diagramKey struct {
 	width        int
 	kind         diagramKind
 	cellW, cellH int
+	// gen is the drill-in opening a full-size image belongs to, so a
+	// result or a delete from an earlier opening never touches it.
+	gen uint64
 }
 
 func (k diagramKey) id() string {
-	return fmt.Sprintf("%s-%x-%d-%d-%dx%d", k.producer, k.hash, k.width, k.kind, k.cellW, k.cellH)
+	return fmt.Sprintf("%s-%x-%d-%d-%dx%d-%d", k.producer, k.hash, k.width, k.kind, k.cellW, k.cellH, k.gen)
 }
 
 // producer is what turns a request into an image.
@@ -178,8 +181,11 @@ type mermaidFeature struct {
 	// transparent.
 	termBg string
 
-	// drill is the open diagram drill-in's chat, or nil.
-	drill *Chat
+	// top is the drill-in on top, the only one whose full-size image may
+	// be in the terminal, and gen counts the times it changed. Both are
+	// only touched on the UI goroutine.
+	top *Chat
+	gen uint64
 
 	requests    chan diagramRequest
 	results     chan tea.Msg
@@ -248,13 +254,23 @@ func (f *mermaidFeature) Diagram(source string, width int) chat.DiagramView {
 	return f.lookup(source, width, diagramInline, true)
 }
 
-// FullDiagram implements chat.DiagramRenderer. When the chat's image of the
-// diagram wasn't squeezed it is already full size, so the drill-in shows
-// it; otherwise it stands in while the full-size image renders.
+// FullDiagram implements chat.DiagramRenderer, for when no drill-in is
+// open; drill-ins ask through ForChat.
 func (f *mermaidFeature) FullDiagram(source string, width int) chat.DiagramView {
+	return f.fullDiagram(nil, source, width)
+}
+
+// fullDiagram is the diagram as owner's drill-in shows it. When the chat's
+// image of the diagram wasn't squeezed it is already full size, so the
+// drill-in shows it; otherwise it stands in while the full-size image
+// renders, which it only does while owner is on top.
+func (f *mermaidFeature) fullDiagram(owner *Chat, source string, width int) chat.DiagramView {
 	inline, squeezed := f.inlineImage(source, width)
 	if inline != "" && !squeezed {
 		return chat.DiagramView{State: chat.DiagramReady, Image: inline}
+	}
+	if _, ok := f.imageKey(source, width, diagramFull); ok && owner != f.top {
+		return chat.DiagramView{State: chat.DiagramPending, Image: inline}
 	}
 	view := f.lookup(source, width, diagramFull, true)
 	if view.State == chat.DiagramPending {
@@ -377,7 +393,11 @@ func (f *mermaidFeature) imageKey(source string, width int, kind diagramKind) (d
 	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
 		return diagramKey{}, false
 	}
-	return diagramKey{hash: f.imageHash(source, f.background()), width: width, kind: kind, cellW: cellW, cellH: cellH}, true
+	key := diagramKey{hash: f.imageHash(source, f.background()), width: width, kind: kind, cellW: cellW, cellH: cellH}
+	if kind == diagramFull {
+		key.gen = f.gen
+	}
+	return key, true
 }
 
 // lookup finds source's image at width, queueing its render if there is
@@ -467,10 +487,6 @@ func (f *mermaidFeature) Observe(msg tea.Msg) tea.Cmd {
 		}
 		f.drawn = now
 	}
-	if f.drill != nil && !f.host.DrillInOpen(f.drill) {
-		f.drill = nil
-		cmds = append(cmds, f.forgetKind(diagramFull))
-	}
 	if !f.listening {
 		f.listening = true
 		cmds = append(cmds, f.listen, tea.RequestBackgroundColor)
@@ -559,16 +575,56 @@ func (f *mermaidFeature) open(msg chat.DiagramOpenMsg) tea.Cmd {
 		return util.ReportInfo("Opening diagram in browser")
 	}
 	c := NewChat(f.com)
-	c.SetMessages(chat.NewDiagramDetailItem(f.com.Styles, msg.Source, f))
+	c.SetMessages(chat.NewDiagramDetailItem(f.com.Styles, msg.Source, f.ForChat(c)))
 	c.SelectLast()
 	f.host.PushDrillIn(c, "Diagram")
-	var cmd tea.Cmd
-	if f.drill != nil {
-		// Replacing one diagram drill-in with another.
-		cmd = f.forgetKind(diagramFull)
+	return nil
+}
+
+// DrillInChanged implements drillInFeature. Only the drill-in on top may
+// hold a full-size image, so the last one's is freed, and the chats
+// re-render so the new top asks for its own.
+func (f *mermaidFeature) DrillInChanged(top *Chat) tea.Cmd {
+	if top == f.top {
+		return nil
 	}
-	f.drill = c
+	f.top = top
+	f.gen++
+	cmd := f.forgetKind(diagramFull)
+	f.host.InvalidateDiagrams()
 	return cmd
+}
+
+// ForChat is the renderer for the items of c, a drill-in: they get
+// full-size images only while c is on top.
+func (f *mermaidFeature) ForChat(c *Chat) chat.DiagramRenderer { return ownedGraphics{f: f, owner: c} }
+
+// ImagesFor is ForChat for tool images, or nil when f is.
+func (f *mermaidFeature) ImagesFor(c *Chat) chat.ImageRenderer {
+	if f == nil {
+		return nil
+	}
+	return ownedGraphics{f: f, owner: c}
+}
+
+// ownedGraphics is the feature as one drill-in's items see it.
+type ownedGraphics struct {
+	f     *mermaidFeature
+	owner *Chat
+}
+
+func (o ownedGraphics) Diagram(source string, width int) chat.DiagramView {
+	return o.f.Diagram(source, width)
+}
+
+func (o ownedGraphics) FullDiagram(source string, width int) chat.DiagramView {
+	return o.f.fullDiagram(o.owner, source, width)
+}
+
+func (o ownedGraphics) InView(sources []string, width int) { o.f.InView(sources, width) }
+
+func (o ownedGraphics) FullImage(data, mimeType string, width int) chat.DiagramView {
+	return o.f.fullImage(o.owner, data, mimeType, width)
 }
 
 func (f *mermaidFeature) tmux() bool {

@@ -353,8 +353,9 @@ type UI struct {
 	// diagrams renders Mermaid diagrams in the chat, or is nil when
 	// options.tui.diagrams is off.
 	diagrams chat.DiagramRenderer
-	// images draws the images tools return in their drill-ins.
-	images chat.ImageRenderer
+	// graphics draws diagrams and the images tools return. It exists
+	// whether or not diagrams are on.
+	graphics *mermaidFeature
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -482,7 +483,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
 	graphics := newMermaidFeature(uiHost{ui}, &ui.caps, com)
 	ui.features.register(graphics)
-	ui.images = graphics
+	ui.graphics = graphics
 	if com.Workspace.DiagramsEnabled() {
 		ui.diagrams = graphics
 		ui.chat.SetDiagrams(graphics)
@@ -1447,8 +1448,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			break
 		}
-		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem, m.images)
 		newChat := NewChat(m.com)
+		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem, m.graphics.ImagesFor(newChat))
 		// Follow when the tool is still running so streaming output
 		// auto-scrolls; otherwise start at the top.
 		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)

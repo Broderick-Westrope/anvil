@@ -305,6 +305,7 @@ func TestMermaidFeatureOpensDrillIn(t *testing.T) {
 	require.True(t, handled)
 	require.Nil(t, cmd)
 	require.Equal(t, []string{"Diagram"}, host.labels)
+	f.DrillInChanged(host.drills[0])
 	item, ok := host.drills[0].MessageItems()[0].(*chat.DiagramDetailItem)
 	require.True(t, ok)
 
@@ -322,11 +323,9 @@ func TestMermaidFeatureOpensDrillIn(t *testing.T) {
 	require.Contains(t, item.RawRender(80), string(kitty.Placeholder))
 
 	// Closing the drill-in frees the full-size image.
-	host.drills = nil
-	deletes := rawMsgs(f.Observe(nil))
+	deletes := rawMsgs(f.DrillInChanged(nil))
 	require.Len(t, deletes, 1)
 	require.NotContains(t, f.entries, full.key)
-	require.Nil(t, f.drill)
 }
 
 func TestMermaidFeatureWithoutKittyOpensTheCodeBlock(t *testing.T) {
@@ -429,6 +428,7 @@ func TestMermaidFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
 	host := &fakeDiagramHost{}
 	f := newTestMermaidFeature(t, host, kittyCaps())
 	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n"})
+	f.DrillInChanged(host.drills[0])
 	item := host.drills[0].MessageItems()[0].(*chat.DiagramDetailItem)
 	item.RawRender(80)
 	full := waitReady(t, f)
@@ -436,8 +436,7 @@ func TestMermaidFeatureFreesAnImageForgottenWhileItTransmits(t *testing.T) {
 	require.True(t, handled)
 
 	// The drill-in closes before the transmit command runs.
-	host.drills = nil
-	f.Observe(nil)
+	f.DrillInChanged(nil)
 	transmit(full)
 	require.NotEmpty(t, fimage.EncodingKitty.Render(full.key.id(), full.cols, full.rows), "the late transmit cached it")
 
@@ -995,30 +994,31 @@ func fullEntry(f *mermaidFeature) diagramKey {
 	return key
 }
 
-func TestMermaidFeatureObserveKeepsFullImagesWithoutAClosedDrillIn(t *testing.T) {
+func TestMermaidFeatureKeepsFullImagesWhileTheTopDrillInStays(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
 	f := newIdleMermaidFeature(host, kittyCaps())
 	key := fullEntry(f)
 	f.Observe(nil)
-	require.Contains(t, f.entries, key, "no drill-in was open")
+	require.Contains(t, f.entries, key, "observing frees nothing")
 
-	f.drill = NewChat(f.com)
-	host.drills = []*Chat{f.drill}
-	f.Observe(nil)
-	require.Contains(t, f.entries, key, "its drill-in is still open")
+	require.Nil(t, f.DrillInChanged(nil), "no drill-in was open, and none is")
+	require.Contains(t, f.entries, key)
 }
 
-func TestMermaidFeatureFirstDrillInKeepsFullImages(t *testing.T) {
+func TestMermaidFeatureReplacingADrillInFreesItsImage(t *testing.T) {
 	t.Parallel()
 
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, &common.Capabilities{})
-	key := fullEntry(f)
+	host := &fakeDiagramHost{}
+	f := newIdleMermaidFeature(host, &common.Capabilities{})
 	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n A --> B\n"})
-	require.Contains(t, f.entries, key, "nothing to replace")
+	f.DrillInChanged(host.drills[0])
+	key := fullEntry(f)
 
 	f.HandleMsg(chat.DiagramOpenMsg{Source: "flowchart LR\n C --> D\n"})
+	require.Contains(t, f.entries, key, "freed when the new drill-in is on top, not when it is pushed")
+	f.DrillInChanged(host.drills[1])
 	require.NotContains(t, f.entries, key, "the replaced drill-in's image is freed")
 }
 
