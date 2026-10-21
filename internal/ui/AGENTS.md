@@ -99,7 +99,7 @@ directly, because chat items are built in `UI` (`ExtractMessageItems`):
   with `Chat.SetDiagrams`, and passes it to every `ExtractMessageItems` call
   except `loadNestedToolCalls`, whose assistant text is never shown.
 - `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
-- `selectedItemBindings` adds the diagram node's help entry.
+- `selectedItemBindings` adds the diagram node's help entries.
 - `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
   message's `<id>#<n>` nodes, `Chat.HandleDelayedClick` opens drill-ins
   through `chat.ClickDrillInHandler`, and `sourceSelection` copies a

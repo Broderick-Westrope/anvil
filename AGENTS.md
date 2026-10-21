@@ -240,12 +240,14 @@ Terms with a specific meaning in this codebase are defined in
   clipboard itself, so copies land in order. `writeClipboardImage`
   writes natively on macOS and Windows and through `wl-copy` or `xclip`
   on other Unix desktops (the native X11 clipboard can't do large
-  transfers). It's refused when `SSH_CONNECTION` or `SSH_TTY` is set,
-  since the clipboard isn't the user's and OSC 52 carries only text.
-  Colours come from `Styles.Diagram`. `options.tui.diagrams` (default on) needs a restart:
-  `ConfigStore.DiagramsEnabled` reads the startup snapshot, and both the
-  UI (a nil renderer means no split) and the system prompt line gate on
-  it. Design: `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  transfers), giving up after 5 seconds. `imageClipboardReady` refuses
+  a copy that can't land before anything renders, and it's refused when
+  `SSH_CONNECTION` or `SSH_TTY` is set, since the clipboard isn't the
+  user's and OSC 52 carries only text. Colours come from
+  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a
+  restart: `ConfigStore.DiagramsEnabled` reads the startup snapshot,
+  and both the UI (a nil renderer means no split) and the system prompt
+  line gate on it. Design: `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
   measurements and resvg workarounds:
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
