@@ -518,7 +518,7 @@ func TestGraphicsFeatureReportsAToolImageItCantOpen(t *testing.T) {
 				_ = os.WriteFile(file, nil, 0o600)
 				f.exportDir = filepath.Join(file, "images")
 			},
-			reason: "open image",
+			reason: "open image: create export dir",
 		},
 	}
 	for name, tc := range tests {

@@ -237,12 +237,12 @@ func writeImage(dir, data, ext string) (string, error) {
 		return "", fmt.Errorf("decode image data: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+		return "", fmt.Errorf("create export dir: %w", err)
 	}
 	pruneExports(dir)
 	path := filepath.Join(dir, fmt.Sprintf("image-%x%s", xxh3.Hash(raw), ext))
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		return "", err
+		return "", fmt.Errorf("write image: %w", err)
 	}
 	return path, nil
 }
