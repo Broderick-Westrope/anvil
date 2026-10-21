@@ -45,7 +45,8 @@ func (o *toolDetailOutputItem) renderImage(res *message.ToolResult, width int) s
 	}
 	inner := max(1, width-lipgloss.Width(prefix))
 	view := o.images.FullImage(res.Data, res.MIMEType, inner)
-	hint := o.sty.Header.Keystroke.Render("o") + " " + o.sty.Header.KeystrokeTip.Render("open in viewer")
+	hint := o.sty.Header.Keystroke.Render("o") + " " + o.sty.Header.KeystrokeTip.Render("open in viewer") +
+		"  " + o.sty.Header.Keystroke.Render("Y") + " " + o.sty.Header.KeystrokeTip.Render("copy image")
 	parts := []string{hint, ""}
 	// The placeholder for an image without text says nothing the image
 	// doesn't.
@@ -99,13 +100,27 @@ type ImageOpenMsg struct {
 	Data string
 }
 
+// ImageCopyMsg asks for a tool image, base64 data, to be copied to the
+// clipboard as a PNG.
+type ImageCopyMsg struct {
+	Data string
+}
+
 // HandleKeyEvent implements KeyEventHandler: o opens the image on screen
-// in the viewer, even when Anvil can't draw it.
+// in the viewer and Y copies it, even when Anvil can't draw it.
 func (o *toolDetailOutputItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	res := o.shownImage
-	if res == nil || key.String() != "o" {
+	if res == nil {
 		return false, nil
 	}
-	msg := ImageOpenMsg{Data: res.Data}
+	var msg tea.Msg
+	switch key.String() {
+	case "o":
+		msg = ImageOpenMsg{Data: res.Data}
+	case "Y":
+		msg = ImageCopyMsg{Data: res.Data}
+	default:
+		return false, nil
+	}
 	return true, func() tea.Msg { return msg }
 }

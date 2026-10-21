@@ -308,3 +308,17 @@ func TestShowsToolImage(t *testing.T) {
 	require.False(t, ShowsToolImage(text))
 	require.False(t, ShowsToolImage(nil))
 }
+
+func TestToolDetailOutputCopiesTheImageItLastDrew(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
+	out := outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{view: DiagramView{State: DiagramReady, Image: "[[IMAGE]]"}}))
+	require.Contains(t, ansi.Strip(out.Render(80)), "Y copy image")
+
+	handled, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'Y', Text: "Y"})
+
+	require.True(t, handled)
+	require.Equal(t, ImageCopyMsg{Data: "aGVsbG8="}, cmd())
+}
