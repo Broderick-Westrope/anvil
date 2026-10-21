@@ -3,6 +3,7 @@ package model
 import (
 	"cmp"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"image"
@@ -489,7 +490,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		return tea.Batch(f.listen, f.openInBrowser(msg.path)), true
 	case diagramReadyMsg:
 		if msg.err != nil {
-			slog.Warn("Failed to render mermaid diagram", "err", msg.err)
+			logRenderFailure(msg.key, msg.err)
 			f.mu.Lock()
 			e := f.entries[msg.key]
 			if e != nil {
@@ -531,6 +532,20 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		return evict, true
 	}
 	return nil, false
+}
+
+// logRenderFailure logs why an image didn't render: a warning, unless the
+// image is one Anvil doesn't try to show.
+func logRenderFailure(key diagramKey, err error) {
+	if key.producer == producerBitmap {
+		if errors.As(err, new(undisplayableError)) {
+			slog.Debug("Tool image not displayable", "err", err)
+			return
+		}
+		slog.Warn("Failed to decode tool image", "err", err)
+		return
+	}
+	slog.Warn("Failed to render mermaid diagram", "err", err)
 }
 
 // open shows a diagram in a drill-in, or in the browser when asked to.

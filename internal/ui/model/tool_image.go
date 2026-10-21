@@ -30,32 +30,77 @@ func (f *mermaidFeature) FullImage(data, mimeType string, width int) chat.Diagra
 	return f.lookupRequest(req, true)
 }
 
+// Bitmap limits. A source past them isn't decoded: decoding allocates
+// its full RGBA before it is shrunk to fit.
+const (
+	bitmapMaxSide         = 8192
+	bitmapMaxSourcePixels = 32 << 20
+)
+
+// bitmapTypes are the image types tool images are decoded from.
+var bitmapTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
+
+// undisplayableError is an image Anvil doesn't try to show. It is
+// expected, unlike a decode failure, so it isn't worth a warning.
+type undisplayableError struct{ reason string }
+
+func (e undisplayableError) Error() string { return e.reason }
+
 // renderBitmap decodes req's image and fits it to the drill-in: actual
 // size, one image pixel per screen pixel, shrunk to fit but never
 // enlarged, and padded to whole cells.
 func renderBitmap(req diagramRequest) diagramReadyMsg {
 	fail := func(err error) diagramReadyMsg { return diagramReadyMsg{key: req.key, err: err} }
+	if !bitmapTypes[req.mimeType] {
+		return fail(undisplayableError{"unsupported image type " + req.mimeType})
+	}
 	raw, err := base64.StdEncoding.DecodeString(req.data)
 	if err != nil {
 		return fail(fmt.Errorf("decode image data: %w", err))
 	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return fail(fmt.Errorf("decode image: %w", err))
+	}
+	if cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide || cfg.Width*cfg.Height > bitmapMaxSourcePixels {
+		return fail(undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)})
+	}
+	// For an animated GIF this is the first frame.
 	img, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return fail(fmt.Errorf("decode image: %w", err))
 	}
-	b := img.Bounds()
-	w, h := float64(b.Dx()), float64(b.Dy())
-	cw, ch := float64(req.cellW), float64(req.cellH)
-	scale := math.Min(1, float64(req.maxCols)*cw/w)
-	scale = math.Min(scale, diagramMaxFullRows*ch/h)
-	scale = math.Min(scale, math.Sqrt(diagramFullMaxPixels/(w*h)))
-	if scale < 1 {
-		img = imaging.Resize(img, max(1, int(w*scale)), max(1, int(h*scale)), imaging.Lanczos)
-		b = img.Bounds()
+	fit := fitBitmap(img.Bounds().Dx(), img.Bounds().Dy(), req)
+	if fit.w != img.Bounds().Dx() || fit.h != img.Bounds().Dy() {
+		img = imaging.Resize(img, fit.w, fit.h, imaging.Lanczos)
 	}
-	cols := int(math.Ceil(float64(b.Dx()) / cw))
-	rows := int(math.Ceil(float64(b.Dy()) / ch))
-	padded := image.NewRGBA(image.Rect(0, 0, cols*req.cellW, rows*req.cellH))
+	b := img.Bounds()
+	padded := image.NewRGBA(image.Rect(0, 0, fit.cols*req.cellW, fit.rows*req.cellH))
 	draw.Draw(padded, b.Sub(b.Min), img, b.Min, draw.Src)
-	return diagramReadyMsg{key: req.key, img: padded, cols: cols, rows: rows, cellW: req.cellW, cellH: req.cellH}
+	return diagramReadyMsg{key: req.key, img: padded, cols: fit.cols, rows: fit.rows, cellW: req.cellW, cellH: req.cellH}
+}
+
+// bitmapFit is the size a bitmap is drawn at, in pixels and in cells.
+type bitmapFit struct {
+	w, h, cols, rows int
+}
+
+// fitBitmap fits a w×h bitmap within req's width, the drill-in's rows and,
+// once padded to whole cells, its pixels.
+func fitBitmap(w, h int, req diagramRequest) bitmapFit {
+	cw, ch := float64(req.cellW), float64(req.cellH)
+	fw, fh := float64(w), float64(h)
+	scale := math.Min(1, float64(req.maxCols)*cw/fw)
+	scale = math.Min(scale, diagramMaxFullRows*ch/fh)
+	scale = math.Min(scale, math.Sqrt(diagramFullMaxPixels/(fw*fh)))
+	for {
+		fit := bitmapFit{w: max(1, int(fw*scale)), h: max(1, int(fh*scale))}
+		fit.cols = int(math.Ceil(float64(fit.w) / cw))
+		fit.rows = int(math.Ceil(float64(fit.h) / ch))
+		padded := fit.cols * req.cellW * fit.rows * req.cellH
+		if padded <= diagramFullMaxPixels {
+			return fit
+		}
+		scale *= math.Sqrt(diagramFullMaxPixels/float64(padded)) * 0.999
+	}
 }
