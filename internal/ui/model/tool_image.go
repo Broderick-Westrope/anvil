@@ -201,16 +201,17 @@ func fitBitmap(w, h int, req diagramRequest) bitmapFit {
 
 // imageExts are the image types o opens, by the type their bytes sniff as,
 // and the extensions they are written with so the OS opens them in its
-// viewer. They are raster types that carry no code: a tool result is
-// untrusted, and the OS opens types such as SVG or HTML in a browser,
-// which would run scripts in them. The bytes decide, not the result's
-// MIME type, which the tool chose and some openers (xdg-open) ignore.
+// viewer. A tool result is untrusted, and the OS opens types such as SVG
+// or HTML in a browser, which would run scripts in them, so these are
+// raster types that carry no code and have a real magic number (not BMP:
+// anything starting "BM" sniffs as one). The bytes decide, not the
+// result's MIME type, which the tool chose and some openers (xdg-open)
+// ignore.
 var imageExts = map[string]string{
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
 	"image/gif":  ".gif",
 	"image/webp": ".webp",
-	"image/bmp":  ".bmp",
 }
 
 // openImage writes a tool image's bytes, exactly as the model saw them, to
@@ -226,7 +227,7 @@ func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
 		}
 		ext, ok := imageExts[http.DetectContentType(raw)]
 		if !ok {
-			return util.NewWarnMsg("Won't open this image: it isn't a known raster image, which can't run code")
+			return util.NewWarnMsg("Won't open this image: only PNG, JPEG, GIF and WebP open, since other types can run scripts")
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fail(fmt.Errorf("create export dir: %w", err))

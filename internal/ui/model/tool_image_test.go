@@ -468,14 +468,12 @@ func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		raw      []byte
-		mimeType string
-		ext      string
+		raw []byte
+		ext string
 	}{
-		"png":                         {raw: []byte("\x89PNG\r\n\x1a\nthe bytes"), mimeType: "image/png", ext: ".png"},
-		"jpeg":                        {raw: []byte("\xff\xd8\xffthe bytes"), mimeType: "image/jpeg", ext: ".jpg"},
-		"bmp it can't draw":           {raw: []byte("BMthe bytes"), mimeType: "image/bmp", ext: ".bmp"},
-		"png labelled something else": {raw: []byte("\x89PNG\r\n\x1a\nthe bytes"), mimeType: "image/x-made-up", ext: ".png"},
+		"png":  {raw: []byte("\x89PNG\r\n\x1a\nthe bytes"), ext: ".png"},
+		"jpeg": {raw: []byte("\xff\xd8\xffthe bytes"), ext: ".jpg"},
+		"gif":  {raw: []byte("GIF89athe bytes"), ext: ".gif"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -486,7 +484,7 @@ func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 			f.openURL = func(u string) error { opened = u; return nil }
 			data := base64.StdEncoding.EncodeToString(tc.raw)
 
-			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: data, MIMEType: tc.mimeType})
+			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: data})
 			require.True(t, handled)
 			require.Equal(t, util.NewInfoMsg("Opened image in viewer"), cmd())
 
@@ -535,7 +533,7 @@ func TestGraphicsFeatureReportsAToolImageItCantOpen(t *testing.T) {
 			f.openURL = func(string) error { return nil }
 			tc.setup(f)
 
-			cmd, _ := f.HandleMsg(chat.ImageOpenMsg{Data: tc.data, MIMEType: "image/png"})
+			cmd, _ := f.HandleMsg(chat.ImageOpenMsg{Data: tc.data})
 			msg, ok := cmd().(util.InfoMsg)
 			require.True(t, ok)
 			require.Equal(t, util.InfoTypeError, msg.Type)
@@ -819,25 +817,26 @@ func TestGraphicsFeatureKeepsOnlyTheLatestImageAtOneWidth(t *testing.T) {
 func TestGraphicsFeatureOpensOnlyImagesThatCantRunScripts(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]struct{ raw, mimeType string }{
-		"svg":                 {raw: "<svg/>", mimeType: "image/svg+xml"},
-		"html labelled a png": {raw: "<html><script>alert(1)</script></html>", mimeType: "image/png"},
-		"unknown bytes":       {raw: "just text", mimeType: "image/x-made-up"},
+	tests := map[string]string{
+		"svg":                     "<svg/>",
+		"html":                    "<html><script>alert(1)</script></html>",
+		"text that sniffs as bmp": "BM<script>alert(1)</script>",
+		"unknown bytes":           "just text",
 	}
-	for name, tc := range tests {
+	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 			f.exportDir = t.TempDir()
 			f.openURL = func(string) error { t.Fatal("opened"); return nil }
 
-			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: base64.StdEncoding.EncodeToString([]byte(tc.raw)), MIMEType: tc.mimeType})
+			cmd, handled := f.HandleMsg(chat.ImageOpenMsg{Data: base64.StdEncoding.EncodeToString([]byte(raw))})
 
 			require.True(t, handled)
 			msg, ok := cmd().(util.InfoMsg)
 			require.True(t, ok)
 			require.Equal(t, util.InfoTypeWarn, msg.Type)
-			require.Equal(t, "Won't open this image: it isn't a known raster image, which can't run code", msg.Msg)
+			require.Equal(t, "Won't open this image: only PNG, JPEG, GIF and WebP open, since other types can run scripts", msg.Msg)
 			entries, err := os.ReadDir(f.exportDir)
 			require.NoError(t, err)
 			require.Empty(t, entries, "nothing written")

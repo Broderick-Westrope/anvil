@@ -151,7 +151,7 @@ func TestToolDetailOutputOpensItsImageInTheViewer(t *testing.T) {
 	handled, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
 
 	require.True(t, handled)
-	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8=", MIMEType: "image/png"}, cmd())
+	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8="}, cmd())
 }
 
 func TestToolDetailOutputWithoutAnImageLeavesTheViewerKey(t *testing.T) {
@@ -180,7 +180,7 @@ func TestToolDetailOutputOpensTheImageItLastRendered(t *testing.T) {
 	source.SetResult(later)
 	_, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
 
-	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8=", MIMEType: "image/png"}, cmd(), "what's on screen, not what arrived since")
+	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8="}, cmd(), "what's on screen, not what arrived since")
 }
 
 func TestToolDetailOutputDrawsAResultThatArrivesAfterOpening(t *testing.T) {
@@ -197,7 +197,7 @@ func TestToolDetailOutputDrawsAResultThatArrivesAfterOpening(t *testing.T) {
 
 	require.Contains(t, out.Render(80), "[[IMAGE]]", "once something re-renders it")
 	_, cmd := out.HandleKeyEvent(tea.KeyPressMsg{Code: 'o', Text: "o"})
-	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8=", MIMEType: "image/png"}, cmd())
+	require.Equal(t, ImageOpenMsg{Data: "aGVsbG8="}, cmd())
 }
 
 func TestToolDetailOutputLinesTheNoteUpWithTheImageLine(t *testing.T) {

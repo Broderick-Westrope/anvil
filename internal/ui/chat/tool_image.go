@@ -50,7 +50,7 @@ func (o *toolDetailOutputItem) renderImage(res *message.ToolResult, width int) s
 	// The placeholder for an image without text says nothing the image
 	// doesn't.
 	if res.Content != "" && res.Content != message.MediaPlaceholder(res.MIMEType) {
-		widths := toolResultContentWidths{Body: inner - toolBodyLeftPaddingTotal, Diff: inner}
+		widths := toolResultContentWidths{Body: max(1, inner-toolBodyLeftPaddingTotal), Diff: inner}
 		parts = append(parts, renderToolResultTextContent(o.sty, res.Content, widths, o.expanded, true), "")
 	}
 	parts = append(parts, o.imageBody(res, view, inner))
@@ -92,11 +92,11 @@ func ShowsToolImage(item list.Item) bool {
 	return ok && o.shownImage != nil
 }
 
-// ImageOpenMsg asks for a tool image, base64 data of type MIMEType, to be
-// opened in the OS default viewer.
+// ImageOpenMsg asks for a tool image, base64 data, to be opened in the OS
+// default viewer. Its type is sniffed from the bytes, not taken from the
+// tool.
 type ImageOpenMsg struct {
-	Data     string
-	MIMEType string
+	Data string
 }
 
 // HandleKeyEvent implements KeyEventHandler: o opens the image on screen
@@ -106,6 +106,6 @@ func (o *toolDetailOutputItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	if res == nil || key.String() != "o" {
 		return false, nil
 	}
-	msg := ImageOpenMsg{Data: res.Data, MIMEType: res.MIMEType}
+	msg := ImageOpenMsg{Data: res.Data}
 	return true, func() tea.Msg { return msg }
 }
