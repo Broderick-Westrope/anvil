@@ -8,11 +8,15 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -38,6 +42,12 @@ type fakeFeature struct {
 	commands []string
 	panel    panelView
 	entries  []*dialog.CommandItem
+	tops     []*Chat
+}
+
+func (f *fakeFeature) DrillInChanged(top *Chat) tea.Cmd {
+	f.tops = append(f.tops, top)
+	return nil
 }
 
 var fakeFeatureKey = key.NewBinding(key.WithKeys("f9"))
@@ -367,4 +377,25 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 			u.features.handleMsg(msg)
 		}
 	}
+}
+
+func TestFeaturesHearOfTheTopDrillInInTheUpdateThatChangesIt(t *testing.T) {
+	t.Parallel()
+
+	u, f := newFeatureTestUI(t)
+	sty := uistyles.TokyoNight()
+	item := chat.NewToolMessageItem(&sty, "msg-1", message.ToolCall{ID: "tc-1", Name: "bash", Input: `{"command":"ls"}`, Finished: true}, &message.ToolResult{ToolCallID: "tc-1", Content: "ok"}, false, chat.ToolItemOptions{})
+
+	u.Update(util.ToolDrillInMsg{ToolItem: item, Label: "Bash"})
+	require.Len(t, f.tops, 1)
+	require.Same(t, u.drillStack[0].chat, f.tops[0])
+
+	u.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	require.Len(t, f.tops, 1, "told only when the top changes")
+
+	// Going back is a key, which features never observe.
+	u.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.False(t, u.isDrilledIn())
+	require.Len(t, f.tops, 2)
+	require.Nil(t, f.tops[1])
 }

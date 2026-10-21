@@ -685,6 +685,14 @@ func (m *UI) isDrilledIn() bool {
 	return len(m.drillStack) > 0
 }
 
+// topDrillIn is the chat of the drill-in on top, or nil.
+func (m *UI) topDrillIn() *Chat {
+	if len(m.drillStack) == 0 {
+		return nil
+	}
+	return m.drillStack[len(m.drillStack)-1].chat
+}
+
 // clearDrillStack pops all drill-in entries and restores root state.
 func (m *UI) clearDrillStack() {
 	m.drillStack = nil
@@ -754,7 +762,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	observed := m.features.observe(msg)
 	model, cmd := m.update(msg)
 	m.trackHerdrState()
-	return model, tea.Batch(observed, cmd, m.ensureAnimating(), m.herdrTickCmd())
+	drill := m.features.drillInTop(m.topDrillIn())
+	return model, tea.Batch(observed, cmd, drill, m.ensureAnimating(), m.herdrTickCmd())
 }
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
