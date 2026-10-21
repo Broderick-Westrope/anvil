@@ -13,21 +13,35 @@ import (
 func TestWriteWithinPassesOnTheWritesResult(t *testing.T) {
 	t.Parallel()
 
-	require.NoError(t, writeWithin(time.Second, func() error { return nil }))
-	require.EqualError(t, writeWithin(time.Second, func() error { return errors.New("denied") }), "denied")
+	var pending pendingWrite
+	require.NoError(t, pending.writeWithin(time.Second, func() error { return nil }))
+	require.EqualError(t, pending.writeWithin(time.Second, func() error { return errors.New("denied") }), "denied")
 }
 
-func TestWriteWithinGivesUpOnAClipboardThatStaysBusy(t *testing.T) {
+func TestWriteWithinWontQueueBehindAStuckWrite(t *testing.T) {
 	t.Parallel()
 
+	var pending pendingWrite
 	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
+	finished := make(chan struct{})
 	start := time.Now()
-	err := writeWithin(50*time.Millisecond, func() error {
+	err := pending.writeWithin(50*time.Millisecond, func() error {
 		<-release
+		close(finished)
 		return nil
 	})
 	require.ErrorIs(t, err, errClipboardBusy)
-	require.EqualError(t, err, "another app is holding the clipboard; try again")
+	require.EqualError(t, err, "the clipboard didn't take the image within 5s; try again")
 	require.Less(t, time.Since(start), time.Second)
+
+	wrote := false
+	err = pending.writeWithin(time.Second, func() error { wrote = true; return nil })
+	require.ErrorIs(t, err, errClipboardBusy, "the stuck write still holds the clipboard")
+	require.False(t, wrote, "a second write would wait behind it and land out of order")
+
+	close(release)
+	<-finished
+	require.Eventually(t, func() bool {
+		return pending.writeWithin(time.Second, func() error { return nil }) == nil
+	}, time.Second, 10*time.Millisecond, "the clipboard is free again once it finishes")
 }
