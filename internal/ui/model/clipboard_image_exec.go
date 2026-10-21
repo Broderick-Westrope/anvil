@@ -57,3 +57,10 @@ func imageCopyCommand() ([]string, error) {
 	}
 	return nil, errNoImageClipboardTool
 }
+
+// imageClipboardReady says why there's no clipboard tool to use, if there
+// isn't one.
+func imageClipboardReady() error {
+	_, err := imageCopyCommand()
+	return err
+}

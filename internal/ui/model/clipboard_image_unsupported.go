@@ -5,3 +5,7 @@ package model
 func writeClipboardImage([]byte) error {
 	return errClipboardPlatformUnsupported
 }
+
+func imageClipboardReady() error {
+	return errClipboardPlatformUnsupported
+}

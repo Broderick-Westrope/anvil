@@ -200,7 +200,10 @@ type mermaidFeature struct {
 	openURL func(string) error
 	// writeImage puts a PNG on the system clipboard. The worker calls it.
 	writeImage func([]byte) error
-	listening  bool
+	// clipboardReady says why writeImage can't work, if it can't, before
+	// a diagram renders for it.
+	clipboardReady func() error
+	listening      bool
 	// drawn is what diagrams were last drawn under.
 	drawn drawConditions
 }
@@ -238,6 +241,7 @@ func newMermaidFeature(host featureHost, caps *common.Capabilities, com *common.
 		newRenderer:     mermaid.NewRenderer,
 		openURL:         browser.OpenURL,
 		writeImage:      writeClipboardImage,
+		clipboardReady:  imageClipboardReady,
 	}
 }
 
@@ -480,7 +484,7 @@ func (f *mermaidFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 		return f.copyImage(msg), true
 	case diagramCopiedMsg:
 		if msg.err != nil {
-			slog.Warn("Failed to render mermaid diagram for the clipboard", "err", msg.err)
+			slog.Warn("Failed to copy mermaid diagram image", "err", msg.err)
 			return tea.Batch(f.listen, util.ReportError(fmt.Errorf("copy diagram image: %w", msg.err))), true
 		}
 		return tea.Batch(f.listen, util.ReportInfo("Diagram image copied to clipboard")), true
@@ -565,6 +569,9 @@ func (f *mermaidFeature) copyImage(msg chat.DiagramCopyImageMsg) tea.Cmd {
 		// The clipboard is the remote machine's, and OSC 52, which copies
 		// the source over SSH, only carries text.
 		return util.ReportWarn("Can't copy a diagram image over SSH; c/y copies its source")
+	}
+	if err := f.clipboardReady(); err != nil {
+		return util.ReportError(fmt.Errorf("copy diagram image: %w", err))
 	}
 	req := diagramRequest{source: msg.Source, theme: f.theme(), job: diagramJobCopy}
 	if !f.enqueue(req) {

@@ -8,3 +8,6 @@ func writeClipboardImage(png []byte) error {
 	_, err := nativeclipboard.Image.Write(png)
 	return err
 }
+
+// imageClipboardReady is nil: the native clipboard is always there.
+func imageClipboardReady() error { return nil }
