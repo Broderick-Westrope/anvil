@@ -91,6 +91,14 @@ const (
 	producerBitmap
 )
 
+// engine names what runs the producer's requests, for when one crashes.
+func (p producer) engine() string {
+	if p == producerBitmap {
+		return "image decoder"
+	}
+	return "diagram renderer"
+}
+
 func (p producer) String() string {
 	if p == producerBitmap {
 		return "image"

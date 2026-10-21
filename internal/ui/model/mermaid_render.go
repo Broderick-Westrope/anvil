@@ -152,14 +152,15 @@ func (f *graphicsFeature) serve(engines *diagramEngines, req diagramRequest) (*d
 	return engines, msg
 }
 
-// runRequest renders or exports req. Pele and resvg run model-written
-// source, so a panic in either is reported as the request failing, and ok
-// is false, rather than taking the TUI down.
+// runRequest renders, decodes or exports req. Pele, resvg and the image
+// decoders run on model- or tool-written input, so a panic in any is
+// reported as the request failing, and ok is false, rather than taking
+// the TUI down.
 func (f *graphicsFeature) runRequest(e *diagramEngines, req diagramRequest) (msg tea.Msg, ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("Mermaid renderer panicked", "panic", r)
-			msg, ok = requestFailed(req, fmt.Errorf("diagram renderer crashed: %v", r)), false
+			slog.Error("Graphics request panicked", "engine", req.key.producer.engine(), "panic", r)
+			msg, ok = requestFailed(req, fmt.Errorf("%s crashed: %v", req.key.producer.engine(), r)), false
 		}
 	}()
 	switch {

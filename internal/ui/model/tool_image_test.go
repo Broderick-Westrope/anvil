@@ -833,3 +833,10 @@ func TestGraphicsFeatureOpensOnlyImagesThatCantRunScripts(t *testing.T) {
 		})
 	}
 }
+
+func TestProducerEngineNamesWhatCrashed(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "diagram renderer", producerMermaid.engine())
+	require.Equal(t, "image decoder", producerBitmap.engine())
+}
