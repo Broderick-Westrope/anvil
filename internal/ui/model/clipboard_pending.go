@@ -12,8 +12,8 @@ var (
 )
 
 // pendingWrite allows one clipboard write in flight. Only the native
-// clipboard uses it, but it builds everywhere so it's tested where the
-// mutation check runs.
+// clipboard uses it, but it builds on every platform so its tests run on
+// all of them.
 type pendingWrite struct{ busy atomic.Bool }
 
 // writeWithin runs write, giving up after timeout. A write given up on
@@ -27,8 +27,11 @@ func (p *pendingWrite) writeWithin(timeout time.Duration, write func() error) er
 	}
 	done := make(chan error, 1)
 	go func() {
-		defer p.busy.Store(false)
-		done <- write()
+		err := write()
+		// Free the clipboard before reporting, so the next write can start
+		// as soon as this one returns.
+		p.busy.Store(false)
+		done <- err
 	}()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()

@@ -22,6 +22,7 @@ func TestWriteWithinWontQueueBehindAStuckWrite(t *testing.T) {
 	var pending pendingWrite
 	release := make(chan struct{})
 	finished := make(chan struct{})
+	freed := func() bool { return !pending.busy.Load() }
 	start := time.Now()
 	err := pending.writeWithin(50*time.Millisecond, func() error {
 		<-release
@@ -39,7 +40,15 @@ func TestWriteWithinWontQueueBehindAStuckWrite(t *testing.T) {
 
 	close(release)
 	<-finished
-	require.Eventually(t, func() bool {
-		return pending.writeWithin(time.Second, func() error { return nil }) == nil
-	}, time.Second, 10*time.Millisecond, "the clipboard is free again once it finishes")
+	require.Eventually(t, freed, time.Second, time.Millisecond)
+	require.NoError(t, pending.writeWithin(time.Second, func() error { return nil }), "the clipboard is free again once it finishes")
+}
+
+func TestWriteWithinIsFreeAsSoonAsAWriteReturns(t *testing.T) {
+	t.Parallel()
+
+	var pending pendingWrite
+	for range 1000 {
+		require.NoError(t, pending.writeWithin(time.Second, func() error { return nil }))
+	}
 }
