@@ -10,7 +10,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,8 +44,6 @@ func (h *fakeDiagramHost) PushDrillIn(c *Chat, label string) {
 	h.drills = append(h.drills, c)
 	h.labels = append(h.labels, label)
 }
-
-func (h *fakeDiagramHost) DrillInOpen(c *Chat) bool { return slices.Contains(h.drills, c) }
 
 // engineSlots caps how many tests run render engines at once. Each worker
 // loads its own resvg, and under the race detector a few dozen at

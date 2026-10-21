@@ -41,7 +41,6 @@ type fakeHost struct {
 func (*fakeHost) InvalidateDiagrams()        {}
 func (*fakeHost) AppBackground() color.Color { return nil }
 func (*fakeHost) PushDrillIn(*Chat, string)  {}
-func (*fakeHost) DrillInOpen(*Chat) bool     { return false }
 
 func (h *fakeHost) SessionID() string {
 	if h.session == nil {

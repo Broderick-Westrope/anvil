@@ -570,16 +570,6 @@ func TestUIHostInvalidatesDiagramsInEveryChat(t *testing.T) {
 	require.NotEqual(t, drillVersion, drilled.Version())
 }
 
-func TestUIHostDrillInOpen(t *testing.T) {
-	t.Parallel()
-
-	m := newSplitTestUI()
-	open, other := NewChat(m.com), NewChat(m.com)
-	m.drillStack = []drillInEntry{{chat: open}}
-	require.True(t, uiHost{m}.DrillInOpen(open))
-	require.False(t, uiHost{m}.DrillInOpen(other))
-}
-
 func TestChatReportsTheDiagramsInViewAsItScrolls(t *testing.T) {
 	t.Parallel()
 
