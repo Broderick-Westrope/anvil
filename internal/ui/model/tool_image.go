@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"hash/fnv"
 	"image"
 	"image/color"
 	"image/draw"
@@ -19,6 +18,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/disintegration/imaging"
+	"github.com/zeebo/xxh3"
 	_ "golang.org/x/image/webp" // Registers the WebP decoder for tool images.
 )
 
@@ -32,9 +32,9 @@ func (f *graphicsFeature) fullImage(owner *Chat, data, mimeType string, width in
 	if owner != f.top {
 		return chat.DiagramView{State: chat.DiagramPending}
 	}
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(data))
-	key := diagramKey{producer: producerBitmap, hash: h.Sum64(), width: width, kind: diagramFull, cellW: cellW, cellH: cellH}
+	// HashString reads the string in place: the data can be megabytes, and
+	// this runs on every render.
+	key := diagramKey{producer: producerBitmap, hash: xxh3.HashString(data), width: width, kind: diagramFull, cellW: cellW, cellH: cellH}
 	req := diagramRequest{key: key, data: data, mimeType: mimeType, cellW: cellW, cellH: cellH, maxCols: width}
 	return f.lookupRequest(req, true)
 }
@@ -240,9 +240,7 @@ func writeImage(dir, data, ext string) (string, error) {
 		return "", err
 	}
 	pruneExports(dir)
-	h := fnv.New64a()
-	_, _ = h.Write(raw)
-	path := filepath.Join(dir, fmt.Sprintf("image-%x%s", h.Sum64(), ext))
+	path := filepath.Join(dir, fmt.Sprintf("image-%x%s", xxh3.Hash(raw), ext))
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		return "", err
 	}
