@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// copyToolImage asks f to copy data and returns the worker's answer, and
+// askToCopyToolImage asks f to copy data and returns the worker's answer, and
 // what reached the clipboard.
-func copyToolImage(t *testing.T, f *graphicsFeature, data string) (diagramCopiedMsg, [][]byte) {
+func askToCopyToolImage(t *testing.T, f *graphicsFeature, data string) (diagramCopiedMsg, [][]byte) {
 	t.Helper()
 	clip := &clipboardRecorder{}
 	f.writeImage = clip.write
@@ -39,7 +39,7 @@ func TestGraphicsFeatureCopiesAPNGToolImageAsItIs(t *testing.T) {
 	require.NoError(t, enc.Encode(&buf, halves(30, 20)))
 	data := base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	copied, written := copyToolImage(t, f, data)
+	copied, written := askToCopyToolImage(t, f, data)
 
 	require.NoError(t, copied.err)
 	raw, err := base64.StdEncoding.DecodeString(data)
@@ -62,7 +62,7 @@ func TestGraphicsFeatureCopiesOtherToolImagesAsPNG(t *testing.T) {
 			t.Parallel()
 			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 
-			copied, written := copyToolImage(t, f, data)
+			copied, written := askToCopyToolImage(t, f, data)
 
 			require.NoError(t, copied.err)
 			require.Len(t, written, 1)
@@ -91,7 +91,7 @@ func TestGraphicsFeatureWontCopyAToolImageItCantDecode(t *testing.T) {
 			t.Parallel()
 			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 
-			copied, written := copyToolImage(t, f, tc.data)
+			copied, written := askToCopyToolImage(t, f, tc.data)
 
 			require.ErrorContains(t, copied.err, tc.want)
 			require.Empty(t, written, "nothing reaches the clipboard")

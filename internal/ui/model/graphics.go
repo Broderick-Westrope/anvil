@@ -181,7 +181,8 @@ type diagramExportedMsg struct {
 	err  error
 }
 
-// diagramCopiedMsg reports a copy of what to the clipboard.
+// diagramCopiedMsg reports how a copy to the clipboard went; what says
+// what was copied.
 type diagramCopiedMsg struct {
 	what copyKind
 	err  error
