@@ -840,3 +840,20 @@ func TestProducerEngineNamesWhatCrashed(t *testing.T) {
 	require.Equal(t, "diagram renderer", producerMermaid.engine())
 	require.Equal(t, "image decoder", producerBitmap.engine())
 }
+
+func TestRenderBitmapRefusesCellsBiggerThanTheDrillInPixels(t *testing.T) {
+	t.Parallel()
+
+	req := diagramRequest{
+		key: diagramKey{producer: producerBitmap, kind: diagramFull}, data: pngData(t, 4, 4), mimeType: "image/png",
+		cellW: 5000, cellH: 5000, maxCols: 80,
+	}
+	done := make(chan diagramReadyMsg, 1)
+	go func() { done <- renderBitmap(req) }()
+	select {
+	case ready := <-done:
+		require.ErrorAs(t, ready.err, new(undisplayableError))
+	case <-time.After(5 * time.Second):
+		t.Fatal("fitting never finished")
+	}
+}

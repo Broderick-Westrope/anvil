@@ -153,6 +153,10 @@ func renderBitmap(req diagramRequest) diagramReadyMsg {
 		pixels*decodeBytesPerPixel(format, cfg.ColorModel, raw) > bitmapMaxDecodedBytes {
 		return fail(undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)})
 	}
+	if req.cellW*req.cellH > diagramFullMaxPixels {
+		// Not even one cell fits, so fitBitmap would never finish.
+		return fail(undisplayableError{"terminal cells too large to draw in"})
+	}
 	// For an animated GIF this is the first frame.
 	img, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
@@ -174,7 +178,7 @@ type bitmapFit struct {
 }
 
 // fitBitmap fits a w×h bitmap within req's width, the drill-in's rows and,
-// once padded to whole cells, its pixels.
+// once padded to whole cells, its pixels. One cell must fit those pixels.
 func fitBitmap(w, h int, req diagramRequest) bitmapFit {
 	cw, ch := float64(req.cellW), float64(req.cellH)
 	fw, fh := float64(w), float64(h)
