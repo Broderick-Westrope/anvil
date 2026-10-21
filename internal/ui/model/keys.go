@@ -311,7 +311,7 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("G", "end"),
 	)
 	km.Chat.Copy = key.NewBinding(
-		key.WithKeys("c", "y", "C", "Y"),
+		key.WithKeys("c", "y", "C"),
 		key.WithHelp("c/y", "copy"),
 	)
 	km.Chat.OpenDiagram = key.NewBinding(
