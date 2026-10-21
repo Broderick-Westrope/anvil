@@ -56,26 +56,15 @@ func writeClipboardImage(png []byte) error {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf("%s didn't take the image within %s", args[0], clipboardToolTimeout)
 		}
-		if said := toolSaid(stderr); said != "" {
-			return fmt.Errorf("%s: %s", args[0], said)
+		said, _ := os.ReadFile(stderr.Name())
+		for line := range strings.Lines(string(said)) {
+			if line = strings.TrimSpace(line); line != "" {
+				return fmt.Errorf("%s: %s", args[0], line)
+			}
 		}
 		return fmt.Errorf("%s: %w", args[0], err)
 	}
 	return nil
-}
-
-// toolSaid is the first non-blank line of what the tool wrote to f.
-func toolSaid(f *os.File) string {
-	out, err := os.ReadFile(f.Name())
-	if err != nil {
-		return ""
-	}
-	for line := range strings.Lines(string(out)) {
-		if line = strings.TrimSpace(line); line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 func imageCopyCommand() ([]string, error) {
@@ -83,11 +72,15 @@ func imageCopyCommand() ([]string, error) {
 	if !wayland && !x11 {
 		return nil, errNoDesktopSession
 	}
-	if _, err := exec.LookPath("wl-copy"); err == nil && wayland {
-		return []string{"wl-copy", "--type", "image/png"}, nil
+	if wayland {
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			return []string{"wl-copy", "--type", "image/png"}, nil
+		}
 	}
-	if _, err := exec.LookPath("xclip"); err == nil && x11 {
-		return []string{"xclip", "-selection", "clipboard", "-t", "image/png", "-i"}, nil
+	if x11 {
+		if _, err := exec.LookPath("xclip"); err == nil {
+			return []string{"xclip", "-selection", "clipboard", "-t", "image/png", "-i"}, nil
+		}
 	}
 	return nil, errNoImageClipboardTool
 }
