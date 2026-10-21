@@ -249,3 +249,62 @@ func TestToolDetailOutputShowsTheTextBesideAnImage(t *testing.T) {
 		})
 	}
 }
+
+func TestToolDetailOutputLaysAnImagesTextOutLikeATextOutput(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	const width = 60
+	content := `{"note": "` + strings.Repeat("a long note from the tool ", 20) + `"}`
+	widest := func(out, containing string) int {
+		w := 0
+		for ln := range strings.SplitSeq(out, "\n") {
+			if strings.Contains(ansi.Strip(ln), containing) {
+				w = max(w, ansi.StringWidth(ln))
+			}
+		}
+		require.Positive(t, w, "no line with %q", containing)
+		return w
+	}
+	textSource := helperToolItem(t, "mcp_x_y", `{}`, &message.ToolResult{Content: content}, ToolStatusSuccess)
+	text := outputItem(t, BuildToolDetailItems(&sty, textSource, nil)).Render(width)
+	res := imageResult()
+	res.Content = content
+	imageSource := helperToolItem(t, "mcp_x_y", `{}`, res, ToolStatusSuccess)
+	image := outputItem(t, BuildToolDetailItems(&sty, imageSource, &fakeImages{})).Render(width)
+
+	require.Equal(t, widest(text, "{"), widest(image, "{"))
+}
+
+func TestToolDetailOutputCutsAFailureNoteToTheWidth(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	const width = 60
+	source := helperToolItem(t, "view", `{}`, imageResult(), ToolStatusSuccess)
+	failed := DiagramView{State: DiagramFailed, Err: strings.Repeat("a long reason ", 20)}
+
+	out := outputItem(t, BuildToolDetailItems(&sty, source, &fakeImages{view: failed})).Render(width)
+
+	for ln := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(ln, "reason") {
+			require.LessOrEqual(t, ansi.StringWidth(ln), width)
+			require.True(t, strings.HasSuffix(ansi.Strip(ln), "…"))
+		}
+	}
+}
+
+func TestShowsToolImage(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	image := outputItem(t, BuildToolDetailItems(&sty, helperToolItem(t, "view", `{}`, imageResult(), ToolStatusSuccess), &fakeImages{}))
+	text := outputItem(t, BuildToolDetailItems(&sty, helperToolItem(t, "bash", `{}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess), &fakeImages{}))
+
+	require.False(t, ShowsToolImage(image), "not until it has drawn the image")
+	image.Render(80)
+	text.Render(80)
+	require.True(t, ShowsToolImage(image))
+	require.False(t, ShowsToolImage(text))
+	require.False(t, ShowsToolImage(nil))
+}
