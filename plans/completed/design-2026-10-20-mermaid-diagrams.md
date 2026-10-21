@@ -250,3 +250,8 @@ Kitty terminal, CI or the user's manual checklist.
 - `internal/config/restart_required.go`.
 - `internal/ui/AGENTS.md` ("Feature Routing"), `AGENTS.md` ("Merge Gates",
   "Committing"), `.golangci.yml`.
+
+**Later:**
+
+- `Y` copies a diagram as a PNG, added after this shipped. See the Mermaid
+  diagrams entry in `AGENTS.md`.
