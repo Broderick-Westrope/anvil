@@ -893,3 +893,138 @@ func TestHelpShowsTheViewerKeyOnAToolImage(t *testing.T) {
 	drill.SetSelected(0)
 	require.NotContains(t, helpTexts(u.ShortHelp()), "o open in viewer", "the header")
 }
+
+func TestJPEGProgressiveSkipsASegmentLongerThanAByte(t *testing.T) {
+	t.Parallel()
+
+	long := append([]byte{0xff, 0xd8, 0xff, 0xe1, 0x01, 0x02}, make([]byte, 0x0100)...)
+	raw := append(long, 0xff, 0xc0, 0x00, 0x02)
+
+	require.False(t, jpegProgressive(raw), "the frame header after a 258-byte segment")
+}
+
+func TestGraphicsFeatureDecodesAnImageAtExactlyItsLimits(t *testing.T) {
+	t.Parallel()
+
+	// 8192×4096 is 32 Mpx, and as RGBA 128 MB: on both limits, not past
+	// them.
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	ready := requestImage(t, f, pngIHDROnly(8192, 4096), "image/png", 80)
+	require.ErrorContains(t, ready.err, "decode image:", "it got past the size check to the pixels")
+}
+
+// halves is a w×h image whose first half, along its longer side, is red
+// and second half blue.
+func halves(w, h int) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for x := range w {
+		for y := range h {
+			c := color.RGBA{R: 255, A: 255}
+			if (w >= h && x >= w/2) || (h > w && y >= h/2) {
+				c = color.RGBA{B: 255, A: 255}
+			}
+			img.Set(x, y, c)
+		}
+	}
+	return img
+}
+
+func TestRenderBitmapShrinksRatherThanCrops(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		w, h int
+		// at is a point that's blue once shrunk and red if cropped.
+		at image.Point
+	}{
+		"only its width shrinks":  {w: 2000, h: 1, at: image.Pt(600, 0)},
+		"only its height shrinks": {w: 1, h: 8000, at: image.Pt(0, 3500)},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			req := diagramRequest{
+				key: diagramKey{producer: producerBitmap, kind: diagramFull}, data: encodeImage(t, halves(tc.w, tc.h), "png"),
+				mimeType: "image/png", cellW: 10, cellH: 20, maxCols: 80,
+			}
+			ready := renderBitmap(req)
+			require.NoError(t, ready.err)
+			_, _, b, _ := ready.img.At(tc.at.X, tc.at.Y).RGBA()
+			require.Equal(t, uint32(0xffff), b, "blue: the far half moved in")
+		})
+	}
+}
+
+func TestRenderBitmapKeepsAnImageThatPadsToExactlyTheCap(t *testing.T) {
+	t.Parallel()
+
+	// 16 px cells: 4096×4096 is 256×256 cells, exactly 16 Mpx padded.
+	req := diagramRequest{
+		key: diagramKey{producer: producerBitmap, kind: diagramFull}, data: encodeImage(t, image.NewGray(image.Rect(0, 0, 4096, 4096)), "png"),
+		mimeType: "image/png", cellW: 16, cellH: 16, maxCols: 300,
+	}
+
+	ready := renderBitmap(req)
+
+	require.NoError(t, ready.err)
+	require.Equal(t, 256, ready.cols)
+	require.Equal(t, 256, ready.rows)
+}
+
+func TestRenderBitmapDrawsInCellsOfExactlyTheCap(t *testing.T) {
+	t.Parallel()
+
+	req := diagramRequest{
+		key: diagramKey{producer: producerBitmap, kind: diagramFull}, data: pngData(t, 4, 4), mimeType: "image/png",
+		cellW: 4096, cellH: 4096, maxCols: 80,
+	}
+
+	ready := renderBitmap(req)
+
+	require.NoError(t, ready.err)
+	require.Equal(t, 1, ready.cols)
+}
+
+func TestGraphicsFeatureNeverReusesAnEarlierGeneration(t *testing.T) {
+	t.Parallel()
+
+	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
+	f := newTestGraphicsFeature(t, host, kittyCaps())
+	f.Observe(nil)
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	data := pngData(t, 30, 30)
+	first := showToolImage(t, f, drill, data)
+
+	// A redraw for the new background, then the drill-in closes: each moves
+	// the generation on, so with no drill-in open the same image at the
+	// same width is a new terminal image.
+	host.bg = nil
+	f.Observe(tea.BackgroundColorMsg{Color: color.RGBA{R: 0x05, G: 0x00, B: 0x14, A: 0xff}})
+	f.DrillInChanged(nil)
+	require.Equal(t, chat.DiagramPending, f.For(nil).FullImage(data, "image/png", 80).State)
+	again := waitReady(t, f)
+
+	require.NotEqual(t, first.key.id(), again.key.id())
+}
+
+func TestGraphicsFeatureFreesAnImageThatLandsAfterItsWidthMovedOn(t *testing.T) {
+	t.Parallel()
+
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	drill := NewChat(f.com)
+	f.DrillInChanged(drill)
+	images := f.For(drill)
+	data := pngData(t, 900, 30)
+	images.FullImage(data, "image/png", 80)
+	ready := waitReady(t, f)
+	f.HandleMsg(ready)
+	// Resized while it transmitted.
+	images.FullImage(data, "image/png", 60)
+	transmit(ready)
+
+	cmd, _ := f.HandleMsg(diagramShownMsg{key: ready.key, cols: ready.cols, rows: ready.rows})
+
+	require.Len(t, rawMsgs(cmd), 1, "freed in the terminal")
+	require.NotContains(t, f.entries, ready.key)
+}
