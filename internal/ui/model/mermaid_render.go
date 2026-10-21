@@ -20,9 +20,9 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 )
 
-// This file is the mermaid feature's worker side: it owns the render
-// engines, turns requests into images or browser pages, and never touches
-// the feature's cache, which mermaid.go owns.
+// This file is the graphics feature's worker side: it owns the Mermaid
+// render engines, turns requests into images or browser pages, and never
+// touches the feature's cache, which mermaid.go owns.
 
 // diagramExportDir is where pages for the browser are written: the user's
 // own cache directory, not a shared temp directory another user could
@@ -106,7 +106,7 @@ func (e *diagramEngines) close() {
 // work renders diagrams one at a time. It loads the engines on the first
 // request and drops them after idleTimeout without one, so a session that
 // stops drawing diagrams gives the memory back.
-func (f *mermaidFeature) work() {
+func (f *graphicsFeature) work() {
 	var engines *diagramEngines
 	idle := time.NewTimer(f.idleTimeout)
 	idle.Stop()
@@ -129,7 +129,7 @@ func (f *mermaidFeature) work() {
 
 // serve answers req with engines, loading them first if they're nil, and
 // returns the engines to keep for the next request.
-func (f *mermaidFeature) serve(engines *diagramEngines, req diagramRequest) (*diagramEngines, tea.Msg) {
+func (f *graphicsFeature) serve(engines *diagramEngines, req diagramRequest) (*diagramEngines, tea.Msg) {
 	if req.key.producer == producerBitmap {
 		// Bitmaps need no engines.
 		msg, _ := f.runRequest(nil, req)
@@ -155,7 +155,7 @@ func (f *mermaidFeature) serve(engines *diagramEngines, req diagramRequest) (*di
 // runRequest renders or exports req. Pele and resvg run model-written
 // source, so a panic in either is reported as the request failing, and ok
 // is false, rather than taking the TUI down.
-func (f *mermaidFeature) runRequest(e *diagramEngines, req diagramRequest) (msg tea.Msg, ok bool) {
+func (f *graphicsFeature) runRequest(e *diagramEngines, req diagramRequest) (msg tea.Msg, ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Mermaid renderer panicked", "panic", r)
@@ -179,7 +179,7 @@ func requestFailed(req diagramRequest, err error) tea.Msg {
 	return diagramReadyMsg{key: req.key, err: err}
 }
 
-func (f *mermaidFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
+func (f *graphicsFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
 	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{})
 	if err != nil {
 		return diagramExportedMsg{err: err}
@@ -269,7 +269,7 @@ func (s diagramFit) scale(w, h float64) (scale float64, squeezed bool, err error
 	return scale, scale < s.natural || w >= float64(s.maxWidth-1), nil
 }
 
-func (f *mermaidFeature) openInBrowser(path string) tea.Cmd {
+func (f *graphicsFeature) openInBrowser(path string) tea.Cmd {
 	return func() tea.Msg {
 		if err := f.openURL(fileURL(path)); err != nil {
 			return util.NewErrorMsg(fmt.Errorf("open diagram: %w", err))

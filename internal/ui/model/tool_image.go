@@ -26,15 +26,15 @@ import (
 
 // FullImage implements chat.ImageRenderer, for when no drill-in is open;
 // drill-ins ask through ImagesFor.
-func (f *mermaidFeature) FullImage(data, mimeType string, width int) chat.DiagramView {
+func (f *graphicsFeature) FullImage(data, mimeType string, width int) chat.DiagramView {
 	return f.fullImage(nil, data, mimeType, width)
 }
 
 // fullImage is a tool image as owner's drill-in shows it. It only renders
 // while owner is on top.
-func (f *mermaidFeature) fullImage(owner *Chat, data, mimeType string, width int) chat.DiagramView {
-	cellW, cellH := f.caps.CellSize()
-	if !f.caps.SupportsKittyGraphics() || cellW == 0 || cellH == 0 || width <= 0 {
+func (f *graphicsFeature) fullImage(owner *Chat, data, mimeType string, width int) chat.DiagramView {
+	cellW, cellH, ok := f.drawable(width)
+	if !ok {
 		return chat.DiagramView{State: chat.DiagramUnsupported}
 	}
 	if owner != f.top {
@@ -158,7 +158,7 @@ var imageExts = map[string]string{
 // openImage writes a tool image's bytes, exactly as the model saw them, to
 // the export directory and opens them in the OS default viewer. It works
 // for images Anvil can't draw, since the viewer may.
-func (f *mermaidFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
+func (f *graphicsFeature) openImage(msg chat.ImageOpenMsg) tea.Cmd {
 	dir, open := f.exportDir, f.openURL
 	return func() tea.Msg {
 		path, err := writeImage(dir, msg)

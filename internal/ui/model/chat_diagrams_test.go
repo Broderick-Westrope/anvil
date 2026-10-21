@@ -22,7 +22,7 @@ import (
 func newSplitTestUI() *UI {
 	m := newTestUI()
 	m.com.Workspace = &testWorkspace{cfg: &config.Config{}}
-	m.diagrams = newMermaidFeature(uiHost{m}, &m.caps, m.com)
+	m.diagrams = newGraphicsFeature(uiHost{m}, &m.caps, m.com)
 	return m
 }
 

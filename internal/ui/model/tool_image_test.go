@@ -43,10 +43,10 @@ func pngData(t *testing.T, w, h int) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
-func TestMermaidFeatureDrawsAToolImage(t *testing.T) {
+func TestGraphicsFeatureDrawsAToolImage(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	data := pngData(t, 35, 30)
 
 	require.Equal(t, chat.DiagramPending, f.FullImage(data, "image/png", 80).State)
@@ -123,7 +123,7 @@ func pngIHDROnlyDepth(w, h uint32, depth byte) string {
 const tinyWebP = "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA=="
 
 // requestImage asks f for an image and returns the worker's answer.
-func requestImage(t *testing.T, f *mermaidFeature, data, mimeType string, width int) diagramReadyMsg {
+func requestImage(t *testing.T, f *graphicsFeature, data, mimeType string, width int) diagramReadyMsg {
 	t.Helper()
 	require.Equal(t, chat.DiagramPending, f.FullImage(data, mimeType, width).State)
 	ready, ok := waitResult(t, f).(diagramReadyMsg)
@@ -131,7 +131,7 @@ func requestImage(t *testing.T, f *mermaidFeature, data, mimeType string, width 
 	return ready
 }
 
-func TestMermaidFeatureDecodesEachSupportedFormat(t *testing.T) {
+func TestGraphicsFeatureDecodesEachSupportedFormat(t *testing.T) {
 	t.Parallel()
 
 	square := image.NewRGBA(image.Rect(0, 0, 20, 20))
@@ -147,7 +147,7 @@ func TestMermaidFeatureDecodesEachSupportedFormat(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 			ready := requestImage(t, f, tc.data, tc.mimeType, 80)
 			require.NoError(t, ready.err)
 			require.Equal(t, tc.cols, ready.cols)
@@ -156,7 +156,7 @@ func TestMermaidFeatureDecodesEachSupportedFormat(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureShowsTheFirstFrameOfAnAnimatedGIF(t *testing.T) {
+func TestGraphicsFeatureShowsTheFirstFrameOfAnAnimatedGIF(t *testing.T) {
 	t.Parallel()
 
 	frame := func(c color.Color) *image.Paletted {
@@ -169,7 +169,7 @@ func TestMermaidFeatureShowsTheFirstFrameOfAnAnimatedGIF(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	require.NoError(t, gif.EncodeAll(&buf, anim))
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 
 	ready := requestImage(t, f, base64.StdEncoding.EncodeToString(buf.Bytes()), "image/gif", 80)
 
@@ -179,7 +179,7 @@ func TestMermaidFeatureShowsTheFirstFrameOfAnAnimatedGIF(t *testing.T) {
 	require.Zero(t, b)
 }
 
-func TestMermaidFeatureFitsToolImagesToTheDrillIn(t *testing.T) {
+func TestGraphicsFeatureFitsToolImagesToTheDrillIn(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -194,7 +194,7 @@ func TestMermaidFeatureFitsToolImagesToTheDrillIn(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 			img := image.NewGray(image.Rect(0, 0, tc.w, tc.h))
 			ready := requestImage(t, f, encodeImage(t, img, "png"), "image/png", tc.width)
 			require.NoError(t, ready.err)
@@ -205,10 +205,10 @@ func TestMermaidFeatureFitsToolImagesToTheDrillIn(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureCapsAPaddedToolImageAtTheDrillInPixels(t *testing.T) {
+func TestGraphicsFeatureCapsAPaddedToolImageAtTheDrillInPixels(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	// Shrunk to exactly the cap, then padded to whole cells, it would pass
 	// it.
 	img := image.NewGray(image.Rect(0, 0, 4100, 4100))
@@ -222,7 +222,7 @@ func TestMermaidFeatureCapsAPaddedToolImageAtTheDrillInPixels(t *testing.T) {
 	require.Equal(t, ready.rows*20, b.Dy())
 }
 
-func TestMermaidFeatureRefusesToolImagesItCantShow(t *testing.T) {
+func TestGraphicsFeatureRefusesToolImagesItCantShow(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -240,7 +240,7 @@ func TestMermaidFeatureRefusesToolImagesItCantShow(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 			ready := requestImage(t, f, tc.data, tc.mimeType, 80)
 			require.ErrorContains(t, ready.err, tc.want)
 
@@ -253,13 +253,13 @@ func TestMermaidFeatureRefusesToolImagesItCantShow(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureWarnsOnlyAboutImagesThatShouldHaveDecoded(t *testing.T) {
+func TestGraphicsFeatureWarnsOnlyAboutImagesThatShouldHaveDecoded(t *testing.T) {
 	rec := &warnRecorder{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(rec))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	for _, tc := range []struct{ data, mimeType string }{
 		{data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml"},
 		{data: pngIHDROnly(9000, 10), mimeType: "image/png"},
@@ -273,7 +273,7 @@ func TestMermaidFeatureWarnsOnlyAboutImagesThatShouldHaveDecoded(t *testing.T) {
 }
 
 // showToolImage drives a tool image owned by c from request to shown.
-func showToolImage(t *testing.T, f *mermaidFeature, c *Chat, data string) diagramReadyMsg {
+func showToolImage(t *testing.T, f *graphicsFeature, c *Chat, data string) diagramReadyMsg {
 	t.Helper()
 	images := f.ImagesFor(c)
 	require.Equal(t, chat.DiagramPending, images.FullImage(data, "image/png", 80).State)
@@ -287,7 +287,7 @@ func showToolImage(t *testing.T, f *mermaidFeature, c *Chat, data string) diagra
 }
 
 // requireNothingQueued fails if f's worker was asked for anything.
-func requireNothingQueued(t *testing.T, f *mermaidFeature) {
+func requireNothingQueued(t *testing.T, f *graphicsFeature) {
 	t.Helper()
 	select {
 	case msg := <-f.results:
@@ -296,11 +296,11 @@ func requireNothingQueued(t *testing.T, f *mermaidFeature) {
 	}
 }
 
-func TestMermaidFeatureFreesAToolImageWhenItsDrillInLeavesTheTop(t *testing.T) {
+func TestGraphicsFeatureFreesAToolImageWhenItsDrillInLeavesTheTop(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
-	f := newTestMermaidFeature(t, host, kittyCaps())
+	f := newTestGraphicsFeature(t, host, kittyCaps())
 	drill := NewChat(f.com)
 	f.DrillInChanged(drill)
 	ready := showToolImage(t, f, drill, pngData(t, 30, 30))
@@ -314,10 +314,10 @@ func TestMermaidFeatureFreesAToolImageWhenItsDrillInLeavesTheTop(t *testing.T) {
 	require.Greater(t, host.invalidations, invalidations, "chats re-render without it")
 }
 
-func TestMermaidFeatureACoveredDrillInQueuesNothing(t *testing.T) {
+func TestGraphicsFeatureACoveredDrillInQueuesNothing(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	covered, top := NewChat(f.com), NewChat(f.com)
 	f.DrillInChanged(top)
 
@@ -331,10 +331,10 @@ func TestMermaidFeatureACoveredDrillInQueuesNothing(t *testing.T) {
 	showToolImage(t, f, covered, data)
 }
 
-func TestMermaidFeatureDropsAResultFromAnEarlierOpening(t *testing.T) {
+func TestGraphicsFeatureDropsAResultFromAnEarlierOpening(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	drill := NewChat(f.com)
 	data := pngData(t, 30, 30)
 	f.DrillInChanged(drill)
@@ -365,11 +365,11 @@ func TestMermaidFeatureDropsAResultFromAnEarlierOpening(t *testing.T) {
 	require.NotEmpty(t, fimage.EncodingKitty.Render(fresh.key.id(), fresh.cols, fresh.rows))
 }
 
-func TestMermaidFeatureADiagramDrillInFreesAToolImage(t *testing.T) {
+func TestGraphicsFeatureADiagramDrillInFreesAToolImage(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
-	f := newTestMermaidFeature(t, host, kittyCaps())
+	f := newTestGraphicsFeature(t, host, kittyCaps())
 	tool := NewChat(f.com)
 	f.DrillInChanged(tool)
 	ready := showToolImage(t, f, tool, pngData(t, 30, 30))
@@ -381,7 +381,7 @@ func TestMermaidFeatureADiagramDrillInFreesAToolImage(t *testing.T) {
 	require.NotContains(t, f.entries, ready.key)
 }
 
-func TestMermaidFeatureOpensAToolImageInTheViewer(t *testing.T) {
+func TestGraphicsFeatureOpensAToolImageInTheViewer(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -395,7 +395,7 @@ func TestMermaidFeatureOpensAToolImageInTheViewer(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+			f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 			f.exportDir = t.TempDir()
 			var opened string
 			f.openURL = func(u string) error { opened = u; return nil }
@@ -418,23 +418,23 @@ func TestMermaidFeatureOpensAToolImageInTheViewer(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureReportsAToolImageItCantOpen(t *testing.T) {
+func TestGraphicsFeatureReportsAToolImageItCantOpen(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
 		data   string
-		setup  func(f *mermaidFeature)
+		setup  func(f *graphicsFeature)
 		reason string
 	}{
-		"invalid data": {data: "!!!", setup: func(*mermaidFeature) {}, reason: "decode image data"},
+		"invalid data": {data: "!!!", setup: func(*graphicsFeature) {}, reason: "decode image data"},
 		"no viewer": {
 			data:   base64.StdEncoding.EncodeToString([]byte("x")),
-			setup:  func(f *mermaidFeature) { f.openURL = func(string) error { return errors.New("no viewer") } },
+			setup:  func(f *graphicsFeature) { f.openURL = func(string) error { return errors.New("no viewer") } },
 			reason: "no viewer",
 		},
 		"export dir under a file": {
 			data: base64.StdEncoding.EncodeToString([]byte("x")),
-			setup: func(f *mermaidFeature) {
+			setup: func(f *graphicsFeature) {
 				file := filepath.Join(f.exportDir, "file")
 				_ = os.WriteFile(file, nil, 0o600)
 				f.exportDir = filepath.Join(file, "images")
@@ -445,7 +445,7 @@ func TestMermaidFeatureReportsAToolImageItCantOpen(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
+			f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 			f.exportDir = t.TempDir()
 			f.openURL = func(string) error { return nil }
 			tc.setup(f)
@@ -459,11 +459,11 @@ func TestMermaidFeatureReportsAToolImageItCantOpen(t *testing.T) {
 	}
 }
 
-func TestMermaidFeatureRedrawsAToolImageUnderANewTerminalID(t *testing.T) {
+func TestGraphicsFeatureRedrawsAToolImageUnderANewTerminalID(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
-	f := newTestMermaidFeature(t, host, kittyCaps())
+	f := newTestGraphicsFeature(t, host, kittyCaps())
 	f.Observe(nil)
 	drill := NewChat(f.com)
 	f.DrillInChanged(drill)
@@ -479,11 +479,11 @@ func TestMermaidFeatureRedrawsAToolImageUnderANewTerminalID(t *testing.T) {
 	require.NotEqual(t, old.key.id(), fresh.key.id(), "the late delete can't hit the new image")
 }
 
-func TestMermaidFeatureAToolDrillInFreesADiagramImage(t *testing.T) {
+func TestGraphicsFeatureAToolDrillInFreesADiagramImage(t *testing.T) {
 	t.Parallel()
 
 	host := &fakeDiagramHost{}
-	f := newTestMermaidFeature(t, host, kittyCaps())
+	f := newTestGraphicsFeature(t, host, kittyCaps())
 	f.HandleMsg(chat.DiagramOpenMsg{Source: tallFlowchart(30)})
 	f.DrillInChanged(host.drills[0])
 	item := host.drills[0].MessageItems()[0].(*chat.DiagramDetailItem)
@@ -502,10 +502,10 @@ func TestMermaidFeatureAToolDrillInFreesADiagramImage(t *testing.T) {
 	showToolImage(t, f, tool, pngData(t, 30, 30))
 }
 
-func TestMermaidFeatureDecodesAnEightBitImageThatSixteenBitsWouldRefuse(t *testing.T) {
+func TestGraphicsFeatureDecodesAnEightBitImageThatSixteenBitsWouldRefuse(t *testing.T) {
 	t.Parallel()
 
-	f := newTestMermaidFeature(t, &fakeDiagramHost{}, kittyCaps())
+	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
 	ready := requestImage(t, f, pngIHDROnly(6000, 4000), "image/png", 80)
 	require.ErrorContains(t, ready.err, "decode image:", "it got past the size check to the pixels")
 }

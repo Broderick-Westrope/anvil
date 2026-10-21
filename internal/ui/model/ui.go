@@ -355,7 +355,7 @@ type UI struct {
 	diagrams chat.DiagramRenderer
 	// graphics draws diagrams and the images tools return. It exists
 	// whether or not diagrams are on.
-	graphics *mermaidFeature
+	graphics *graphicsFeature
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -481,7 +481,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
-	graphics := newMermaidFeature(uiHost{ui}, &ui.caps, com)
+	graphics := newGraphicsFeature(uiHost{ui}, &ui.caps, com)
 	ui.features.register(graphics)
 	ui.graphics = graphics
 	if com.Workspace.DiagramsEnabled() {
