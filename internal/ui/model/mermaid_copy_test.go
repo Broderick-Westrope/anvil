@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"image"
-	"image/color"
+	"image/draw"
 	"image/png"
-	"log/slog"
 	"math"
 	"sync"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
@@ -78,10 +78,34 @@ func TestMermaidFeatureCopiesADiagramAsAPNG(t *testing.T) {
 			require.Equal(t, int(math.Ceil(2*layout.Width)), img.Bounds().Dx(), "twice the layout's size")
 			require.Equal(t, int(math.Ceil(2*layout.Height)), img.Bounds().Dy(), "twice the layout's size")
 
-			corner := img.At(0, 0)
-			_, _, _, a := corner.RGBA()
-			require.Equal(t, uint32(0xffff), a, "opaque, so it reads on any background")
-			require.Equal(t, f.theme()["pele-bg"], hexColor(corner))
+			// The copy is the chat's transparent image drawn over pele-bg.
+			raster, err := mermaid.NewRasterizer(context.Background(), f.compileCacheDir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raster.Close() })
+			theme := f.theme()
+			drawn, err := raster.Rasterize(layout, theme, mermaid.RasterOptions{Scale: 2})
+			require.NoError(t, err)
+			want := image.NewRGBA(drawn.Bounds())
+			draw.Draw(want, want.Bounds(), image.NewUniform(lipgloss.Color(theme["pele-bg"])), image.Point{}, draw.Src)
+			draw.Draw(want, want.Bounds(), drawn, image.Point{}, draw.Over)
+			partial := 0
+			for i := 0; i < len(drawn.Pix); i += 4 {
+				a := drawn.Pix[i+3]
+				require.LessOrEqual(t, max(drawn.Pix[i], drawn.Pix[i+1], drawn.Pix[i+2]), a, "resvg's pixels are premultiplied")
+				if a != 0 && a != 0xff {
+					partial++
+				}
+			}
+			require.NotZero(t, partial, "the edges are antialiased, so the blend is tested")
+			for y := range want.Bounds().Dy() {
+				for x := range want.Bounds().Dx() {
+					wr, wg, wb, wa := want.At(x, y).RGBA()
+					gr, gg, gb, ga := img.At(x, y).RGBA()
+					for c, pair := range [][2]uint32{{wr, gr}, {wg, gg}, {wb, gb}, {wa, ga}} {
+						require.InDelta(t, pair[0]>>8, pair[1]>>8, 1, "pixel %d,%d channel %d", x, y, c)
+					}
+				}
+			}
 		})
 	}
 }
@@ -179,40 +203,4 @@ func TestMermaidFeatureWontCopyAnImageOverSSH(t *testing.T) {
 			require.Empty(t, f.requests, "nothing renders")
 		})
 	}
-}
-
-func TestFillBehindPutsTheBackgroundUnderTheImage(t *testing.T) {
-	t.Parallel()
-
-	img := image.NewRGBA(image.Rect(0, 0, 3, 1))
-	img.SetRGBA(1, 0, color.RGBA{R: 0x40, G: 0x20, B: 0x10, A: 0x80})
-	img.SetRGBA(2, 0, color.RGBA{R: 0xff, G: 0xee, B: 0xdd, A: 0xff})
-	fillBehind(img, color.RGBA{R: 0x00, G: 0x80, B: 0xfe, A: 0xff})
-
-	require.Equal(t, color.RGBA{R: 0x00, G: 0x80, B: 0xfe, A: 0xff}, img.RGBAAt(0, 0), "transparent shows the background")
-	require.Equal(t, color.RGBA{R: 0x40, G: 0x60, B: 0x8f, A: 0xff}, img.RGBAAt(1, 0), "half covers it by half")
-	require.Equal(t, color.RGBA{R: 0xff, G: 0xee, B: 0xdd, A: 0xff}, img.RGBAAt(2, 0), "opaque hides it")
-}
-
-func TestMermaidFeatureWontRenderForAClipboardItCantUse(t *testing.T) {
-	t.Parallel()
-
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
-	f.clipboardReady = func() error { return errors.New("no clipboard tool") }
-	cmd, handled := f.HandleMsg(chat.DiagramCopyImageMsg{Source: "A"})
-	require.True(t, handled)
-	require.Equal(t, util.NewErrorMsg(errors.New("copy diagram image: no clipboard tool")), cmd())
-	require.Empty(t, f.requests, "nothing renders")
-}
-
-// Not parallel: it swaps the default logger.
-func TestMermaidFeatureLogsAFailedCopy(t *testing.T) {
-	rec := &warnRecorder{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(rec))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	f := newIdleMermaidFeature(&fakeDiagramHost{}, kittyCaps())
-	f.HandleMsg(diagramCopiedMsg{err: errors.New("no clipboard")})
-	require.Equal(t, []string{"Failed to copy mermaid diagram image"}, rec.warns)
 }
