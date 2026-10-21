@@ -137,6 +137,38 @@ func gifHeaderOnly(w, h uint16) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+// jpegHeaderOnly is a JPEG that is only a frame header claiming w×h in
+// three components, progressive or baseline.
+func jpegHeaderOnly(w, h uint16, progressive bool) string {
+	sof := byte(0xc0)
+	if progressive {
+		sof = 0xc2
+	}
+	var buf bytes.Buffer
+	buf.Write([]byte{0xff, 0xd8})
+	// A JFIF header, so the colour model is known from the frame header.
+	buf.Write([]byte{0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0})
+	buf.Write([]byte{0xff, sof, 0x00, 0x11, 0x08})
+	_ = binary.Write(&buf, binary.BigEndian, h)
+	_ = binary.Write(&buf, binary.BigEndian, w)
+	buf.Write([]byte{0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00})
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+// webpLosslessHeaderOnly is a lossless WebP that is only a header claiming
+// w×h.
+func webpLosslessHeaderOnly(w, h uint32) string {
+	var buf bytes.Buffer
+	buf.WriteString("RIFF")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(4+8+6))
+	buf.WriteString("WEBPVP8L")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(5))
+	buf.WriteByte(0x2f)
+	_ = binary.Write(&buf, binary.LittleEndian, (w-1)|(h-1)<<14)
+	buf.WriteByte(0)
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
 // tinyWebP is a 1×1 lossless WebP.
 const tinyWebP = "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA=="
 
@@ -247,16 +279,18 @@ func TestGraphicsFeatureRefusesToolImagesItCantShow(t *testing.T) {
 		data, mimeType string
 		want           string
 	}{
-		"unsupported type":                                  {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type image/svg+xml"},
-		"too wide to decode":                                {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
-		"too many bytes once decoded":                       {data: pngIHDROnlyDepth(6000, 4000, 16), mimeType: "image/png", want: "image too large (6000×4000)"},
-		"16-bit grey, which transparency makes 16-bit RGBA": {data: pngIHDROnlyType(6000, 4000, 16, 0), mimeType: "image/png", want: "image too large (6000×4000)"},
-		"8-bit grey, which transparency makes RGBA":         {data: pngIHDROnlyType(8000, 4200, 8, 0), mimeType: "image/png", want: "image too large (8000×4200)"},
-		"too many pixels, though few bytes":                 {data: gifHeaderOnly(8000, 8000), mimeType: "image/gif", want: "image too large (8000×8000)"},
-		"too many pixels":                                   {data: pngIHDROnly(8000, 4200), mimeType: "image/png", want: "image too large (8000×4200)"},
-		"corrupt data":                                      {data: base64.StdEncoding.EncodeToString([]byte("not a png")), mimeType: "image/png", want: "decode image"},
-		"truncated after header":                            {data: pngIHDROnly(10, 10), mimeType: "image/png", want: "decode image"},
-		"invalid base64":                                    {data: "!!!", mimeType: "image/png", want: "decode image data"},
+		"unsupported type":                                         {data: base64.StdEncoding.EncodeToString([]byte("<svg/>")), mimeType: "image/svg+xml", want: "unsupported image type image/svg+xml"},
+		"too wide to decode":                                       {data: pngIHDROnly(8193, 10), mimeType: "image/png", want: "image too large (8193×10)"},
+		"too many bytes once decoded":                              {data: pngIHDROnlyDepth(6000, 4000, 16), mimeType: "image/png", want: "image too large (6000×4000)"},
+		"16-bit grey, which transparency makes 16-bit RGBA":        {data: pngIHDROnlyType(6000, 4000, 16, 0), mimeType: "image/png", want: "image too large (6000×4000)"},
+		"8-bit grey, which transparency makes RGBA":                {data: pngIHDROnlyType(8000, 4200, 8, 0), mimeType: "image/png", want: "image too large (8000×4200)"},
+		"too many pixels, though few bytes":                        {data: gifHeaderOnly(8000, 8000), mimeType: "image/gif", want: "image too large (8000×8000)"},
+		"progressive JPEG, whose coefficients outweigh its pixels": {data: jpegHeaderOnly(4000, 3000, true), mimeType: "image/jpeg", want: "image too large (4000×3000)"},
+		"lossless WebP, which decodes through whole-image buffers": {data: webpLosslessHeaderOnly(4000, 3000), mimeType: "image/webp", want: "image too large (4000×3000)"},
+		"too many pixels":                                          {data: pngIHDROnly(8000, 4200), mimeType: "image/png", want: "image too large (8000×4200)"},
+		"corrupt data":                                             {data: base64.StdEncoding.EncodeToString([]byte("not a png")), mimeType: "image/png", want: "decode image"},
+		"truncated after header":                                   {data: pngIHDROnly(10, 10), mimeType: "image/png", want: "decode image"},
+		"invalid base64":                                           {data: "!!!", mimeType: "image/png", want: "decode image data"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -652,4 +686,54 @@ func TestGraphicsFeatureFreesAShownImageWhenItsWidthComesBackDuringARender(t *te
 	require.Len(t, rawMsgs(evict), 1, "the first image is freed")
 	require.NotContains(t, f.entries, first.key)
 	require.Contains(t, f.entries, current.key)
+}
+
+func TestGraphicsFeatureDecodesImagesWithinTheirDecodersBudget(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct{ data, mimeType string }{
+		"baseline JPEG the progressive limit would refuse": {data: jpegHeaderOnly(4000, 3000, false), mimeType: "image/jpeg"},
+		"lossless WebP under its limit":                    {data: webpLosslessHeaderOnly(3000, 3000), mimeType: "image/webp"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := base64.StdEncoding.DecodeString(tc.data)
+			require.NoError(t, err)
+			_, _, err = image.DecodeConfig(bytes.NewReader(raw))
+			require.NoError(t, err, "the header alone is a valid config")
+			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+			ready := requestImage(t, f, tc.data, tc.mimeType, 80)
+			require.Error(t, ready.err)
+			require.NotContains(t, ready.err.Error(), "too large", "it got past the size check to the pixels")
+		})
+	}
+}
+
+func TestJPEGProgressive(t *testing.T) {
+	t.Parallel()
+
+	soi := []byte{0xff, 0xd8}
+	app0 := []byte{0xff, 0xe0, 0x00, 0x04, 0xaa, 0xbb}
+	frame := func(sof byte) []byte { return []byte{0xff, sof, 0x00, 0x02} }
+	join := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+	tests := map[string]struct {
+		raw  []byte
+		want bool
+	}{
+		"baseline":                       {raw: join(soi, frame(0xc0)), want: false},
+		"extended sequential":            {raw: join(soi, frame(0xc1)), want: false},
+		"progressive":                    {raw: join(soi, frame(0xc2)), want: true},
+		"after another segment":          {raw: join(soi, app0, frame(0xc0)), want: false},
+		"after fill bytes":               {raw: join(soi, []byte{0xff}, frame(0xc0)), want: false},
+		"a scan before any frame header": {raw: join(soi, []byte{0xff, 0xda, 0x00, 0x02}), want: true},
+		"not a marker":                   {raw: join(soi, []byte{0x00, 0xc0, 0x00, 0x02}), want: true},
+		"no frame header":                {raw: join(soi, app0), want: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, jpegProgressive(tc.raw))
+		})
+	}
 }

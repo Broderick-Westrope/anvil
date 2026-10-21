@@ -55,6 +55,51 @@ const (
 	bitmapMaxDecodedBytes = 128 << 20
 )
 
+// decodeBytesPerPixel is the most a decoder of format holds at once per
+// pixel. Progressive JPEG keeps a 256-byte coefficient block for every
+// 8×8 block of every component, up to four, besides the image; lossless
+// WebP builds the image through whole-image buffers of four bytes a pixel,
+// one per transform step. Baseline JPEG, PNG and GIF decode straight into
+// the image.
+func decodeBytesPerPixel(format string, m color.Model, raw []byte) int {
+	switch format {
+	case "jpeg":
+		if jpegProgressive(raw) {
+			return 20
+		}
+	case "webp":
+		return 12
+	}
+	return decodedBytesPerPixel(m)
+}
+
+// jpegProgressive reports whether the JPEG in raw is progressive, from its
+// frame header. A header it can't find counts as progressive, the costlier
+// case.
+func jpegProgressive(raw []byte) bool {
+	i := 2 // After the start-of-image marker.
+	for i+4 <= len(raw) {
+		if raw[i] != 0xff {
+			return true
+		}
+		marker := raw[i+1]
+		switch {
+		case marker == 0xff:
+			i++ // A fill byte.
+			continue
+		case marker == 0xc2:
+			return true
+		case marker == 0xc0 || marker == 0xc1:
+			return false
+		case marker == 0xda:
+			// The scan started before any frame header.
+			return true
+		}
+		i += 2 + (int(raw[i+2])<<8 | int(raw[i+3]))
+	}
+	return true
+}
+
 // decodedBytesPerPixel is the most the decoders allocate per pixel for an
 // image of model m. A 16-bit PNG takes twice an 8-bit one, and a grey
 // PNG with a transparent colour decodes to RGBA of its depth, which
@@ -92,13 +137,13 @@ func renderBitmap(req diagramRequest) diagramReadyMsg {
 	if err != nil {
 		return fail(fmt.Errorf("decode image data: %w", err))
 	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
 	if err != nil {
 		return fail(fmt.Errorf("decode image: %w", err))
 	}
 	pixels := cfg.Width * cfg.Height
 	if cfg.Width > bitmapMaxSide || cfg.Height > bitmapMaxSide || pixels > bitmapMaxPixels ||
-		pixels*decodedBytesPerPixel(cfg.ColorModel) > bitmapMaxDecodedBytes {
+		pixels*decodeBytesPerPixel(format, cfg.ColorModel, raw) > bitmapMaxDecodedBytes {
 		return fail(undisplayableError{fmt.Sprintf("image too large (%d×%d)", cfg.Width, cfg.Height)})
 	}
 	// For an animated GIF this is the first frame.
