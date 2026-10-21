@@ -249,7 +249,9 @@ Terms with a specific meaning in this codebase are defined in
   loading the Mermaid engines (`internal/ui/model/tool_image.go`). They
   draw at actual size, shrunk to the drill-in's width, 297 rows and
   16 Mpx once padded to whole cells, never enlarged; a source over
-  8192 px a side or 128 MB decoded isn't decoded. Only the drill-in on
+  8192 px a side, 32 Mpx, or 128 MB of what its decoder holds at once
+  (`decodeBytesPerPixel`: progressive JPEG and lossless WebP hold far
+  more than their pixels) isn't decoded. Only the drill-in on
   top holds a full-size image (diagram or bitmap): `UI.Update` tells
   features which chat is on top after every message, keys included
   (`drillInFeature.DrillInChanged`), and the cache frees the old one at
