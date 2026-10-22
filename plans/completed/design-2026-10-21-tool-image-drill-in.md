@@ -35,7 +35,7 @@ Out:
 - Block-character (non-Kitty) drawing.
 - SVG, AVIF, BMP or any format beyond PNG, JPEG, GIF and WebP; GIF
   animation.
-- Copying the image or its path.
+- Copying the image's path.
 - A config switch.
 
 **Constraints:**

@@ -139,7 +139,7 @@ func TestGraphicsFeatureReportsACopiedImage(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
-	cmd, handled := f.HandleMsg(diagramCopiedMsg{})
+	cmd, handled := f.HandleMsg(diagramCopiedMsg{what: diagramCopy})
 	require.True(t, handled)
 	require.Equal(t, util.NewInfoMsg("Diagram image copied to clipboard"), browserCmdMsg(t, cmd))
 }
@@ -148,7 +148,7 @@ func TestGraphicsFeatureReportsAFailedCopy(t *testing.T) {
 	t.Parallel()
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
-	cmd, handled := f.HandleMsg(diagramCopiedMsg{err: errors.New("no clipboard")})
+	cmd, handled := f.HandleMsg(diagramCopiedMsg{what: diagramCopy, err: errors.New("no clipboard")})
 	require.True(t, handled)
 	require.Equal(t, util.NewErrorMsg(errors.New("copy diagram image: no clipboard")), browserCmdMsg(t, cmd))
 }
@@ -225,6 +225,6 @@ func TestGraphicsFeatureLogsAFailedCopy(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
-	f.HandleMsg(diagramCopiedMsg{err: errors.New("no clipboard")})
+	f.HandleMsg(diagramCopiedMsg{what: diagramCopy, err: errors.New("no clipboard")})
 	require.Equal(t, []string{"Failed to copy mermaid diagram image"}, rec.warns)
 }
