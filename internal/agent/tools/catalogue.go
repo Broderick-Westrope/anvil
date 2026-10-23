@@ -252,10 +252,10 @@ func (c *catalogue) connect(ctx context.Context, server, caller string) error {
 	}
 }
 
-// settle waits, bounded by the server's connect timeout, for another
-// caller's connect to finish.
+// settle waits for another caller's connect to finish, bounded by two
+// connect timeouts: ConnectDeferred retries a transient failure once.
 func (c *catalogue) settle(ctx context.Context, server string) error {
-	ctx, cancel := context.WithTimeout(ctx, mcp.ConnectTimeout(c.opts.Config.Config().MCP[server]))
+	ctx, cancel := context.WithTimeout(ctx, 2*mcp.ConnectTimeout(c.opts.Config.Config().MCP[server]))
 	defer cancel()
 	if _, err := mcp.WaitSettled(ctx, server); err != nil {
 		if parent := context.Cause(ctx); parent != nil && !errors.Is(parent, context.DeadlineExceeded) {
