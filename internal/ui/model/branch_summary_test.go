@@ -30,6 +30,7 @@ type branchSummaryTestWorkspace struct {
 	starts    []agent.BranchSummaryRequest
 	startErr  error
 	running   map[string]bool
+	busy      map[string]bool
 	cancelled []string
 	discarded []string
 }
@@ -48,6 +49,7 @@ func newBranchSummaryTestWorkspace() *branchSummaryTestWorkspace {
 		},
 		agents:  []string{agent.BuiltinBranchSummarizer, "pr-summarizer"},
 		running: map[string]bool{},
+		busy:    map[string]bool{},
 	}
 }
 
@@ -87,7 +89,9 @@ func (w *branchSummaryTestWorkspace) AgentDiscardBranchSummary(_ context.Context
 
 func (w *branchSummaryTestWorkspace) AgentBranchSummarizers() []string { return w.agents }
 
-func (*branchSummaryTestWorkspace) AgentIsSessionBusy(string) bool { return false }
+func (w *branchSummaryTestWorkspace) AgentIsSessionBusy(sessionID string) bool {
+	return w.busy[sessionID]
+}
 
 func (w *branchSummaryTestWorkspace) Config() *config.Config { return w.cfg }
 
@@ -657,4 +661,212 @@ func TestBranchSummary_ANewRewindClearsAFailure(t *testing.T) {
 	b.rewind("a2", "a1")
 
 	require.Nil(t, b.f.Panel())
+}
+
+func TestBranchSummary_CancelKeysClaimedOnlyForTheSummaryAlone(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		running, busy, claimed bool
+	}{
+		"nothing running":           {},
+		"the session busy":          {busy: true},
+		"the summary alone":         {running: true, claimed: true},
+		"the summary and a session": {running: true, busy: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+			b.ws.running["sess-1"] = tc.running
+			b.ws.busy["sess-1"] = tc.busy
+
+			_, claimed := b.f.Cancel()
+
+			require.Equal(t, tc.claimed, claimed)
+		})
+	}
+}
+
+func TestBranchSummary_OnlyASendInTheRewoundSessionMakesItsOfferStale(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]message.Message{
+		"a reply":                {ID: "a3", SessionID: "sess-1", Role: message.Assistant, ParentMessageID: "a1"},
+		"a send in another chat": {ID: "u3", SessionID: "sess-2", Role: message.User},
+		"a metadata entry":       {ID: "m1", SessionID: "sess-1", Role: message.User, MessageType: message.MessageTypeMCPToggle},
+	}
+	for name, msg := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+			offer := b.f.Observe(navigateTreeDoneMsg{
+				session: &session.Session{ID: "sess-1"}, leafID: "a1",
+				snapshot: &branchReturnSnapshot{sessionID: "sess-1", leafID: "a2"},
+			})
+
+			b.f.Observe(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: msg})
+			b.run(offer)
+
+			require.True(t, b.host.overlay.ContainsDialog(dialog.BranchSummaryPickerID))
+		})
+	}
+}
+
+func TestBranchSummary_NoOfferForARewindThatLeftNothingBehind(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]navigateTreeDoneMsg{
+		"a failed move": {
+			err: errors.New("boom"), session: &session.Session{ID: "sess-1"}, leafID: "a1",
+			snapshot: &branchReturnSnapshot{sessionID: "sess-1", leafID: "a2"},
+		},
+		"no session":       {leafID: "a1", snapshot: &branchReturnSnapshot{sessionID: "sess-1", leafID: "a2"}},
+		"no snapshot":      {session: &session.Session{ID: "sess-1"}, leafID: "a1"},
+		"no previous leaf": {session: &session.Session{ID: "sess-1"}, leafID: "a1", snapshot: &branchReturnSnapshot{sessionID: "sess-1"}},
+		"the same leaf": {
+			session: &session.Session{ID: "sess-1"}, leafID: "a1",
+			snapshot: &branchReturnSnapshot{sessionID: "sess-1", leafID: "a1"},
+		},
+	}
+	for name, done := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+
+			require.Nil(t, b.f.Observe(done))
+			require.Empty(t, b.f.pending)
+		})
+	}
+}
+
+func TestBranchSummary_AnOfferForAnotherRewindIsDropped(t *testing.T) {
+	t.Parallel()
+
+	pending := dialog.RewindOffer{SessionID: "sess-1", FromLeafID: "a2", TargetID: "a1"}
+	tests := map[string]struct {
+		offer dialog.RewindOffer
+		host  string
+	}{
+		"another session":   {offer: dialog.RewindOffer{SessionID: "sess-2", FromLeafID: "a2", TargetID: "a1"}, host: "sess-2"},
+		"another left leaf": {offer: dialog.RewindOffer{SessionID: "sess-1", FromLeafID: "u2", TargetID: "a1"}, host: "sess-1"},
+		"another target":    {offer: dialog.RewindOffer{SessionID: "sess-1", FromLeafID: "a2", TargetID: "u1"}, host: "sess-1"},
+		"off screen":        {offer: pending, host: "sess-2"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+			b.f.pending = pending
+			b.host.session = &session.Session{ID: tc.host}
+
+			b.run(b.f.offer(tc.offer))
+
+			require.False(t, b.host.overlay.HasDialogs())
+		})
+	}
+}
+
+// serviceEvent delivers ev for sess-1 as the service would.
+func (b *branchSummaryFixture) serviceEvent(ev branchsummaries.Event) []util.InfoMsg {
+	ev.SessionID = "sess-1"
+	cmd, ok := b.f.HandleMsg(pubsub.Event[branchsummaries.Event]{Type: pubsub.UpdatedEvent, Payload: ev})
+	if !ok {
+		panic("event not handled")
+	}
+	return b.run(cmd)
+}
+
+func TestBranchSummary_ShowsARunThisUIDidNotStart(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.ws.running["sess-1"] = true
+
+	b.serviceEvent(branchsummaries.Event{RunID: "run-2", Agent: "pr-summarizer", State: branchsummaries.StateRunning})
+
+	entries := b.f.PaletteEntries()
+	require.Len(t, entries, 1)
+	require.Equal(t, "branch_summary_cancel", entries[0].ID())
+}
+
+func TestBranchSummary_ANewRunReplacesTheLastOne(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	b.serviceEvent(branchsummaries.Event{RunID: "run-2", Agent: "pr-summarizer", State: branchsummaries.StateRunning})
+	b.ws.running["sess-1"] = false
+	b.serviceEvent(branchsummaries.Event{RunID: "run-2", State: branchsummaries.StateStored, SummaryID: "summary-2"})
+	b.run(b.f.dismiss("sess-1"))
+
+	require.Equal(t, []string{"summary-2"}, b.ws.discarded)
+}
+
+func TestBranchSummary_EndEventsForOtherRunsAreIgnored(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no run", func(t *testing.T) {
+		t.Parallel()
+		b := newBranchSummaryFixture(t)
+
+		infos := b.serviceEvent(branchsummaries.Event{RunID: "run-1", State: branchsummaries.StateCancelled})
+
+		require.Empty(t, infos)
+		require.Empty(t, b.f.runs)
+	})
+	t.Run("another run", func(t *testing.T) {
+		t.Parallel()
+		b := newBranchSummaryFixture(t)
+		b.runPicked()
+
+		infos := b.serviceEvent(branchsummaries.Event{RunID: "run-0", State: branchsummaries.StateCancelled})
+
+		require.Empty(t, infos)
+		require.Equal(t, "branch_summary_cancel", b.f.PaletteEntries()[0].ID())
+	})
+}
+
+func TestBranchSummary_DismissNeedsAFinishedSummary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no run", func(t *testing.T) {
+		t.Parallel()
+		b := newBranchSummaryFixture(t)
+
+		require.Nil(t, b.f.dismiss("sess-1"))
+	})
+	t.Run("a running summary", func(t *testing.T) {
+		t.Parallel()
+		b := newBranchSummaryFixture(t)
+		b.runPicked()
+
+		require.Nil(t, b.f.dismiss("sess-1"))
+		require.Len(t, b.host.chatItems, 1)
+		require.Len(t, b.f.PaletteEntries(), 1)
+	})
+}
+
+func TestBranchSummary_FailurePanelKeepsItsHintWhenNarrow(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+	b.event(branchsummaries.StateFailed, "", errors.New("provider exploded with a long story"))
+
+	out := ansi.Strip(b.f.Panel().Render(40))
+
+	require.Equal(t, "Branch summary · pr-sum…  ctrl+p dismiss", out)
+	require.Equal(t, 40, ansi.StringWidth(out))
+}
+
+func TestBranchSummary_AMessageElsewhereKeepsDiscard(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+	b.event(branchsummaries.StateStored, "summary-1", nil)
+
+	b.f.Observe(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "u3", SessionID: "sess-1", Role: message.User, ParentMessageID: "a1",
+	}})
+
+	require.Len(t, b.f.PaletteEntries(), 1)
 }
