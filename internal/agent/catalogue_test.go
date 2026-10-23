@@ -265,7 +265,9 @@ func TestTheFirstPromptUsesTheRouteMapNotThePreSnapshotBuild(t *testing.T) {
 
 	// The coordinator's eager build happened before the snapshot; the run
 	// waits for initialisation and rebuilds from the route map.
-	go toolsmcp.Initialize(f.Context, nil, f.Config, nil)
+	// Initialize keeps its context as the parent of later deferred
+	// connections, so it must outlive this test.
+	go toolsmcp.Initialize(context.Background(), nil, f.Config, nil)
 	_, err := f.Coordinator.Run(f.Context, session, "hi")
 	require.NoError(t, err)
 
