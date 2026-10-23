@@ -414,3 +414,10 @@ func TestFirstSentenceCutsOnRunes(t *testing.T) {
 	require.True(t, strings.HasSuffix(got, "..."))
 	require.True(t, utf8.ValidString(got))
 }
+
+func TestCatalogueToolsNeverSendANullRequiredList(t *testing.T) {
+	t.Parallel()
+	for _, tool := range NewCatalogueTools(CatalogueOptions{Servers: []CatalogueServer{{Name: "x", Description: "X."}}}) {
+		require.NotNil(t, tool.Info().Required, tool.Info().Name)
+	}
+}

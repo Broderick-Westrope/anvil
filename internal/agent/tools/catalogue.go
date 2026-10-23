@@ -105,6 +105,9 @@ func NewCatalogueTools(opts CatalogueOptions) []fantasy.AgentTool {
 				"server": str("Server to search. Omit to search every connected server."),
 				"query":  str("Keywords describing what the tool does. Omit, with server set, to list every tool name on the server."),
 			},
+			// Never nil: a nil list is sent as "required": null, which
+			// OpenAI rejects.
+			Required: []string{},
 		}, run: c.search},
 		&catalogueTool{info: fantasy.ToolInfo{
 			Name:        DescribeMCPToolToolName,
