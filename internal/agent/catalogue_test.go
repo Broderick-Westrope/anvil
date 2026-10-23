@@ -12,6 +12,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
@@ -137,4 +138,46 @@ func toolResultTexts(t *testing.T, f *branchfixture.Fixture, session string) str
 		}
 	}
 	return out.String()
+}
+
+func TestSubagentConnectsADeferredCatalogueServerOnItsFirstSearch(t *testing.T) {
+	const name = "catsublazy"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls), LazyDescription: "Pings things."}})
+	session := newParent(t, f)
+	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "task", ToolInput: `{"subagent_type":"reviewer","prompt":"find ping","description":"find ping"}`},
+		branchfixture.Response{ToolName: "search_mcp_tools", ToolInput: `{"server":"catsublazy","query":"ping"}`},
+		branchfixture.Response{Text: "found it"},
+		branchfixture.Response{Text: "done"},
+	)
+
+	_, err := f.Coordinator.Run(f.Context, session, "delegate")
+	require.NoError(t, err)
+
+	requests := f.Provider.Requests()
+	require.Len(t, requests, 4)
+	sub := toolNames(t, requests[1].Body)
+	require.Contains(t, sub, "search_mcp_tools")
+	require.NotContains(t, sub, "enable_mcp", "an auto-routed lazy server is no longer enabled")
+	require.Contains(t, requests[2].Body, "- ping: Replies pong.")
+	info, _ := toolsmcp.GetState(name)
+	require.Equal(t, toolsmcp.StateLazy, info.State)
+}
+
+func TestWorkflowAgentNamingACatalogueToolGetsItDirectly(t *testing.T) {
+	const name = "catwfnamed"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls), Route: config.MCPRouteCatalogue}})
+	parent := newParent(t, f)
+	f.Provider.Enqueue(branchfixture.Response{Text: "done"})
+
+	_, err := f.Coordinator.RunWorkflowAgent(f.Context, agent.WorkflowAgentCall{
+		ParentSessionID: parent, Agent: "reviewer", Prompt: "ping it", Tools: []string{"view", "mcp_catwfnamed_ping"},
+	})
+	require.NoError(t, err)
+
+	body := f.Provider.Requests()[0].Body
+	require.ElementsMatch(t, []string{"mcp_catwfnamed_ping", "view"}, toolNames(t, body))
+	require.Contains(t, body, "Say hello before calling ping.", "it never searches, so it gets the instructions")
 }
