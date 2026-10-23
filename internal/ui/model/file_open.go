@@ -1,7 +1,6 @@
 package model
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,19 +75,21 @@ func (f *fileOpenFeature) resolve(path string) string {
 // mounts or follows many types rather than showing them (scripts, HTML and
 // SVG in a browser, disk images, remote-session files), so like imageExts
 // this allows known passive types rather than refusing known active ones.
-// The sniff catches a passive name on active content, since some openers
-// (xdg-open) go by content. Everything else, and anything executable, is
-// left to e, which opens it as text.
+// Some that look passive aren't: .jsx is ExtendScript to Adobe apps, and a
+// spreadsheet app evaluates formulas in .csv. PDF stays, since the default
+// viewers (Preview, browsers) run none of its scripts. The sniff catches a
+// passive name on active content, since some openers (xdg-open) go by
+// content. Everything else, and anything executable, is left to e, which
+// opens it as text.
 var openTypes = map[string]string{
 	".txt": "text/plain", ".md": "text/plain", ".markdown": "text/plain",
-	".log": "text/plain", ".csv": "text/plain", ".tsv": "text/plain",
-	".json": "text/plain", ".jsonl": "text/plain", ".yaml": "text/plain",
-	".yml": "text/plain", ".toml": "text/plain", ".go": "text/plain",
-	".mod": "text/plain", ".sum": "text/plain", ".rs": "text/plain",
-	".c": "text/plain", ".h": "text/plain", ".cc": "text/plain",
-	".cpp": "text/plain", ".hpp": "text/plain", ".java": "text/plain",
-	".kt": "text/plain", ".swift": "text/plain", ".ts": "text/plain",
-	".tsx": "text/plain", ".jsx": "text/plain", ".css": "text/plain",
+	".log": "text/plain", ".json": "text/plain", ".jsonl": "text/plain",
+	".yaml": "text/plain", ".yml": "text/plain", ".toml": "text/plain",
+	".go": "text/plain", ".mod": "text/plain", ".sum": "text/plain",
+	".rs": "text/plain", ".c": "text/plain", ".h": "text/plain",
+	".cc": "text/plain", ".cpp": "text/plain", ".hpp": "text/plain",
+	".java": "text/plain", ".kt": "text/plain", ".swift": "text/plain",
+	".ts": "text/plain", ".tsx": "text/plain", ".css": "text/plain",
 	".scss": "text/plain", ".sql": "text/plain", ".proto": "text/plain",
 	".diff": "text/plain", ".patch": "text/plain", ".tf": "text/plain",
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -99,27 +100,27 @@ var openTypes = map[string]string{
 // openTypes). A symlink is judged, and opened, by what it points at.
 func (f *fileOpenFeature) open(path string) tea.Cmd {
 	return func() tea.Msg {
-		real, info, err := localFile(path)
+		realPath, info, err := localFile(path)
 		if err != nil {
-			return util.NewErrorMsg(fmt.Errorf("open file %s: %w", path, err))
+			return util.NewErrorMsg(fmt.Errorf("open file: %w", err))
 		}
-		name := filepath.Base(real)
-		refuse := util.NewWarnMsg("Won't open " + name + " in its default app, since it could run; press e to open it in $EDITOR")
-		want, ok := openTypes[strings.ToLower(filepath.Ext(real))]
+		name := filepath.Base(realPath)
+		ext := strings.ToLower(filepath.Ext(realPath))
+		want, ok := openTypes[ext]
 		// A colon names an alternate data stream on Windows, whose own
 		// name the extension check would see instead of the file's.
 		if !ok || strings.Contains(name, ":") || info.Mode().Perm()&0o111 != 0 {
-			return refuse
+			return util.NewWarnMsg("Won't open " + name + " in its default app, since only text, source, images and PDFs open; press e to open it in $EDITOR")
 		}
-		got, err := sniff(real)
+		got, err := sniff(realPath)
 		if err != nil {
-			return util.NewErrorMsg(fmt.Errorf("open file %s: %w", real, err))
+			return util.NewErrorMsg(fmt.Errorf("open file: %w", err))
 		}
 		if !strings.HasPrefix(got, want) {
-			return refuse
+			return util.NewWarnMsg("Won't open " + name + " in its default app, since its contents don't look like " + ext + "; press e to open it in $EDITOR")
 		}
-		if err := f.openURL(fileURL(real)); err != nil {
-			return util.NewErrorMsg(fmt.Errorf("open file %s: %w", real, err))
+		if err := f.openURL(fileURL(realPath)); err != nil {
+			return util.NewErrorMsg(fmt.Errorf("open file %s: %w", realPath, err))
 		}
 		return util.NewInfoMsg("Opened " + name)
 	}
@@ -139,51 +140,59 @@ func sniff(path string) (string, error) {
 // edit opens path in $EDITOR at line, suspending the TUI until it exits.
 func (f *fileOpenFeature) edit(path string, line int) tea.Cmd {
 	return func() tea.Msg {
-		real, _, err := localFile(path)
+		realPath, _, err := localFile(path)
 		if err != nil {
-			return util.NewErrorMsg(fmt.Errorf("edit file %s: %w", path, err))
+			return util.NewErrorMsg(fmt.Errorf("edit file: %w", err))
 		}
-		cmd, err := f.editorCmd(real, line)
+		cmd, err := f.editorCmd(realPath, line)
 		if err != nil {
-			return util.NewErrorMsg(fmt.Errorf("edit file %s: %w", real, err))
+			return util.NewErrorMsg(fmt.Errorf("edit file %s: %w", realPath, err))
 		}
 		// Checking the file is IO, so it can't happen in Update; the
 		// program runs an exec message whichever command returns it.
-		return tea.ExecProcess(cmd, editorExited)()
+		return tea.ExecProcess(cmd, editorExited(realPath))()
 	}
 }
 
-// editorExited reports $EDITOR failing, and nothing when it exits cleanly.
-func editorExited(err error) tea.Msg {
-	if err != nil {
-		return util.NewErrorMsg(fmt.Errorf("edit file: %w", err))
+// editorExited reports $EDITOR failing on path, and nothing when it exits
+// cleanly.
+func editorExited(path string) tea.ExecCallback {
+	return func(err error) tea.Msg {
+		if err != nil {
+			return util.NewErrorMsg(fmt.Errorf("edit file %s: %w", path, err))
+		}
+		return nil
 	}
-	return nil
 }
 
 // localFile resolves path's symlinks and checks it ends at a regular
 // file, returning where it ends. It refuses network paths before touching
 // them: on Windows, reaching a model-chosen \\host\share sends the user's
-// credentials to that host.
+// credentials to that host. A local symlink to a share would still reach
+// it while resolving; making one on Windows needs admin rights or
+// Developer Mode.
 func localFile(path string) (string, os.FileInfo, error) {
 	if isNetworkPath(path) {
-		return "", nil, errors.New("won't open a network path")
+		return "", nil, fmt.Errorf("won't open network path %s", path)
 	}
-	real, err := filepath.EvalSymlinks(path)
+	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", nil, err
 	}
-	info, err := os.Stat(real)
+	info, err := os.Stat(realPath)
 	if err != nil {
 		return "", nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("%s is not a regular file", real)
+		return "", nil, fmt.Errorf("%s is not a regular file", realPath)
 	}
-	return real, info, nil
+	return realPath, info, nil
 }
 
-// isNetworkPath reports whether path is a UNC path, in either slash.
+// isNetworkPath reports whether path is a UNC or device path as Windows
+// reads it: two leading separators of either kind, or the \??\ prefix.
+// Elsewhere these are odd but local, and refusing them costs nothing.
 func isNetworkPath(path string) bool {
-	return strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//")
+	isSep := func(i int) bool { return len(path) > i && (path[i] == '/' || path[i] == '\\') }
+	return isSep(0) && isSep(1) || strings.HasPrefix(path, `\??\`)
 }

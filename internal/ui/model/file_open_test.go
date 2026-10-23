@@ -181,7 +181,7 @@ func TestFileOpenFeatureWontOpenWhatTheOSWouldRun(t *testing.T) {
 
 			msg := ft.run(t, chat.FileOpenMsg{Path: tc.setup(t, ft)})
 
-			requireInfo(t, msg, util.InfoTypeWarn, "since it could run; press e to open it in $EDITOR")
+			requireInfo(t, msg, util.InfoTypeWarn, "; press e to open it in $EDITOR")
 			require.Empty(t, ft.opened)
 		})
 	}
@@ -190,17 +190,67 @@ func TestFileOpenFeatureWontOpenWhatTheOSWouldRun(t *testing.T) {
 func TestFileOpenFeatureWontTouchANetworkPath(t *testing.T) {
 	t.Parallel()
 
-	paths := []string{"//host/share/a.txt"}
+	// Elsewhere a leading backslash starts a relative name, so only the
+	// forms that are absolute everywhere reach the check on every OS.
+	paths := []string{"//host/share/a.txt", `/\host\share\a.txt`}
 	if runtime.GOOS == "windows" {
-		// Elsewhere backslashes are part of a relative file name.
-		paths = append(paths, `\\host\share\a.txt`)
+		paths = append(paths, `\\host\share\a.txt`, `\/host/share/a.txt`, `\??\UNC\host\share\a.txt`)
 	}
 	for _, path := range paths {
 		ft := newFileOpenTest(t)
-		requireInfo(t, ft.run(t, chat.FileOpenMsg{Path: path}), util.InfoTypeError, "won't open a network path")
-		requireInfo(t, ft.run(t, chat.FileEditMsg{Path: path}), util.InfoTypeError, "won't open a network path")
+		requireInfo(t, ft.run(t, chat.FileOpenMsg{Path: path}), util.InfoTypeError, "won't open network path "+path)
+		requireInfo(t, ft.run(t, chat.FileEditMsg{Path: path}), util.InfoTypeError, "won't open network path "+path)
 		require.Empty(t, ft.opened)
 		require.Empty(t, ft.edited)
+	}
+}
+
+func TestFileOpenFeatureSaysWhyItWontOpen(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		name    string
+		content string
+		why     string
+	}{
+		"ExtendScript":            {name: "a.jsx", content: "alert(1)", why: "since only text, source, images and PDFs open"},
+		"a spreadsheet's formula": {name: "a.csv", content: "=1+1", why: "since only text, source, images and PDFs open"},
+		"a README that opens with HTML": {
+			name: "README.md", content: `<p align="center"><img src="logo.png"></p>`,
+			why: "since its contents don't look like .md",
+		},
+		"an empty image": {name: "a.png", content: "", why: "since its contents don't look like .png"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ft := newFileOpenTest(t)
+			ft.writeContent(t, tc.name, tc.content, 0o644)
+
+			requireInfo(t, ft.run(t, chat.FileOpenMsg{Path: tc.name}), util.InfoTypeWarn, "Won't open "+tc.name+" in its default app, "+tc.why+"; press e")
+			require.Empty(t, ft.opened)
+		})
+	}
+}
+
+func TestIsNetworkPath(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]bool{
+		`\\host\share\a.txt`:       true,
+		"//host/share/a.txt":       true,
+		`/\host\share\a.txt`:       true,
+		`\/host/share/a.txt`:       true,
+		`\??\UNC\host\share\a.txt`: true,
+		`C:\Users\a.txt`:           false,
+		"/home/a.txt":              false,
+		`\a.txt`:                   false,
+		"/":                        false,
+		"":                         false,
+		"a//b":                     false,
+	}
+	for path, want := range tests {
+		require.Equal(t, want, isNetworkPath(path), path)
 	}
 }
 
@@ -218,13 +268,14 @@ func TestFileOpenFeatureReportsAFileItCantOpen(t *testing.T) {
 		}, reason: "is not a regular file"},
 		"a dangling symlink": {path: "link", setup: func(t *testing.T, ft *fileOpenTest) {
 			symlink(t, filepath.Join(ft.dir, "gone"), filepath.Join(ft.dir, "link"))
-		}, reason: "link: "},
+		}, reason: "gone: no such file"},
+		"the root": {path: "/", setup: func(*testing.T, *fileOpenTest) {}, reason: "is not a regular file"},
 		"unreadable": {path: "secret.txt", setup: func(t *testing.T, ft *fileOpenTest) {
 			if runtime.GOOS == "windows" {
 				t.Skip("Windows has no write-only mode")
 			}
 			ft.write(t, "secret.txt", 0o200)
-		}, reason: "secret.txt: open "},
+		}, reason: "secret.txt: permission denied"},
 		"no default app": {path: "notes.md", setup: func(t *testing.T, ft *fileOpenTest) {
 			ft.write(t, "notes.md", 0o644)
 			ft.openURL = func(string) error { return errors.New("no app") }
@@ -292,8 +343,8 @@ func TestFileOpenFeatureReportsAFileItCantEdit(t *testing.T) {
 func TestEditorExited(t *testing.T) {
 	t.Parallel()
 
-	require.Nil(t, editorExited(nil))
-	requireInfo(t, editorExited(errors.New("exit status 1")), util.InfoTypeError, "edit file: exit status 1")
+	require.Nil(t, editorExited("/a.go")(nil))
+	requireInfo(t, editorExited("/a.go")(errors.New("exit status 1")), util.InfoTypeError, "edit file /a.go: exit status 1")
 }
 
 func TestEditorCommandGoesToTheLine(t *testing.T) {
