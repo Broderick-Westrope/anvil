@@ -5267,7 +5267,7 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 
 // applyMCPRoute labels entry with its server's route. A catalogue server
 // isn't lazy-toggled: its tools are never listed, whatever the toggle.
-func applyMCPRoute(entry *dialog.MCPPaletteEntry, routes []agenttools.MCPRoute, ready bool) {
+func applyMCPRoute(entry *dialog.MCPPaletteEntry, routes []agenttools.MCPRouteInfo, ready bool) {
 	if !ready {
 		entry.Route = "route pending"
 		return

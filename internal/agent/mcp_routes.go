@@ -117,12 +117,12 @@ func (c *coordinator) mcpRoutes() (mcpRoutes, bool) {
 // MCPRoutes returns every routed server's route for display, flagging an
 // auto-direct server whose tools have since grown past the threshold: it
 // stays direct until restart, so the tool list can't change mid-process.
-func (c *coordinator) MCPRoutes() ([]tools.MCPRoute, bool) {
+func (c *coordinator) MCPRoutes() ([]tools.MCPRouteInfo, bool) {
 	routes, ready := c.mcpRoutes()
 	if !ready {
 		return nil, false
 	}
-	var out []tools.MCPRoute
+	var out []tools.MCPRouteInfo
 	for _, name := range slices.Sorted(maps.Keys(routes)) {
 		route := routes[name]
 		reason, short := route.reason, route.short
@@ -132,7 +132,7 @@ func (c *coordinator) MCPRoutes() ([]tools.MCPRoute, bool) {
 				now, humanize.Comma(catalogueThresholdBytes))
 			short += ", now " + humanize.Bytes(uint64(size))
 		}
-		out = append(out, tools.MCPRoute{Server: name, Catalogue: route.catalogue, Reason: reason, Short: short})
+		out = append(out, tools.MCPRouteInfo{Server: name, Catalogue: route.catalogue, Reason: reason, Short: short})
 	}
 	return out, true
 }

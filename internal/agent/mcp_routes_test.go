@@ -75,7 +75,7 @@ func TestCoordinatorMCPRoutesFlagsADirectServerThatGrew(t *testing.T) {
 	c := &coordinator{cfg: cfg}
 	before, ready := c.MCPRoutes()
 	require.True(t, ready)
-	require.Equal(t, []tools.MCPRoute{
+	require.Equal(t, []tools.MCPRouteInfo{
 		{Server: grown, Reason: "auto: 84 bytes, under 12,000", Short: "84 B"},
 		{Server: pinned, Reason: "route: direct", Short: "set in config"},
 	}, before)

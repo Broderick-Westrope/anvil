@@ -141,7 +141,7 @@ type Coordinator interface {
 	RefreshMCPTools(ctx context.Context, name string) error
 	// MCPRoutes returns how each MCP server's tools reach the model, in
 	// name order, and false until MCP initialisation has finished.
-	MCPRoutes() ([]tools.MCPRoute, bool)
+	MCPRoutes() ([]tools.MCPRouteInfo, bool)
 }
 
 type coordinator struct {

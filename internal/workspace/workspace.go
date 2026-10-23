@@ -255,7 +255,7 @@ type Workspace interface {
 	RefreshMCPTools(ctx context.Context, name string)
 	// MCPRoutes returns how each MCP server's tools reach the model, in
 	// name order, and false until MCP initialisation has finished.
-	MCPRoutes() ([]agenttools.MCPRoute, bool)
+	MCPRoutes() ([]agenttools.MCPRouteInfo, bool)
 	ReadMCPResource(ctx context.Context, name, uri string) ([]MCPResourceContents, error)
 	GetMCPPrompt(clientID, promptID string, args map[string]string) (string, error)
 	EnableDockerMCP(ctx context.Context) error

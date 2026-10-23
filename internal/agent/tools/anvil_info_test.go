@@ -714,12 +714,12 @@ func TestWriteMCPRoutes(t *testing.T) {
 		want   string
 	}{
 		"pending": {
-			routes: func() ([]MCPRoute, bool) { return nil, false },
+			routes: func() ([]MCPRouteInfo, bool) { return nil, false },
 			want:   "[mcp_routes]\npending (MCP servers are still starting)\n\n",
 		},
 		"routed": {
-			routes: func() ([]MCPRoute, bool) {
-				return []MCPRoute{
+			routes: func() ([]MCPRouteInfo, bool) {
+				return []MCPRouteInfo{
 					{Server: "datadog", Catalogue: true, Reason: "auto: lazy"},
 					{Server: "muninn", Reason: "auto: 10,190 bytes, under 12,000"},
 				}, true
@@ -727,7 +727,7 @@ func TestWriteMCPRoutes(t *testing.T) {
 			want: "[mcp_routes]\ndatadog = catalogue (auto: lazy)\nmuninn = direct (auto: 10,190 bytes, under 12,000)\n\n",
 		},
 		"none": {
-			routes: func() ([]MCPRoute, bool) { return nil, true },
+			routes: func() ([]MCPRouteInfo, bool) { return nil, true },
 			want:   "",
 		},
 		"no route source": {want: ""},

@@ -532,7 +532,7 @@ func (w *AppWorkspace) RefreshMCPTools(ctx context.Context, name string) {
 	mcptools.RefreshTools(ctx, w.store, name)
 }
 
-func (w *AppWorkspace) MCPRoutes() ([]agenttools.MCPRoute, bool) {
+func (w *AppWorkspace) MCPRoutes() ([]agenttools.MCPRouteInfo, bool) {
 	if w.app.AgentCoordinator == nil {
 		return nil, false
 	}

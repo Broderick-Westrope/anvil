@@ -14,7 +14,7 @@ import (
 
 func TestApplyMCPRoute(t *testing.T) {
 	t.Parallel()
-	routes := []agenttools.MCPRoute{
+	routes := []agenttools.MCPRouteInfo{
 		{Server: "datadog", Catalogue: true, Reason: "auto: lazy", Short: "lazy"},
 		{Server: "muninn", Reason: "auto: 10,190 bytes, under 12,000", Short: "10 kB"},
 	}
@@ -56,10 +56,10 @@ func TestApplyMCPRoute(t *testing.T) {
 // routesWorkspace reports fixed MCP routes on top of testWorkspace.
 type routesWorkspace struct {
 	*testWorkspace
-	routes []agenttools.MCPRoute
+	routes []agenttools.MCPRouteInfo
 }
 
-func (w *routesWorkspace) MCPRoutes() ([]agenttools.MCPRoute, bool) { return w.routes, true }
+func (w *routesWorkspace) MCPRoutes() ([]agenttools.MCPRouteInfo, bool) { return w.routes, true }
 
 func TestSidebarShowsAConnectedCatalogueServerAsConnected(t *testing.T) {
 	t.Parallel()
@@ -68,7 +68,7 @@ func TestSidebarShowsAConnectedCatalogueServerAsConnected(t *testing.T) {
 		"datadog": {Type: config.MCPHttp, LazyDescription: "Logs."},
 		"slack":   {Type: config.MCPHttp, LazyDescription: "Chat."},
 	}}
-	u.com.Workspace = &routesWorkspace{testWorkspace: &testWorkspace{cfg: cfg}, routes: []agenttools.MCPRoute{{Server: "datadog", Catalogue: true}}}
+	u.com.Workspace = &routesWorkspace{testWorkspace: &testWorkspace{cfg: cfg}, routes: []agenttools.MCPRouteInfo{{Server: "datadog", Catalogue: true}}}
 	u.mcpStates = map[string]mcp.ClientInfo{
 		"datadog": {Name: "datadog", State: mcp.StateLazy},
 		"slack":   {Name: "slack", State: mcp.StateLazy},
