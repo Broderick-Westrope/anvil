@@ -16,13 +16,26 @@ import (
 func (m *UI) mcpInfo(width, maxItems int, isSection bool) string {
 	var mcps []mcp.ClientInfo
 	t := m.com.Styles
+	// Read the routes at most once per render, and only when a connected
+	// lazy server needs them.
+	var catalogue map[string]bool
+	isCatalogue := func(name string) bool {
+		if catalogue == nil {
+			catalogue = map[string]bool{}
+			routes, _ := m.com.Workspace.MCPRoutes()
+			for _, route := range routes {
+				catalogue[route.Server] = route.Catalogue
+			}
+		}
+		return catalogue[name]
+	}
 
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
 		if state, ok := m.mcpStates[mcpCfg.Name]; ok {
 			// A lazy MCP that's connected shows as connected when this
 			// branch enabled it or it goes through the catalogue, which
 			// needs no enabling.
-			if state.State == mcp.StateLazy && (m.enabledLazyMCPs[mcpCfg.Name] || m.isCatalogueMCP(mcpCfg.Name)) {
+			if state.State == mcp.StateLazy && (m.enabledLazyMCPs[mcpCfg.Name] || isCatalogue(mcpCfg.Name)) {
 				state.State = mcp.StateConnected
 			}
 			mcps = append(mcps, state)
@@ -39,18 +52,6 @@ func (m *UI) mcpInfo(width, maxItems int, isSection bool) string {
 	}
 
 	return lipgloss.NewStyle().Width(width).Render(fmt.Sprintf("%s\n\n%s", title, list))
-}
-
-// isCatalogueMCP reports whether the server goes through the MCP
-// catalogue. Routes are in memory and fixed once MCP initialisation ends.
-func (m *UI) isCatalogueMCP(name string) bool {
-	routes, _ := m.com.Workspace.MCPRoutes()
-	for _, route := range routes {
-		if route.Server == name {
-			return route.Catalogue
-		}
-	}
-	return false
 }
 
 // mcpCounts formats tool, prompt, and resource counts for display.
