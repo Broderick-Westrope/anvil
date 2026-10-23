@@ -16,10 +16,14 @@ type mcpListing struct {
 	// lazyTools maps each listed tool of a lazy server to the server, so
 	// turns can hide it until the server is enabled.
 	lazyTools map[string]string
-	// catalogue holds the catalogue-routed servers none of whose tools
-	// are listed. Their instructions stay out of the system prompt and
-	// replayed enables of them are ignored.
+	// catalogue holds the catalogue-routed servers. Replayed enables of
+	// them are ignored, and calls to their tools by direct name are
+	// forwarded to call_mcp_tool.
 	catalogue map[string]bool
+	// named holds the catalogue servers with a tool listed because a
+	// workflow agent named it. That agent never searches, so their
+	// instructions go in its system prompt.
+	named map[string]bool
 	// routed lists every server in the route map, in name order, so a
 	// direct-name call can be matched to its server.
 	routed []string
@@ -66,7 +70,7 @@ func (m agentMCPTools) wrap(agentTools []fantasy.AgentTool) []fantasy.AgentTool 
 // those of servers not routed through the catalogue, plus any tool named
 // in named (a workflow agent's explicit tool list), whatever its route.
 func (m agentMCPTools) listed(named []string) ([]fantasy.AgentTool, mcpListing) {
-	listing := mcpListing{lazyTools: map[string]string{}, catalogue: map[string]bool{}}
+	listing := mcpListing{lazyTools: map[string]string{}, catalogue: map[string]bool{}, named: map[string]bool{}}
 	if m.routes == nil {
 		return nil, listing
 	}
@@ -81,8 +85,8 @@ func (m agentMCPTools) listed(named []string) ([]fantasy.AgentTool, mcpListing) 
 		if m.routes.isCatalogue(tool.MCP()) && !isNamed {
 			continue
 		}
-		if isNamed {
-			delete(listing.catalogue, tool.MCP())
+		if isNamed && m.routes.isCatalogue(tool.MCP()) {
+			listing.named[tool.MCP()] = true
 		}
 		out = append(out, tool)
 		if mcpCfg, ok := cfg.MCP[tool.MCP()]; ok && mcpCfg.IsLazy() {

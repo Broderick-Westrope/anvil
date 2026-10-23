@@ -141,7 +141,7 @@ func mcpInstructions(listing mcpListing, lazyState *tools.LazyMCPState) string {
 		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
 			continue
 		}
-		if listing.catalogue[name] || lazyServers[name] && !lazyState.IsEnabled(name) {
+		if listing.catalogue[name] && !listing.named[name] || lazyServers[name] && !lazyState.IsEnabled(name) {
 			continue
 		}
 		if s := server.Client.InitializeResult().Instructions; s != "" {

@@ -98,3 +98,21 @@ func TestAllDirectRoutesBuildTheSameToolListAsUnroutedServers(t *testing.T) {
 	require.Equal(t, unroutedPrompt, routedPrompt)
 	require.Contains(t, routedPrompt, "Lazy says hi.")
 }
+
+func TestNamingOneCatalogueToolKeepsTheServerRoutedThroughTheCatalogue(t *testing.T) {
+	const server = "test-named-cat"
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
+	cfg := connectMCPServers(t, map[string]string{server: "Named says hi."})
+	m := cfg.Config().MCP[server]
+	m.Route = config.MCPRouteCatalogue
+	cfg.Config().MCP[server] = m
+	c := &coordinator{cfg: cfg}
+
+	_, listing, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "wf"}, 1, nil, nil, nil, nil, nil, []string{"mcp_" + server + "_ping"})
+
+	require.NoError(t, err)
+	require.True(t, listing.catalogue[server], "other tools on it still forward through call_mcp_tool")
+	require.Contains(t, mcpInstructions(listing, nil), "Named says hi.", "it never searches, so it gets the instructions")
+}
