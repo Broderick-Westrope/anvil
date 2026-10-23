@@ -482,11 +482,12 @@ func compactSchema(tool *Tool) string {
 	return string(raw)
 }
 
-// findTool matches name against the server's tools by raw MCP name or by
-// the full mcp_<server>_<tool> name, in any case: models echo whichever
-// form they last saw.
+// findTool matches name against the server's tools by raw MCP name, by
+// the <server>/<tool> form a server-less search prints, or by the full
+// mcp_<server>_<tool> name, in any case: models echo whichever form they
+// last saw.
 func findTool(server, name string, tools []CatalogueTool) (CatalogueTool, bool) {
-	lower := strings.ToLower(name)
+	lower := strings.TrimPrefix(strings.ToLower(name), strings.ToLower(server)+"/")
 	for _, tool := range tools {
 		raw := strings.ToLower(tool.MCP.MCPToolName())
 		if lower == raw || lower == strings.ToLower("mcp_"+server+"_")+raw {
@@ -505,6 +506,9 @@ func (c *catalogue) describe(ctx context.Context, call fantasy.ToolCall) (fantas
 	var params describeParams
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return fantasy.NewTextErrorResponse("invalid input: " + err.Error()), nil
+	}
+	if len(params.Tools) == 0 {
+		return fantasy.NewTextErrorResponse("tools is empty: name up to 10 tools, as search_mcp_tools returns them"), nil
 	}
 	_, tools, err := c.serverTools(ctx, params.Server)
 	if err != nil {

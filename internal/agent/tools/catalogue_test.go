@@ -355,3 +355,21 @@ func TestCallNamesTheClosestToolsForAnUnknownOne(t *testing.T) {
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, `no tool "logs_search" on cat-unknown. Closest matches: search_logs`)
 }
+
+func TestCallAcceptsTheServerSlashToolFormSearchPrints(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-slash", "", false, logSearchTool)
+
+	resp := f.run(t, CallMCPToolToolName, map[string]any{"server": "cat-slash", "tool": "cat-slash/search_logs", "arguments": map[string]any{"query": "x"}})
+
+	require.False(t, resp.IsError, resp.Content)
+	require.Equal(t, int32(1), f.calls.Load())
+}
+
+func TestDescribeWithNoToolsSaysSo(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-describe-none", "", false, logSearchTool)
+
+	resp := f.run(t, DescribeMCPToolToolName, map[string]any{"server": "cat-describe-none", "tools": []string{}})
+
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "tools is empty")
+}
