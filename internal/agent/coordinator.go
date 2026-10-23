@@ -85,9 +85,24 @@ type Coordinator interface {
 	// work such as summarizing is refused. Holds nest. The idempotent
 	// release lifts the hold and starts work queued behind it.
 	Hold(ctx context.Context, sessionIDs []string) (release func(), err error)
+	// ReserveSession stops new runs from starting in sessionID at once,
+	// without waiting for runs in flight, until release. Messages sent
+	// meanwhile queue.
+	ReserveSession(sessionID string) (release func())
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
+	// SummarizeBranch summarizes the branch a user rewound from and stores
+	// the summary under the rewind target. See BranchSummaryRequest.
+	SummarizeBranch(ctx context.Context, req BranchSummaryRequest) (message.Message, error)
+	// DiscardBranchSummary deletes an unused branch summary and moves the
+	// leaf back to its parent.
+	DiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
+	// BranchSummarizers lists the agents that can summarize branches.
+	BranchSummarizers() []string
+	// BranchWorthSummarizing reports whether rewinding from fromLeaf to
+	// target leaves anything a summary could say.
+	BranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error)
 	IsSummarizing(sessionID string) bool
 	Cancel(sessionID string)
 	CancelAll()
@@ -890,8 +905,9 @@ func buildOrchestratorBlocksFromState(
 ) (agentsBlock, delegationWorkflow string) {
 	activeAgents := make([]prompt.AgentMD, 0, len(agentMDs))
 	for name, md := range agentMDs {
-		// Only include agents that are configured and not the orchestrator itself.
-		if _, ok := agentConfigs[name]; ok && name != config.AgentOrchestrator {
+		// Only include agents that are configured, not the orchestrator
+		// itself, and not branch summarizers, which the user runs.
+		if _, ok := agentConfigs[name]; ok && name != config.AgentOrchestrator && !md.BranchSummarizer {
 			activeAgents = append(activeAgents, md)
 		}
 	}
@@ -916,7 +932,22 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 	if modelOverride != "" {
 		cacheKey = fmt.Sprintf("%s|%d|%s", agentName, depth, modelOverride)
 	}
+	return c.getOrBuild(cacheKey, agentName, func(agentCfg config.Agent) (SessionAgent, error) {
+		// Apply model override to a copy of the agent config when requested.
+		if modelOverride != "" {
+			agentCfg.Model = modelOverride
+		}
+		// Lazily-built specialist agents pass waitForMCP=true: by the time a
+		// specialist is requested (via the task tool during a Run), MCP init has
+		// already completed, so the wait is instant in practice, but keeping it
+		// explicit makes correctness independent of that call-order assumption.
+		return c.buildAgent(ctx, agentName, agentCfg, depth, true)
+	})
+}
 
+// getOrBuild returns the agent cached under cacheKey, or builds it from
+// agentName's config and caches it. Only one goroutine builds at a time.
+func (c *coordinator) getOrBuild(cacheKey, agentName string, build func(config.Agent) (SessionAgent, error)) (SessionAgent, error) {
 	if existing, ok := c.agents.Get(cacheKey); ok {
 		return existing, nil
 	}
@@ -937,16 +968,7 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 		return nil, fmt.Errorf("agent %q not configured", agentName)
 	}
 
-	// Apply model override to a copy of the agent config when requested.
-	if modelOverride != "" {
-		agentCfg.Model = modelOverride
-	}
-
-	// Lazily-built specialist agents pass waitForMCP=true: by the time a
-	// specialist is requested (via the task tool during a Run), MCP init has
-	// already completed, so the wait is instant in practice, but keeping it
-	// explicit makes correctness independent of that call-order assumption.
-	built, err := c.buildAgent(ctx, agentName, agentCfg, depth, true)
+	built, err := build(agentCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1291,6 +1313,10 @@ func (c *coordinator) HasAgent(name string) bool {
 // Hold implements Coordinator.
 func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release func(), err error) {
 	return c.admission.hold(ctx, sessionIDs)
+}
+
+func (c *coordinator) ReserveSession(sessionID string) (release func()) {
+	return c.admission.reserve([]string{sessionID})
 }
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {

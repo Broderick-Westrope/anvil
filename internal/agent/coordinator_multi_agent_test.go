@@ -2,10 +2,30 @@ package agent
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
+	"charm.land/catwalk/pkg/catwalk"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetOrBuildAgentAppliesTheModelOverride(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	c, _ := newReloadTestCoordinator(t, env)
+	providerCfg, ok := c.cfg.Config().Providers.Get(reloadTestProvider)
+	require.True(t, ok)
+	providerCfg.Models = append(slices.Clone(providerCfg.Models), catwalk.Model{ID: "other", ContextWindow: 10000, DefaultMaxTokens: 1000})
+	c.cfg.Config().Providers.Set(reloadTestProvider, providerCfg)
+
+	plain, err := c.getOrBuildAgent(t.Context(), "helper", 2, "")
+	require.NoError(t, err)
+	overridden, err := c.getOrBuildAgent(t.Context(), "helper", 2, reloadTestProvider+"/other")
+	require.NoError(t, err)
+
+	require.Equal(t, reloadTestModel, plain.Model().CatwalkCfg.ID)
+	require.Equal(t, "other", overridden.Model().CatwalkCfg.ID)
+}
 
 // TestGetOrBuildAgentCacheKey verifies that the cache key construction for
 // getOrBuildAgent produces the expected values including depth and optional

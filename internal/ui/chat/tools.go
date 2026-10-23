@@ -407,6 +407,14 @@ func (t *baseToolMessageItem) Advance() bool {
 
 // RawRender implements [MessageItem].
 func (t *baseToolMessageItem) RawRender(width int) string {
+	content, height, toolItemWidth := t.renderContent(width)
+	return t.renderHighlighted(content, toolItemWidth, height)
+}
+
+// renderContent renders the tool, unhighlighted, for a list of width,
+// from the cache unless it is spinning. It returns the content, its
+// height, and the width it was laid out at.
+func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
 	toolItemWidth := width - MessageLeftPaddingTotal
 	if t.hasCappedWidth {
 		toolItemWidth = cappedMessageWidth(width)
@@ -442,11 +450,17 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 		t.setCachedRender(content, toolItemWidth, height)
 	}
 
-	return t.renderHighlighted(content, toolItemWidth, height)
+	return content, height, toolItemWidth
 }
 
 // Render renders the tool message item at the given width.
 func (t *baseToolMessageItem) Render(width int) string {
+	return t.renderPrefixed(width, t.RawRender)
+}
+
+// renderPrefixed prefixes each line of raw's render with the focus bar,
+// so an item that embeds the tool and renders more can reuse it.
+func (t *baseToolMessageItem) renderPrefixed(width int, raw func(int) string) string {
 	// Cache the prefixed output keyed by (width, prefix variant).
 	// Bypass the cache while spinning (RawRender output is
 	// frame-dependent) or while a highlight range is active.
@@ -469,7 +483,7 @@ func (t *baseToolMessageItem) Render(width int) string {
 	} else {
 		prefix = t.sty.Messages.ToolCallBlurred.Render()
 	}
-	lines := strings.Split(t.RawRender(width), "\n")
+	lines := strings.Split(raw(width), "\n")
 	for i, ln := range lines {
 		lines[i] = prefix + ln
 	}

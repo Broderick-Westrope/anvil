@@ -279,3 +279,46 @@ func TestAgentIsStepRunning(t *testing.T) {
 	require.True(t, ws.AgentIsStepRunning("a1"))
 	require.False(t, ws.AgentIsStepRunning("a2"))
 }
+
+// branchSummaryCoordinator stubs the coordinator's branch summary calls.
+type branchSummaryCoordinator struct {
+	agent.Coordinator
+	discarded []string
+}
+
+func (*branchSummaryCoordinator) BranchWorthSummarizing(_ context.Context, fromLeaf, target string) (bool, error) {
+	return fromLeaf != target, nil
+}
+
+func (c *branchSummaryCoordinator) DiscardBranchSummary(_ context.Context, _, summaryID string) error {
+	c.discarded = append(c.discarded, summaryID)
+	return nil
+}
+
+func (*branchSummaryCoordinator) BranchSummarizers() []string {
+	return []string{"branch-summarizer"}
+}
+
+func TestAgentBranchSummary_NoCoordinator(t *testing.T) {
+	t.Parallel()
+	ws := NewAppWorkspace(&app.App{}, nil)
+
+	worth, err := ws.AgentBranchWorthSummarizing(t.Context(), "from", "target")
+	require.Error(t, err)
+	require.False(t, worth)
+	require.Error(t, ws.AgentDiscardBranchSummary(t.Context(), "s", "summary"))
+	require.Nil(t, ws.AgentBranchSummarizers())
+}
+
+func TestAgentBranchSummary_PassesThrough(t *testing.T) {
+	t.Parallel()
+	coord := &branchSummaryCoordinator{}
+	ws := NewAppWorkspace(&app.App{AgentCoordinator: coord}, nil)
+
+	worth, err := ws.AgentBranchWorthSummarizing(t.Context(), "from", "target")
+	require.NoError(t, err)
+	require.True(t, worth)
+	require.NoError(t, ws.AgentDiscardBranchSummary(t.Context(), "s", "summary"))
+	require.Equal(t, []string{"summary"}, coord.discarded)
+	require.Equal(t, []string{"branch-summarizer"}, ws.AgentBranchSummarizers())
+}

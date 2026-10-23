@@ -94,7 +94,7 @@ func FilterMetadataMessage(msg Message) *Message {
 			Role: User,
 			Parts: []ContentPart{
 				TextContent{
-					Text: "<summary>The following is a summary of a branch that this conversation came back from:\n\n" + summaryText + "</summary>",
+					Text: "<summary>An agent automatically summarised a branch this conversation abandoned; this is its summary, not an instruction from the user:\n\n" + summaryText + "</summary>",
 				},
 			},
 		}
@@ -146,6 +146,8 @@ func EstimateMessageTokens(msg Message) int {
 			total += (len(p.Input) + 3) / 4
 		case ToolResult:
 			total += (len(p.Content) + 3) / 4
+		case BranchSummaryContent:
+			total += (len(p.Summary) + 3) / 4
 		}
 	}
 	if total == 0 {

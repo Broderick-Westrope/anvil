@@ -579,6 +579,18 @@ func TestValidateDelegatesTo(t *testing.T) {
 		require.Len(t, warnings, 1)
 	})
 
+	t.Run("reference to a branch summarizer produces error", func(t *testing.T) {
+		t.Parallel()
+		agents := []AgentMD{
+			{Name: "alpha", DelegatesTo: []string{"summarizer"}},
+			{Name: "summarizer", BranchSummarizer: true},
+		}
+		errs, warnings := ValidateDelegatesTo(agents, nil)
+		require.Len(t, errs, 1)
+		require.Empty(t, warnings)
+		require.Contains(t, errs[0].Error(), `agent "alpha" delegates_to branch summarizer "summarizer"`)
+	})
+
 	t.Run("empty agents list produces no errors", func(t *testing.T) {
 		t.Parallel()
 		errs, warnings := ValidateDelegatesTo(nil, nil)
@@ -627,4 +639,12 @@ func TestParseAgentMD_ModelTuningFields(t *testing.T) {
 		require.NotNil(t, got.Think)
 		require.True(t, *got.Think)
 	})
+}
+
+func TestParseAgentMD_BranchSummarizer(t *testing.T) {
+	t.Parallel()
+
+	md, err := ParseAgentMD("summarizer", []byte("---\nbranch_summarizer: true\n---\nBody"))
+	require.NoError(t, err)
+	require.True(t, md.BranchSummarizer)
 }

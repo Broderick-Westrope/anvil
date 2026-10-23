@@ -46,6 +46,12 @@ type BashResponseMetadata struct {
 	WorkingDirectory string `json:"working_directory"`
 	Background       bool   `json:"background,omitempty"`
 	ShellID          string `json:"shell_id,omitempty"`
+	// ExitCode and Interrupted say how a finished command ended. They are
+	// zero for a command still running as a job. ExitCode is always
+	// written, so a reader can tell a recorded zero from a result stored
+	// before exit codes were.
+	ExitCode    int  `json:"exit_code"`
+	Interrupted bool `json:"interrupted,omitempty"`
 }
 
 const (
@@ -327,6 +333,8 @@ func newBashTool(permissions permission.Service, workingDir, spillDir string) fa
 					Description:      params.Description,
 					Background:       params.RunInBackground,
 					WorkingDirectory: bgShell.WorkingDir,
+					ExitCode:         exitCode,
+					Interrupted:      interrupted,
 				}
 				if stdout == "" {
 					return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil

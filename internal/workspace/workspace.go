@@ -109,6 +109,9 @@ type Workspace interface {
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
+	// WriteMetadataEntry creates a metadata message under the session's
+	// current leaf, whatever params.ParentMessageID says, and advances the
+	// leaf to it.
 	WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error
 
 	// Agent
@@ -126,6 +129,24 @@ type Workspace interface {
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
 	AgentSummarize(ctx context.Context, sessionID string) error
+	// AgentStartBranchSummary starts summarizing the branch the user
+	// rewound from, in the background, and returns the run's ID. Its
+	// progress arrives as branchsummaries events. The session is reserved
+	// before it returns, so messages sent afterwards queue behind it.
+	AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error)
+	// AgentCancelBranchSummary cancels the session's running summary.
+	AgentCancelBranchSummary(sessionID string)
+	// AgentBranchSummaryRunning reports whether the session has a summary
+	// running.
+	AgentBranchSummaryRunning(sessionID string) bool
+	// AgentDiscardBranchSummary deletes an unused branch summary.
+	AgentDiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
+	// AgentBranchSummarizers lists the agents that can summarize branches,
+	// the built-in first.
+	AgentBranchSummarizers() []string
+	// AgentBranchWorthSummarizing reports whether rewinding from fromLeaf
+	// to target leaves anything a summary could say.
+	AgentBranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error)
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	// AgentPause stops new top-level runs from being admitted and waits up
 	// to budget for active ones to finish. On success the caller must call

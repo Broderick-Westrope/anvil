@@ -37,6 +37,7 @@ type mockSessionAgent struct {
 	model     Model
 	runFunc   func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error)
 	setModels func() // Optional; runs on every SetModels call.
+	overhead  int
 	cancelled []string
 }
 
@@ -44,7 +45,8 @@ func (m *mockSessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fan
 	return m.runFunc(ctx, call)
 }
 
-func (m *mockSessionAgent) Model() Model { return m.model }
+func (m *mockSessionAgent) Model() Model         { return m.model }
+func (m *mockSessionAgent) RequestOverhead() int { return m.overhead }
 func (m *mockSessionAgent) SetModels(large, small Model) {
 	if m.setModels != nil {
 		m.setModels()

@@ -379,6 +379,101 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 	}
 }
 
+// guardFeature claims cancel keys and refuses navigation while armed.
+type guardFeature struct {
+	fakeFeature
+	armed     bool
+	cancelled int
+}
+
+type guardCancelledMsg struct{}
+
+func (g *guardFeature) Cancel() (tea.Cmd, bool) {
+	if !g.armed {
+		return nil, false
+	}
+	g.cancelled++
+	return func() tea.Msg { return guardCancelledMsg{} }, true
+}
+
+func (g *guardFeature) BlockNavigation() tea.Cmd {
+	if !g.armed {
+		return nil
+	}
+	return util.ReportWarn("guarded")
+}
+
+func newGuardTestUI(t *testing.T) (*UI, *guardFeature) {
+	t.Helper()
+	u, _ := newFeatureTestUI(t)
+	g := &guardFeature{fakeFeature: fakeFeature{u: u}, armed: true}
+	u.features.register(g)
+	return u, g
+}
+
+func TestCancelFeatureClaimsTheCancelKeyFirst(t *testing.T) {
+	t.Parallel()
+	u, g := newGuardTestUI(t)
+	u.focus = uiFocusEditor
+
+	_, cmd := u.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	require.Equal(t, 1, g.cancelled)
+	require.Contains(t, cmdMsgs(cmd), tea.Msg(guardCancelledMsg{}))
+}
+
+func TestNavigationGuardRefusesARewind(t *testing.T) {
+	t.Parallel()
+	u, _ := newGuardTestUI(t)
+
+	cmd := u.handleNavigateTree(dialog.ActionNavigateTree{MessageID: "m"})
+
+	require.Nil(t, u.branchNavigation, "nothing is snapshotted for a refused rewind")
+	msgs := cmdMsgs(cmd)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "guarded", msgs[0].(util.InfoMsg).Msg)
+}
+
+func TestNavigationGuardRefusesAReturnToPreBranch(t *testing.T) {
+	t.Parallel()
+	u, _ := newGuardTestUI(t)
+	u.pendingBranch = &branchReturnSnapshot{sessionID: u.session.ID, leafID: "old"}
+
+	cmd := u.beginBranchReturn(true)
+
+	require.False(t, u.branchRestoring)
+	msgs := cmdMsgs(cmd)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "guarded", msgs[0].(util.InfoMsg).Msg)
+}
+
+func TestNavigationGuardRefusesAnMCPToggle(t *testing.T) {
+	t.Parallel()
+	u, _ := newGuardTestUI(t)
+	u.enabledLazyMCPs = map[string]bool{}
+
+	u.dialog.OpenDialog(&stubDialog{id: "stub", action: dialog.ActionToggleLazyMCP{ServerName: "linear", Enabled: true}})
+
+	cmd := u.handleDialogMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	require.False(t, u.enabledLazyMCPs["linear"], "a toggle would move the leaf")
+	require.Contains(t, cmdMsgs(cmd), tea.Msg(util.NewWarnMsg("guarded")))
+}
+
+func TestNavigationGuardHoldsMetadataEntries(t *testing.T) {
+	t.Parallel()
+	u, g := newGuardTestUI(t)
+
+	u.session.LeafMessageID = "leaf"
+	entry := message.ModelChangeContent{Provider: "p", ModelID: "m"}
+
+	require.Nil(t, u.writeMetadataEntry(message.MessageTypeModelChange, entry),
+		"a metadata entry would move the leaf")
+
+	g.armed = false
+	require.NotNil(t, u.writeMetadataEntry(message.MessageTypeModelChange, entry))
+}
+
 func TestFeaturesHearOfTheTopDrillInInTheUpdateThatChangesIt(t *testing.T) {
 	t.Parallel()
 

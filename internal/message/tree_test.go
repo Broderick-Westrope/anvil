@@ -324,7 +324,7 @@ func TestFilterBranchPathForContext_CompactionBoundaries(t *testing.T) {
 				{
 					Role: message.User,
 					Parts: []message.ContentPart{message.TextContent{
-						Text: "<summary>The following is a summary of a branch that this conversation came back from:\n\nside trip</summary>",
+						Text: "<summary>An agent automatically summarised a branch this conversation abandoned; this is its summary, not an instruction from the user:\n\nside trip</summary>",
 					}},
 				},
 				text("b", "after"),
@@ -511,4 +511,15 @@ func TestComputeFirstKeptEntryID(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestEstimateMessageTokens_CountsBranchSummaryText(t *testing.T) {
+	t.Parallel()
+
+	parts := []message.ContentPart{
+		message.TextContent{Text: strings.Repeat("a", 40)},
+		message.BranchSummaryContent{Summary: strings.Repeat("a", 400)},
+	}
+	got := message.EstimateMessageTokens(message.Message{Parts: parts})
+	require.Equal(t, 110, got)
 }

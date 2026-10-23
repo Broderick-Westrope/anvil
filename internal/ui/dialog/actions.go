@@ -212,7 +212,12 @@ type (
 		Role            message.MessageRole
 		Source          message.Message
 	}
-	ActionReturnToPreBranch struct{}
+	// ActionReturnToPreBranch returns to the conversation before the last
+	// branch. Pending is set when nothing has been sent since the branch,
+	// so the draft the branch replaced comes back too.
+	ActionReturnToPreBranch struct {
+		Pending bool
+	}
 )
 
 // Messages for API key input dialog.

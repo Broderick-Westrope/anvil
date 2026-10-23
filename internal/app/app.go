@@ -23,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/app/branchsummaries"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -62,6 +63,8 @@ type App struct {
 	// Workflows runs workflow commands. It is nil until the orchestrator
 	// agent exists.
 	Workflows *workflowhost.Service
+	// BranchSummaries runs the summaries offered when the user rewinds.
+	BranchSummaries *branchsummaries.Service
 
 	LSPManager *lsp.Manager
 
@@ -180,6 +183,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	mgr.SetEventSink(app.jobEvents)
 	app.jobWaker = newJobWaker(app.jobEvents, sessions)
 	go app.jobWaker.run(ctx)
+
+	app.BranchSummaries = branchsummaries.New(ctx, app.branchSummaryCoordinator)
 
 	app.setupEvents()
 
@@ -568,6 +573,7 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "skills", skills.SubscribeEvents, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "branch-summaries", app.BranchSummaries.Subscribe, app.events)
 	cleanupFunc := func(context.Context) error {
 		cancel()
 		app.serviceEventsWG.Wait()
@@ -661,6 +667,15 @@ func (app *App) startWorkflows() {
 		SkipApproval: app.skipWorkflowApproval,
 	})
 	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "workflows", app.Workflows.Subscribe, app.events)
+}
+
+// branchSummaryCoordinator returns the current coordinator for branch
+// summaries, or nil before it exists.
+func (app *App) branchSummaryCoordinator() branchsummaries.Coordinator {
+	if app.AgentCoordinator == nil {
+		return nil
+	}
+	return app.AgentCoordinator
 }
 
 // skipWorkflowApproval reports whether workflow scripts run without
@@ -885,6 +900,12 @@ func (app *App) Shutdown() {
 		stopWorkflows(app.Workflows, workflowShutdownReason, workflowShutdownWait)
 	}
 	app.retiredWorkflows.Wait()
+
+	// Branch summaries run agents too; end them before the coordinator
+	// cancels everything, so they report and clean up their sessions.
+	if app.BranchSummaries != nil {
+		app.BranchSummaries.Shutdown()
+	}
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.

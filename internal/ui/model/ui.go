@@ -488,6 +488,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		ui.diagrams = graphics
 		ui.chat.SetDiagrams(graphics)
 	}
+	ui.features.register(newBranchSummaryFeature(uiHost{ui}, com, com.Workspace))
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -1777,6 +1778,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
+		m.loadNestedToolCalls(items)
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() {
@@ -2682,7 +2684,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	case dialog.ActionReturnToPreBranch:
 		m.dialog.CloseFrontDialog()
-		cmds = append(cmds, m.beginBranchReturn(false))
+		cmds = append(cmds, m.beginBranchReturn(msg.Pending))
 
 	case dialog.ActionReloadConfig:
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -2706,6 +2708,11 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			Source:       msg.Source,
 		})
 	case dialog.ActionToggleLazyMCP:
+		// The toggle is stored under the leaf, so it is a move of the leaf.
+		if cmd := m.features.blockNavigation(); cmd != nil {
+			cmds = append(cmds, cmd)
+			break
+		}
 		m.enabledLazyMCPs[msg.ServerName] = msg.Enabled
 		// Update the open dialog's item state so the label refreshes.
 		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
@@ -2768,9 +2775,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 // handleSelectModel performs the model selection.
 // writeMetadataEntry returns a command that records part as a metadata
 // entry of type kind at the tip of the current branch. It returns nil when
-// there is no session or branch tip to attach the entry to.
+// there is no session or branch tip to attach the entry to, or when a
+// feature guards the leaf (a branch summary is running).
 func (m *UI) writeMetadataEntry(kind message.MessageType, part message.ContentPart) tea.Cmd {
-	if m.session == nil || m.session.LeafMessageID == "" {
+	if m.session == nil || m.session.LeafMessageID == "" || m.features.blockNavigation() != nil {
 		return nil
 	}
 	ws, sessionID, leafID := m.com.Workspace, m.session.ID, m.session.LeafMessageID
@@ -3092,6 +3100,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			// Priority 4: Cancel streaming agent (immediate, bypasses
 			// two-phase Esc behavior).
+			if cmd, ok := m.features.cancel(); ok {
+				return tea.Batch(append(cmds, cmd)...)
+			}
 			if m.isAgentBusy() && m.hasSession() {
 				m.isCanceling = false
 				m.com.Workspace.AgentCancel(m.session.ID)
@@ -3115,6 +3126,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
+		if cmd, ok := m.features.cancel(); ok {
+			return tea.Batch(append(cmds, cmd)...)
+		}
 		if m.isAgentBusy() {
 			if cmd := m.cancelAgent(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -5390,6 +5404,9 @@ func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	}
 	if m.branchNavigation != nil || m.branchRestoring {
 		return util.ReportWarn("Please wait for navigation to finish.")
+	}
+	if cmd := m.features.blockNavigation(); cmd != nil {
+		return cmd
 	}
 	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
 		return util.ReportWarn("Return to pre-branch conversation, then send or clear its draft before branching again.")

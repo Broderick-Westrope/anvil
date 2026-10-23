@@ -403,6 +403,37 @@ type Options struct {
 	RequestTimeout            *int     `json:"request_timeout,omitempty" jsonschema:"description=Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity\\, so slow but active streams are never killed. 0 disables it,default=120,example=300,example=0"`
 
 	BackgroundJobs *BackgroundJobsOptions `json:"background_jobs,omitempty" jsonschema:"description=Background job behaviour"`
+
+	BranchSummary *BranchSummaryOptions `json:"branch_summary,omitempty" jsonschema:"description=Summaries of the conversation branch left behind when rewinding"`
+}
+
+// BranchSummaryOptions configures the summary offered when the user
+// rewinds to an earlier message.
+type BranchSummaryOptions struct {
+	Offer BranchSummaryOffer `json:"offer,omitempty" jsonschema:"description=Whether rewinding asks which summarizer to use (ask)\\, always uses the default summarizer without asking (always)\\, or never summarizes (never),enum=ask,enum=always,enum=never,default=ask"`
+}
+
+// BranchSummaryOffer says whether a rewind offers a branch summary.
+type BranchSummaryOffer string
+
+const (
+	BranchSummaryAsk    BranchSummaryOffer = "ask"
+	BranchSummaryAlways BranchSummaryOffer = "always"
+	BranchSummaryNever  BranchSummaryOffer = "never"
+)
+
+// BranchSummaryOffer returns whether a rewind offers a branch summary.
+// Unset and unknown values mean ask.
+func (o *Options) BranchSummaryOffer() BranchSummaryOffer {
+	if o == nil || o.BranchSummary == nil {
+		return BranchSummaryAsk
+	}
+	switch o.BranchSummary.Offer {
+	case BranchSummaryAlways, BranchSummaryNever:
+		return o.BranchSummary.Offer
+	default:
+		return BranchSummaryAsk
+	}
 }
 
 // BackgroundJobsOptions configures how background jobs interact with
