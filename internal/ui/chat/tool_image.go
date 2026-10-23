@@ -107,11 +107,12 @@ type ImageCopyMsg struct {
 }
 
 // HandleKeyEvent implements KeyEventHandler: o opens the image on screen
-// in the viewer and Y copies it, even when Anvil can't draw it.
+// in the viewer and Y copies it, even when Anvil can't draw it. Other keys,
+// and o without an image, go to the file the call names.
 func (o *toolDetailOutputItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	res := o.shownImage
 	if res == nil {
-		return false, nil
+		return o.toolFile.HandleKeyEvent(key)
 	}
 	var msg tea.Msg
 	switch key.String() {
@@ -120,7 +121,7 @@ func (o *toolDetailOutputItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	case "Y":
 		msg = ImageCopyMsg{Data: res.Data}
 	default:
-		return false, nil
+		return o.toolFile.HandleKeyEvent(key)
 	}
 	return true, func() tea.Msg { return msg }
 }

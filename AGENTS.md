@@ -279,6 +279,15 @@ Terms with a specific meaning in this codebase are defined in
   (`decodeBitmap`) and encoded as PNG. The cache exists whatever
   `options.tui.diagrams` says. Design:
   `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
+- **Opening a tool's file**: in a tool drill-in whose call has a
+  `file_path` input, `o` opens the file in the OS default app and `e` opens
+  it in `$EDITOR` (at `view`'s offset), from any item. Every drill-in item
+  embeds `chat.toolFile`, which reads the path when the key is pressed;
+  on a drawn image `o` still opens the image. `fileOpenFeature`
+  (`internal/ui/model/file_open.go`) resolves relative paths against the
+  working directory and follows symlinks. The model chose the path, so `o`
+  refuses executable files and types the OS would run (`launchExts`);
+  `e` opens anything as text.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 

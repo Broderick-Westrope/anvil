@@ -483,6 +483,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
 	graphics := newGraphicsFeature(uiHost{ui}, &ui.caps, com)
 	ui.features.register(graphics)
+	ui.features.register(newFileOpenFeature(com.Workspace.WorkingDir))
 	ui.graphics = graphics
 	if com.Workspace.DiagramsEnabled() {
 		ui.diagrams = graphics
@@ -4007,10 +4008,19 @@ func (m *UI) selectedItemBindings() []key.Binding {
 	if diagram, ok := selected.(*chat.DiagramItem); ok && !diagram.Failed() {
 		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyImage}
 	}
-	if chat.ShowsToolImage(selected) {
-		return []key.Binding{m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage}
+	var binds []key.Binding
+	image := chat.ShowsToolImage(selected)
+	if image {
+		binds = append(binds, m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage)
 	}
-	return nil
+	if chat.OpensFile(selected) {
+		// On an image, o opens the image.
+		if !image {
+			binds = append(binds, m.keyMap.Chat.OpenFile)
+		}
+		binds = append(binds, m.keyMap.Chat.EditFile)
+	}
+	return binds
 }
 
 // FullHelp implements [help.KeyMap].
