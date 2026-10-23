@@ -2683,7 +2683,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	case dialog.ActionReturnToPreBranch:
 		m.dialog.CloseFrontDialog()
-		cmds = append(cmds, m.beginBranchReturn(false))
+		cmds = append(cmds, m.beginBranchReturn(msg.Pending))
 
 	case dialog.ActionReloadConfig:
 		m.dialog.CloseDialog(dialog.CommandsID)

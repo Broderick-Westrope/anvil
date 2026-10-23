@@ -48,7 +48,7 @@ func TestBranchSummaryPicker_Keys(t *testing.T) {
 		"up from the first is no summary": {keys: []tea.KeyPressMsg{up, enterKey()}, want: with("", "")},
 		"down picks the next agent":       {keys: []tea.KeyPressMsg{down, enterKey()}, want: with("pr-summarizer", "")},
 		"typing adds focus":               {keys: append(typeText("the PR"), enterKey()), want: with("branch-summarizer", "the PR")},
-		"esc means no summary":            {keys: []tea.KeyPressMsg{escKey()}, want: with("", "")},
+		"esc cancels the branch":          {keys: []tea.KeyPressMsg{escKey()}, want: ActionReturnToPreBranch{Pending: true}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

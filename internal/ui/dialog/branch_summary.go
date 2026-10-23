@@ -77,7 +77,7 @@ func NewBranchSummaryPicker(com *common.Common, offer RewindOffer) *BranchSummar
 	p.keyMap.Prev = key.NewBinding(key.WithKeys("up", "shift+tab"), key.WithHelp("↑", "previous"))
 	p.keyMap.Next = key.NewBinding(key.WithKeys("down", "tab"), key.WithHelp("↓", "next"))
 	p.keyMap.Confirm = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm"))
-	p.keyMap.Close = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "no summary"))
+	p.keyMap.Close = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel branch"))
 	return p
 }
 
@@ -96,7 +96,8 @@ func (p *BranchSummaryPicker) HandleMsg(msg tea.Msg) Action {
 	options := len(p.offer.Agents) + 1
 	switch {
 	case key.Matches(keyMsg, p.keyMap.Close):
-		return p.pick("", "")
+		// "No summary" covers skipping; esc undoes the branch itself.
+		return ActionReturnToPreBranch{Pending: true}
 	case key.Matches(keyMsg, p.keyMap.Prev):
 		p.selected = (p.selected + options - 1) % options
 	case key.Matches(keyMsg, p.keyMap.Next):

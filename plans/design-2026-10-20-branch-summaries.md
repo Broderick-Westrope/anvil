@@ -116,6 +116,9 @@ Out:
   - One entry per eligible summarizer.
   - An always-visible focus field: anything typed there is sent to the
     summarizer as focus text.
+  - Esc cancels the branch itself and returns to the pre-branch
+    conversation, as Esc in the composer does after a rewind. "No
+    summary" is the way to keep the branch without a summary.
 - **Picker default:** the summarizer last used in this Anvil process,
   falling back to the built-in. The choice is not persisted.
 - **Precedence for `options.branch_summary.offer` (`ask` | `always` |

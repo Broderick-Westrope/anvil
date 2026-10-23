@@ -124,3 +124,27 @@ func TestMetadataEntriesFollowTheStoredLeaf(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, children, 1)
 }
+
+func TestEscOnTheSummaryPickerCancelsTheBranch(t *testing.T) {
+	m, _ := branchSummaryUI(t)
+	before := m.session.LeafMessageID
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
+	done, ok := findMsg[navigateTreeDoneMsg](collectMsgs(cmd))
+	require.True(t, ok)
+	_, cmd = m.Update(done)
+	offer, ok := findMsg[branchSummaryOfferMsg](collectMsgs(cmd))
+	require.True(t, ok)
+	m.Update(offer)
+	require.True(t, m.dialog.ContainsDialog(dialog.BranchSummaryPickerID))
+	require.NotEqual(t, before, m.session.LeafMessageID)
+
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	back, ok := findMsg[navigateTreeDoneMsg](collectMsgs(cmd))
+	require.True(t, ok, "esc returns to the pre-branch conversation")
+	m.Update(back)
+
+	require.False(t, m.dialog.ContainsDialog(dialog.BranchSummaryPickerID))
+	require.Equal(t, before, m.session.LeafMessageID)
+	require.Empty(t, m.textarea.Value(), "the prefilled message is put back as it was")
+}
