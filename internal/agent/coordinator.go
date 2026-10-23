@@ -1125,9 +1125,6 @@ func (c *coordinator) buildToolsWithState(
 	if enableMCP := mcpTools.enableMCPTool(c.connectDeferredMCP); enableMCP != nil {
 		filteredTools = append(filteredTools, enableMCP)
 	}
-	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
-		return strings.Compare(a.Info().Name, b.Info().Name)
-	})
 
 	// Wrap tools with hook interception for the top-level agent only.
 	// Sub-agents run without hook interception to avoid firing the user's
