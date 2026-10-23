@@ -207,42 +207,42 @@ func (c *catalogue) serverTools(ctx context.Context, server, caller string) (str
 }
 
 // ready brings server to a usable state, following enable_mcp's handling
-// of each connection state, and returns its instructions.
+// of each connection state, and returns its instructions. It waits at
+// most once for another caller's connect and connects at most once
+// itself: a waiter whose connect failed reports it rather than trying
+// again.
 func (c *catalogue) ready(ctx context.Context, server, caller string) (string, error) {
-	// A deferred server takes one connect, and a starting one one wait;
-	// three passes cover a connect that finds another caller connecting.
-	for range 3 {
-		info, ok := mcp.GetState(server)
-		if !ok {
-			return "", errUnusable{fmt.Sprintf("MCP '%s' isn't running in this process", server)}
+	info, ok := mcp.GetState(server)
+	if !ok {
+		return "", errUnusable{fmt.Sprintf("MCP '%s' isn't running in this process", server)}
+	}
+	// Starting, or an error between a transient failure and its retry:
+	// another caller is connecting it.
+	if info.State == mcp.StateStarting || info.State == mcp.StateError && mcp.IsConnecting(server) {
+		if err := c.settle(ctx, server); err != nil {
+			return "", err
 		}
-		switch info.State {
-		case mcp.StateConnected, mcp.StateLazy:
-			if info.Client == nil {
-				return "", nil
-			}
-			return info.Client.InitializeResult().Instructions, nil
-		case mcp.StateDisabled:
-			return "", errUnusable{fmt.Sprintf("MCP '%s' is disabled. Tell the user if the task needs it.", server)}
-		case mcp.StateError:
-			if !mcp.IsConnecting(server) {
-				return "", stateErrorProblem(server, info, caller)
-			}
-			// A first, transient failure; the retry is still running.
-			if err := c.settle(ctx, server); err != nil {
-				return "", err
-			}
-		case mcp.StateStarting:
-			if err := c.settle(ctx, server); err != nil {
-				return "", err
-			}
-		case mcp.StateDeferred:
-			if err := c.connect(ctx, server, caller); err != nil {
-				return "", err
-			}
+	} else if info.State == mcp.StateDeferred {
+		if err := c.connect(ctx, server, caller); err != nil {
+			return "", err
 		}
 	}
-	return "", errUnusable{fmt.Sprintf("MCP '%s' is still starting, retry shortly", server)}
+	info, _ = mcp.GetState(server)
+	switch info.State {
+	case mcp.StateConnected, mcp.StateLazy:
+		if info.Client == nil {
+			return "", nil
+		}
+		return info.Client.InitializeResult().Instructions, nil
+	case mcp.StateDisabled:
+		return "", errUnusable{fmt.Sprintf("MCP '%s' is disabled. Tell the user if the task needs it.", server)}
+	case mcp.StateError:
+		return "", stateErrorProblem(server, info, caller)
+	case mcp.StateDeferred:
+		return "", errUnusable{fmt.Sprintf("MCP '%s' failed to connect; retry later", server)}
+	default:
+		return "", errUnusable{fmt.Sprintf("MCP '%s' is still starting, retry shortly", server)}
+	}
 }
 
 func stateErrorProblem(server string, info mcp.ClientInfo, caller string) error {

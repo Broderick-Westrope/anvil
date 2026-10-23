@@ -473,3 +473,19 @@ func TestACancelledConnectIsReportedAsCancelled(t *testing.T) {
 	require.True(t, resp.IsError)
 	require.Equal(t, context.Canceled.Error(), resp.Content)
 }
+
+func TestAWaiterDoesNotReconnectAfterAnotherCallersConnectFails(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-failed-wait", "", true, logSearchTool)
+	mcp.SetStateForTest("cat-failed-wait", mcp.StateStarting)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		// Both of the other caller's attempts failed transiently.
+		mcp.SetStateForTest("cat-failed-wait", mcp.StateDeferred)
+	}()
+
+	resp := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-failed-wait", "query": "logs"})
+
+	require.Contains(t, resp.Content, "MCP 'cat-failed-wait' failed to connect; retry later")
+	info, _ := mcp.GetState("cat-failed-wait")
+	require.Equal(t, mcp.StateDeferred, info.State, "the waiter must not start its own connect")
+}
