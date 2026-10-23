@@ -136,7 +136,13 @@ func (m agentMCPTools) catalogueTools(cfg *config.ConfigStore) []fantasy.AgentTo
 	if len(servers) == 0 {
 		return nil
 	}
-	return tools.NewCatalogueTools(tools.CatalogueOptions{Servers: servers, Tools: m.resolve, Config: cfg})
+	var allowed []fantasy.AgentTool
+	for _, tool := range tools.NewCatalogueTools(tools.CatalogueOptions{Servers: servers, Tools: m.resolve, Config: cfg}) {
+		if m.access.allowsCatalogueTool(tool.Info().Name) {
+			allowed = append(allowed, tool)
+		}
+	}
+	return allowed
 }
 
 // resolve returns the agent's tools on one server, wrapped as they would
