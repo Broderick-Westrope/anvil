@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,4 +61,18 @@ func TestBranchSummaryPicker_Keys(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestBranchSummaryPicker_CursorSitsOnTheFocusField(t *testing.T) {
+	t.Parallel()
+
+	p := newTestBranchSummaryPicker("")
+	scr := uv.NewScreenBuffer(mouseScreenW, mouseScreenH)
+
+	cur := p.Draw(scr, uv.Rect(0, 0, mouseScreenW, mouseScreenH))
+
+	require.NotNil(t, cur)
+	x, y := findOnScreen(t, scr, "> Optional focus")
+	require.Equal(t, y, cur.Y, "the caret is on the focus field's row")
+	require.Equal(t, x+2, cur.X)
 }

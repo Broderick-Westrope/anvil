@@ -137,9 +137,15 @@ func (p *BranchSummaryPicker) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor
 		}
 		rc.AddPart(style.Render(ansi.Truncate(label, innerWidth, "…")))
 	}
+	// InputCursor places the caret as if the input came straight after the
+	// title, so move it down past the option rows drawn above it.
+	rowsAbove := linesIn(rc.Parts)
 	p.input.SetWidth(dialogInputTextWidth(t, p.input, innerWidth))
 	rc.AddPart(t.Dialog.InputPrompt.Render(p.input.View()))
 	cur := InputCursor(t, p.input.Cursor())
+	if cur != nil {
+		cur.Y += rowsAbove
+	}
 	rc.Help = renderDialogHelp(t, &p.help, p, innerWidth)
 
 	DrawCenterCursor(scr, area, rc.Render(), cur)
