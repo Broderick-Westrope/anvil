@@ -59,7 +59,7 @@ var _ Dialog = (*BranchSummaryPicker)(nil)
 // NewBranchSummaryPicker creates the picker for offer.
 func NewBranchSummaryPicker(com *common.Common, offer RewindOffer) *BranchSummaryPicker {
 	p := &BranchSummaryPicker{com: com, offer: offer, selected: 1}
-	if i := slices.Index(offer.Agents, offer.DefaultAgent); i >= 0 {
+	if i := slices.Index(offer.Agents, offer.DefaultAgent); i != -1 {
 		p.selected = i + 1
 	}
 
@@ -136,7 +136,7 @@ func (p *BranchSummaryPicker) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor
 		if i == p.selected {
 			style = t.Dialog.SelectedItem
 		}
-		rc.AddPart(style.Render(ansi.Truncate(label, innerWidth, "…")))
+		rc.AddPart(style.Render(ansi.Truncate(label, innerWidth-style.GetHorizontalFrameSize(), "…")))
 	}
 	// InputCursor places the caret as if the input came straight after the
 	// title, so move it down past the option rows drawn above it.

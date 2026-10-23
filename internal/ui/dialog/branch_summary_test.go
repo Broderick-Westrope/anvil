@@ -1,6 +1,8 @@
 package dialog
 
 import (
+	"image/color"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -75,4 +77,60 @@ func TestBranchSummaryPicker_CursorSitsOnTheFocusField(t *testing.T) {
 	x, y := findOnScreen(t, scr, "> Optional focus")
 	require.Equal(t, y, cur.Y, "the caret is on the focus field's row")
 	require.Equal(t, x+2, cur.X)
+}
+
+func TestBranchSummaryPicker_UpWrapsToTheLastAgent(t *testing.T) {
+	t.Parallel()
+
+	p := newTestBranchSummaryPicker("")
+	up := tea.KeyPressMsg{Code: tea.KeyUp}
+	p.HandleMsg(up)
+	p.HandleMsg(up)
+
+	got := p.HandleMsg(enterKey())
+
+	require.Equal(t, ActionBranchSummaryPick{SessionID: "s", FromLeafID: "from", TargetID: "target", Agent: "pr-summarizer"}, got)
+}
+
+func TestBranchSummaryPicker_HighlightsTheSelectedOption(t *testing.T) {
+	t.Parallel()
+
+	p := newTestBranchSummaryPicker("")
+	scr := uv.NewScreenBuffer(mouseScreenW, mouseScreenH)
+	p.Draw(scr, uv.Rect(0, 0, mouseScreenW, mouseScreenH))
+
+	selectedBg := p.com.Styles.Dialog.SelectedItem.GetBackground()
+	bgAt := func(text string) color.Color {
+		x, y := findOnScreen(t, scr, text)
+		return scr.CellAt(x, y).Style.Bg
+	}
+	require.True(t, sameColor(selectedBg, bgAt("branch-summarizer")), "the default agent is highlighted")
+	require.False(t, sameColor(selectedBg, bgAt("No summary")))
+	require.False(t, sameColor(selectedBg, bgAt("pr-summarizer")))
+}
+
+func sameColor(a, b color.Color) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	ar, ag, ab, aa := a.RGBA()
+	br, bg, bb, ba := b.RGBA()
+	return ar == br && ag == bg && ab == bb && aa == ba
+}
+
+func TestBranchSummaryPicker_FitsANarrowArea(t *testing.T) {
+	t.Parallel()
+
+	s := styles.TokyoNight()
+	long := strings.Repeat("summarizer-", 8)
+	p := NewBranchSummaryPicker(&common.Common{Styles: &s}, RewindOffer{Agents: []string{long}})
+	scr := uv.NewScreenBuffer(mouseScreenW, mouseScreenH)
+	p.Draw(scr, uv.Rect(10, 0, 40, mouseScreenH))
+
+	_, top := findOnScreen(t, scr, "╭")
+	topRow, _ := screenRow(scr, top)
+	require.Contains(t, topRow, "╮", "the whole dialog is drawn, right border included")
+	_, y := findOnScreen(t, scr, "summarizer-summarizer")
+	row, _ := screenRow(scr, y)
+	require.True(t, strings.HasSuffix(strings.TrimRight(row, " │"), "…"), "a long agent name is cut on its own row: %q", row)
 }
