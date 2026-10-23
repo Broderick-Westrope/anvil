@@ -41,8 +41,9 @@ is Anvil's old `measure.go` generalised.
   can import it. Its API is the one Anvil used, plus `ResolveVars` and
   `FontFaces` for `HTMLDocument` and `ErrRasterTimeout` in place of
   `resvg.ErrRenderTimeout`: layout and rasterizing stay separate, and
-  Anvil still owns the `Rasterizer`'s lifecycle. `internal/mermaid` keeps only `HTMLDocument`, whose page
-  names the font family `Anvil DejaVu Sans`.
+  Anvil still owns the `Rasterizer`'s lifecycle. `internal/mermaid` keeps
+  only `HTMLDocument`, whose page names the font family
+  `Anvil DejaVu Sans`.
 
 ### Upgrading
 
@@ -55,7 +56,7 @@ is Anvil's old `measure.go` generalised.
   both sides with the same Go toolchain (`GOTOOLCHAIN=<Anvil's go.mod
   version>` in pele-go's `raster/`): `image/png` compresses differently
   between Go releases, so PNGs with identical pixels can differ in bytes.
-  `internal/mermaidbench/compare.sh` compares latency and memory between
+  `scripts/mermaidbench-compare.sh` compares latency and memory between
   the two builds.
 - **resvg or its fonts:** see `raster/README.md` in pele-go.
 

@@ -204,9 +204,8 @@ var (
 // in finished assistant messages, shows one full size in a drill-in, opens
 // one in the browser and copies one to the clipboard (see
 // github.com/Broderick-Westrope/pele-go/raster and internal/mermaid);
-// bitmaps are the images tools return, drawn in their
-// drill-ins (tool_image.go). Only the drill-in on top holds a full-size
-// image.
+// bitmaps are the images tools return, drawn in their drill-ins
+// (tool_image.go). Only the drill-in on top holds a full-size image.
 type graphicsFeature struct {
 	host featureHost
 	caps *common.Capabilities
