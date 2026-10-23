@@ -130,8 +130,10 @@ Terms with a specific meaning in this codebase are defined in
   the coordinator level. Hooks run before permission checks. See
   `docs/hooks/README.md` for the user-facing protocol.
 - **Lazy MCPs**: MCP servers with `lazy_description` set in `anvil.json`
-  don't connect at startup, and their tools are excluded from the LLM
-  context until explicitly enabled; the first enable connects them. The
+  don't connect at startup. Under the default route they go through the
+  MCP tool catalogue (below); routed `direct`, their tools are excluded
+  from the LLM context until explicitly enabled; the first enable
+  connects them. The
   `enable_mcp` built-in tool lets the agent activate
   them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
   Enabled state is branch-scoped — derived from message history
@@ -140,6 +142,25 @@ Terms with a specific meaning in this codebase are defined in
   list on every turn. The `LazyMCPState` type in
   `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
   See `docs/adr/0002-lazy-mcp-state-from-messages.md`.
+- **MCP tool catalogue**: each MCP server resolves once per process to a
+  route, `direct` (in the tool list) or `catalogue`, from the snapshot
+  `mcp.Initialize` records before closing `initDone`
+  (`mcp.StartupSnapshot`, `deriveMCPRoutes` in
+  `internal/agent/mcp_routes.go`). Under `route: auto` a server is direct
+  only when connected at startup with sent tools under 12,000 bytes
+  (`mcp.SentToolBytes`). Catalogue servers are never built into any tool
+  list: `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool`
+  (`internal/agent/tools/catalogue.go`) reach them through a per-agent
+  resolver, and `agentMCPTools` (`internal/agent/mcp_tools.go`) builds
+  both the listed tools and the resolved ones, so access and wrapping
+  rules can't drift. `call_mcp_tool` validates arguments with
+  `jsonschema-go`, then runs the wrapped inner tool under the outer call
+  ID, so permissions, hooks and timers see `mcp_<server>_<tool>`. The
+  route map never changes mid-process; never let a connect, renewal or
+  reload change it. The registry (`mcp.RegisteredTool`) holds each tool's
+  parameters normalised once on a private copy, because fantasy normalises
+  `Info().Parameters` in place. See `docs/adr/0007-mcp-tool-catalogue.md`
+  and `plans/completed/design-2026-10-23-mcp-tool-catalogue.md`.
 - **LSP memory management**: auto-configured gopls runs with `-remote=auto`
   so concurrent Anvil processes share one gopls daemon
   (`applyGoplsDaemonDefaults` in `internal/lsp/manager.go`); user-configured

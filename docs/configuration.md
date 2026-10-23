@@ -213,10 +213,63 @@ which do expand.
 }
 ```
 
+### Tool Routing
+
+MCP servers with many tools (Datadog, Slack, Linear) can add 50k+ tokens to
+every model request. Anvil keeps them out of the tool list: by default each
+server's tools reach the model in one of two ways, decided once when Anvil
+starts.
+
+- **Directly.** The server's tools are in the tool list from the first
+  step. Anvil does this for a server that is connected at startup and whose
+  tools come to under 12,000 bytes (about 5k tokens), so small servers stay
+  fast.
+- **Through the catalogue.** Everything else, including servers that are
+  lazy or in error at startup. The agent gets three tools instead:
+  `search_mcp_tools` finds a tool (and, with a server, returns the server's
+  instructions), `describe_mcp_tool` returns its input schema, and
+  `call_mcp_tool` runs it. A server's schemas never enter the tool list, so
+  the prompt cache stays valid for the whole session. A deferred server
+  connects on its first search.
+
+A proxied call is the inner tool as far as everything else is concerned:
+permission rules, the bouncer, `allowed_mcp`, hooks and the chat all see
+`mcp_<server>_<tool>`. A permission rule such as `"mcp_datadog_*": "deny"`
+blocks it whether it was listed or proxied.
+
+`anvil_info` and the MCP palette (Ctrl+P → "MCP Servers") show each
+server's route and why. Set `route` to override it:
+
+```json
+{
+  "mcp": {
+    "muninn": { "type": "stdio", "command": "muninn", "route": "direct" },
+    "terminal": { "type": "stdio", "command": "terminal-mcp", "route": "catalogue" }
+  }
+}
+```
+
+| `route` | Meaning |
+| --- | --- |
+| `auto` (default) | Direct when connected at startup and under 12,000 bytes, else the catalogue. |
+| `catalogue` | Always through the catalogue. |
+| `direct` | Always in the tool list. On a lazy server this keeps the `enable_mcp` flow below. |
+
+Routes don't change while Anvil runs: a server that grows past the limit,
+reconnects or is toggled in the palette keeps its route until restart, and
+`anvil_info` notes a direct server that has since grown past the limit.
+Servers that appear after startup (Docker MCP, a server added by a config
+reload, one enabled from the palette after starting disabled) are listed
+directly once connected.
+
+To take the catalogue tools away from an agent, leave the servers out of
+its `mcps:`, add `"!call_mcp_tool"` (and the other two) to a negative
+`tools:` list, or list them in `options.disabled_tools`.
+
 ### Lazy Loading
 
-MCP servers with many tools (Datadog, Slack, Linear) can consume 50k+ tokens
-of context. Add `lazy_description` to defer their tools until needed:
+Add `lazy_description` to a server to defer its connection until it's
+first needed. The description introduces the server to the model:
 
 ```json
 {
@@ -231,14 +284,20 @@ of context. Add `lazy_description` to defer their tools until needed:
 }
 ```
 
-Lazy servers don't connect at startup, and their tool schemas stay out of
-the LLM context until the server is enabled; the first enable connects it.
-The agent sees an `enable_mcp` tool listing available lazy servers
-and calls it when needed. You can also toggle servers manually via the MCP
-palette (Ctrl+P → "MCP Servers").
+Under the default `route`, a lazy server goes through the catalogue and
+connects on its first search.
 
-Enabled state is branch-scoped: it persists for the current conversation
-branch and survives restarts.
+> **Changed:** lazy servers used to load whole through `enable_mcp`. They
+> now go through the catalogue by default. Set `"route": "direct"` to keep
+> the old flow.
+
+With `"route": "direct"`, a lazy server doesn't connect at startup, and its
+tool schemas stay out of the LLM context until the server is enabled; the
+first enable connects it. The agent sees an `enable_mcp` tool listing
+available lazy servers and calls it when needed. You can also toggle such
+servers manually via the MCP palette (Ctrl+P → "MCP Servers"). Enabled
+state is branch-scoped: it persists for the current conversation branch and
+survives restarts.
 
 ### OAuth
 

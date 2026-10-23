@@ -16,7 +16,7 @@ import (
 // every step; the catalogue costs about two extra steps in sessions that
 // use the server. 12,000 bytes is about 5k tokens, which keeps small
 // servers fast and sends every large one through the catalogue. See
-// plans/design-2026-10-23-mcp-tool-catalogue.md.
+// plans/completed/design-2026-10-23-mcp-tool-catalogue.md.
 const catalogueThresholdBytes = 12_000
 
 // mcpRoute is how one server's tools reach the model for the rest of the

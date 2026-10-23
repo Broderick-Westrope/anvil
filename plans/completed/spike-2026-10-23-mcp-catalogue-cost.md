@@ -1,6 +1,6 @@
 # Spike: what MCP tool routing really costs
 
-**Question:** What does the catalogue design (`plans/design-2026-10-23-mcp-tool-catalogue.md`) cost in practice, compared with listing tools directly and with today's lazy `enable_mcp`? And should every MCP tool go through `call_mcp_tool`, or does it hurt when an agent calls some servers' tools directly and others through the catalogue?
+**Question:** What does the catalogue design (`plans/completed/design-2026-10-23-mcp-tool-catalogue.md`) cost in practice, compared with listing tools directly and with today's lazy `enable_mcp`? And should every MCP tool go through `call_mcp_tool`, or does it hurt when an agent calls some servers' tools directly and others through the catalogue?
 
 **Answer:**
 - **Mixing does no measurable harm.** In 96 catalogue and mixed runs across two models, no agent called a hidden tool by its direct name, sent a direct server's tool through `call_mcp_tool`, or answered wrongly. Agents switched between the two routes within a single task without trouble.

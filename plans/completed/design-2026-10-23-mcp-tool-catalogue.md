@@ -1,6 +1,6 @@
 # MCP Tool Catalogue Design Doc
 
-**TL;DR:** MCP tools reach the model through a catalogue by default. Three fixed tools, `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool`, find a tool, return its schema as a tool result and run it, so a server's schemas never enter the tool list. Anvil lists a server's tools directly only when they are small, trading a little money for latency on servers like code search. It decides once per process from the schema size, so nobody has to maintain per-server modes. The spike behind this (`plans/spike-2026-10-23-mcp-catalogue-cost.md`) found no routing mistakes when direct and catalogue routes were mixed. The mixed setup closest to what ships cost 37% to 38% less than today's lazy loading.
+**TL;DR:** MCP tools reach the model through a catalogue by default. Three fixed tools, `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool`, find a tool, return its schema as a tool result and run it, so a server's schemas never enter the tool list. Anvil lists a server's tools directly only when they are small, trading a little money for latency on servers like code search. It decides once per process from the schema size, so nobody has to maintain per-server modes. The spike behind this (`plans/completed/spike-2026-10-23-mcp-catalogue-cost.md`) found no routing mistakes when direct and catalogue routes were mixed. The mixed setup closest to what ships cost 37% to 38% less than today's lazy loading.
 
 **Problem:** A server's tools cost tokens on every request once they're listed, and agents use very few of them.
 - **Production data:** `step_usage` and `messages` from 2026-10-10 to 2026-10-23 (46k rows, 1,458 sessions) show:
@@ -306,7 +306,7 @@ Only Datadog's case is evidenced: it names 2 tools and says to call them first, 
 - [ ] An MCP image result returned through `call_mcp_tool` draws in the tool drill-in.
 
 **Context Files:**
-- `plans/spike-2026-10-23-mcp-catalogue-cost.md`: the measurements behind the route rule, the mixing finding and the instruction-named schemas. The harness and prototype are on branch `spike/mcp-catalogue-cost` (`internal/agent/tools/spike_catalogue.go` is a working starting point).
+- `plans/completed/spike-2026-10-23-mcp-catalogue-cost.md`: the measurements behind the route rule, the mixing finding and the instruction-named schemas. The harness and prototype are on branch `spike/mcp-catalogue-cost` (`internal/agent/tools/spike_catalogue.go` is a working starting point).
 - `internal/agent/tools/mcp-tools.go`: the MCP tool wrapper (naming, `MCP()`, `Info()` schema stripping, the permission request).
 - `internal/agent/tools/mcp/tools.go`, `internal/agent/tools/mcp/init.go`:
   - the `allTools` registry and `RunTool` result conversion,
