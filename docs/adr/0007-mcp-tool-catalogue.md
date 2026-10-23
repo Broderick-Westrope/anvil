@@ -1,6 +1,6 @@
 # 0007: Reach large MCP servers through a fixed tool catalogue
 
-**Status:** Accepted
+**Status:** Proposed
 **Date:** 2026-10-23
 
 ## Context

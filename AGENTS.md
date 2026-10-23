@@ -155,7 +155,11 @@ Terms with a specific meaning in this codebase are defined in
   both the listed tools and the resolved ones, so access and wrapping
   rules can't drift. `call_mcp_tool` validates arguments with
   `jsonschema-go`, then runs the wrapped inner tool under the outer call
-  ID, so permissions, hooks and timers see `mcp_<server>_<tool>`. The
+  ID, so permissions, hooks and timers see `mcp_<server>_<tool>`. A call
+  to a catalogue tool by its direct name is forwarded to `call_mcp_tool`
+  by `repairToolCall` (`internal/agent/catalogue_repair.go`), which must
+  stay on the `AgentStreamCall` in `turn.go`: fantasy's `Stream` ignores
+  an agent-level repair function. The
   route map never changes mid-process; never let a connect, renewal or
   reload change it. The registry (`mcp.RegisteredTool`) holds each tool's
   parameters normalised once on a private copy, because fantasy normalises
