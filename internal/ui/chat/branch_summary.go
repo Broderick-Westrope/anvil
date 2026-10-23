@@ -118,8 +118,8 @@ func (b *BranchSummaryMessageItem) render(width int) string {
 		}
 	}
 	shown := body
-	if !b.expanded && len(body) > branchSummaryCollapsedLines {
-		shown = body[:branchSummaryCollapsedLines]
+	if !b.expanded {
+		shown = body[:min(len(body), branchSummaryCollapsedLines)]
 	}
 	for _, line := range shown {
 		if !b.expanded {

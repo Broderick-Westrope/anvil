@@ -97,5 +97,78 @@ func TestBranchSummaryMessageItem_StripsControlCharacters(t *testing.T) {
 	require.NotContains(t, out, "\r")
 	require.NotContains(t, out, "\b")
 	require.NotContains(t, out, "\x07")
-	require.Contains(t, ansi.Strip(out), "done")
+	require.NotContains(t, out, "\x01", "control characters are dropped, not replaced")
+	require.Contains(t, ansi.Strip(out), "overwritebell done")
+}
+
+func TestBranchSummaryMessageItem_Keys(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	drillIn := util.AgentDrillInMsg{SessionID: "child-1", Label: "Branch summary"}
+	tests := map[string]struct {
+		key     tea.KeyPressMsg
+		child   string
+		handled bool
+	}{
+		"right drills in":            {key: tea.KeyPressMsg{Code: tea.KeyRight}, child: "child-1", handled: true},
+		"l drills in":                {key: tea.KeyPressMsg{Code: 'l', Text: "l"}, child: "child-1", handled: true},
+		"other keys pass":            {key: tea.KeyPressMsg{Code: 'x', Text: "x"}, child: "child-1"},
+		"no session to drill into":   {key: tea.KeyPressMsg{Code: tea.KeyRight}},
+		"l with no session to drill": {key: tea.KeyPressMsg{Code: 'l', Text: "l"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			msg := branchSummaryMessage()
+			msg.Parts = []message.ContentPart{message.BranchSummaryContent{Summary: "done", ChildSessionID: tc.child}}
+			item := NewBranchSummaryMessageItem(&sty, msg).(*BranchSummaryMessageItem)
+
+			handled, cmd := item.HandleKeyEvent(tc.key)
+
+			require.Equal(t, tc.handled, handled)
+			if tc.handled {
+				require.Equal(t, drillIn, cmd())
+			} else {
+				require.Nil(t, cmd)
+			}
+		})
+	}
+}
+
+func TestBranchSummaryMessageItem_CollapsedMarksCutLines(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	tests := map[string]struct {
+		lines int
+		cut   bool
+	}{
+		"fits":       {lines: branchSummaryCollapsedLines},
+		"cut":        {lines: branchSummaryCollapsedLines + 1, cut: true},
+		"short fits": {lines: 1},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var lines []string
+			for i := range tc.lines {
+				lines = append(lines, "line "+string(rune('a'+i)))
+			}
+			msg := branchSummaryMessage()
+			msg.Parts = []message.ContentPart{message.BranchSummaryContent{Summary: strings.Join(lines, "\n")}}
+			item := NewBranchSummaryMessageItem(&sty, msg)
+
+			out := strings.Split(ansi.Strip(item.Render(80)), "\n")
+
+			shown := min(tc.lines, branchSummaryCollapsedLines)
+			wantRows := 1 + shown
+			if tc.cut {
+				wantRows++
+			}
+			require.Len(t, out, wantRows)
+			require.Contains(t, out[shown], "line "+string(rune('a'+shown-1)))
+			require.Equal(t, tc.cut, strings.HasSuffix(strings.TrimSpace(out[len(out)-1]), "…"))
+		})
+	}
 }
