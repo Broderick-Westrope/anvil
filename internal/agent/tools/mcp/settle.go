@@ -5,11 +5,21 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 )
 
 // connecting holds the servers a ConnectDeferred call is connecting,
 // across its retry.
 var connecting = csync.NewMap[string, struct{}]()
+
+// clearConnecting drops the connecting mark and republishes the server's
+// state, so WaitSettled callers wake at once rather than on their next
+// poll: the state itself was published while the mark was still set.
+func clearConnecting(name string) {
+	connecting.Del(name)
+	info, _ := GetState(name)
+	broker.Publish(pubsub.UpdatedEvent, Event{Type: EventStateChanged, Name: name, State: info.State, Error: info.Error, Counts: info.Counts})
+}
 
 // IsConnecting reports whether a ConnectDeferred call is connecting the
 // named server, including between a transient failure and its retry,

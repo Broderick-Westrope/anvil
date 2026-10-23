@@ -143,6 +143,7 @@ func ResetInitForTest() {
 	initMu.Lock()
 	initStarted = false
 	startupSnapshot = nil
+	connecting.Reset(map[string]struct{}{})
 	initOnce = sync.Once{}
 	initDone = make(chan struct{})
 	initMu.Unlock()
@@ -431,7 +432,7 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 	// retry too, so WaitSettled doesn't wake on the error a transient
 	// first failure publishes before the retry.
 	connecting.Set(name, struct{}{})
-	defer connecting.Del(name)
+	defer clearConnecting(name)
 	updateState(name, StateStarting, nil, nil, Counts{})
 
 	attempt := func() error {

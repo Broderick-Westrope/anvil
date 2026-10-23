@@ -106,3 +106,24 @@ func TestWaitSettledWaitsOutAConnectRetry(t *testing.T) {
 	info := <-settled
 	require.Equal(t, StateLazy, info.State)
 }
+
+func TestWaitSettledWakesWhenTheConnectingMarkClears(t *testing.T) {
+	const name = "settle-mark"
+	t.Cleanup(func() {
+		states.Del(name)
+		connecting.Del(name)
+	})
+	SetStateForTest(name, StateLazy)
+	SetConnectingForTest(name, true)
+
+	settled := make(chan time.Time, 1)
+	go func() {
+		_, _ = WaitSettled(t.Context(), name)
+		settled <- time.Now()
+	}()
+	time.Sleep(settlePoll / 2)
+	cleared := time.Now()
+	SetConnectingForTest(name, false)
+
+	require.Less(t, (<-settled).Sub(cleared), settlePoll/4, "woken by the clear, not the poll")
+}

@@ -46,9 +46,13 @@ func takeSnapshot(mcps config.MCPs) map[string]ServerSnapshot {
 	return snap
 }
 
+// recordSnapshot records the startup snapshot once; a second Initialize
+// leaves the first in place, so routes can't change mid-process.
 func recordSnapshot(mcps config.MCPs) {
 	snap := takeSnapshot(mcps)
 	initMu.Lock()
-	startupSnapshot = snap
-	initMu.Unlock()
+	defer initMu.Unlock()
+	if startupSnapshot == nil {
+		startupSnapshot = snap
+	}
 }

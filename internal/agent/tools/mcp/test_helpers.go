@@ -47,5 +47,5 @@ func SetConnectingForTest(name string, busy bool) {
 		connecting.Set(name, struct{}{})
 		return
 	}
-	connecting.Del(name)
+	clearConnecting(name)
 }
