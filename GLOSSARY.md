@@ -109,7 +109,7 @@ An MCP server with `lazy_description` set. It doesn't connect at startup. Under 
 - **Code:** `agent/lazy_mcp.go`, `agent/tools/enable_mcp.go`, `mcp.StateLazy`
 - **Not:** disabled MCP. A disabled MCP is off for every session.
 
-## MCP Catalogue
+## MCP Tool Catalogue
 
 The three tools (`search_mcp_tools`, `describe_mcp_tool`, `call_mcp_tool`) through which an agent finds and runs the tools of catalogue-routed MCP servers, whose schemas never enter the tool list. A proxied call runs as the inner tool, under its `mcp_<server>_<tool>` name.
 

@@ -37,6 +37,7 @@ then validates and runs it, and is recorded under that name. Every other
 call gets fantasy's default JSON repair. Returning an error instead would
 need fantasy to support a custom unknown-tool message, and the forwarded
 call is what the model meant.
+
 The route map and the catalogue descriptions never change within a
 process, so catalogue routing never changes the tool list or the system
 prompt. Server instructions for catalogue servers come back in search
