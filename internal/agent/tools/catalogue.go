@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 	"text/template"
@@ -15,7 +14,6 @@ import (
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
-	"github.com/google/jsonschema-go/jsonschema"
 )
 
 const (
@@ -574,97 +572,4 @@ func (c *catalogue) describe(ctx context.Context, call fantasy.ToolCall) (fantas
 		fmt.Fprintf(&out, "Not described (limit %d): %s\n", maxDescribedTools, strings.Join(params.Tools[maxDescribedTools:], ", "))
 	}
 	return fantasy.NewTextResponse(out.String()), nil
-}
-
-type callParams struct {
-	Server    string          `json:"server"`
-	Tool      string          `json:"tool"`
-	Arguments json.RawMessage `json:"arguments"`
-}
-
-func (c *catalogue) call(ctx context.Context, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-	var params callParams
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
-		return fantasy.NewTextErrorResponse("invalid input: " + err.Error()), nil
-	}
-	params.Server = c.canonicalServer(params.Server)
-	instructions, tools, err := c.serverTools(ctx, params.Server, CallMCPToolToolName)
-	if err != nil {
-		return fantasy.NewTextErrorResponse(err.Error()), nil
-	}
-	tool, ok := findTool(params.Server, params.Tool, tools)
-	if !ok {
-		return fantasy.NewTextErrorResponse(unknownToolMessage(params.Server, params.Tool, tools)), nil
-	}
-	args, problem := callArguments(params.Arguments)
-	if problem == "" {
-		problem = validateArguments(tool.MCP, args)
-	}
-	if problem != "" {
-		marker := ""
-		if mentionIndex(instructions, tool.MCP.MCPToolName()) >= 0 {
-			marker = InstructionNamedMarker
-		}
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("%s%s: %s\n\nInput schema for %s:\n%s",
-			InvalidArgumentsPrefix, marker, problem, tool.MCP.MCPToolName(), compactSchema(tool.MCP))), nil
-	}
-	return tool.Run.Run(ctx, fantasy.ToolCall{ID: call.ID, Name: tool.Run.Info().Name, Input: string(args)})
-}
-
-func unknownToolMessage(server, name string, tools []CatalogueTool) string {
-	matches := rankTools(searchTerms(name), map[string][]CatalogueTool{server: tools})
-	if len(matches) == 0 {
-		return fmt.Sprintf("no tool %q on %s. Use search_mcp_tools to find it.", name, server)
-	}
-	var names []string
-	for _, match := range matches[:min(len(matches), maxClosestMatches)] {
-		names = append(names, match.tool.MCPToolName())
-	}
-	return fmt.Sprintf("no tool %q on %s. Closest matches: %s", name, server, strings.Join(names, ", "))
-}
-
-// callArguments accepts a JSON object or a string holding one, since
-// models often send nested objects as strings. Missing arguments are an
-// empty object.
-func callArguments(raw json.RawMessage) ([]byte, string) {
-	var asString string
-	if json.Unmarshal(raw, &asString) == nil {
-		raw = json.RawMessage(asString)
-	}
-	if len(raw) == 0 || string(raw) == "null" {
-		return []byte("{}"), ""
-	}
-	var object map[string]any
-	if err := json.Unmarshal(raw, &object); err != nil {
-		return nil, "arguments must be a JSON object"
-	}
-	return raw, ""
-}
-
-// validateArguments checks args against the tool's input schema and
-// describes any violations. A schema jsonschema-go can't load (it won't
-// unmarshal, or has a remote $ref) passes every call through.
-func validateArguments(tool *Tool, args []byte) string {
-	raw, err := json.Marshal(tool.InputSchema())
-	if err != nil {
-		return ""
-	}
-	var schema jsonschema.Schema
-	if err := json.Unmarshal(raw, &schema); err != nil {
-		slog.Debug("MCP tool schema won't load; passing call through unvalidated", "tool", tool.Name(), "error", err)
-		return ""
-	}
-	resolved, err := schema.Resolve(nil)
-	if err != nil {
-		slog.Debug("MCP tool schema won't resolve; passing call through unvalidated", "tool", tool.Name(), "error", err)
-		return ""
-	}
-	var value any
-	if err := json.Unmarshal(args, &value); err != nil {
-		return "arguments are not valid JSON: " + err.Error()
-	}
-	if err := resolved.Validate(value); err != nil {
-		return err.Error()
-	}
-	return ""
 }

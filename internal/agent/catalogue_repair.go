@@ -54,16 +54,16 @@ func forwardToCatalogue(call fantasy.ToolCallContent, listing mcpListing, availa
 	if !listing.catalogue[server] || !json.Valid([]byte(arguments)) {
 		return call, false
 	}
-	input, err := json.Marshal(struct {
-		Server    string          `json:"server"`
-		Tool      string          `json:"tool"`
-		Arguments json.RawMessage `json:"arguments"`
-	}{server, call.ToolName[len("mcp_"+server+"_"):], json.RawMessage(arguments)})
-	if err != nil {
+	input := tools.CatalogueCall{
+		Server:    server,
+		Tool:      call.ToolName[len("mcp_"+server+"_"):],
+		Arguments: json.RawMessage(arguments),
+	}.Input()
+	if input == "" {
 		return call, false
 	}
 	call.ToolName = tools.CallMCPToolToolName
-	call.Input = string(input)
+	call.Input = input
 	return call, true
 }
 

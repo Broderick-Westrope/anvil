@@ -69,36 +69,14 @@ func (b *CatalogueCallRenderContext) RenderTool(sty *styles.Styles, width int, o
 		}
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
-	return renderMCPTool(sty, width, opts, call.Server, call.Tool, call.Arguments)
+	return renderMCPTool(sty, width, opts, call.Server, call.Tool, string(call.Arguments))
 }
 
-// catalogueCall is a call_mcp_tool input read as the call it proxies.
-type catalogueCall struct {
-	Server    string
-	Tool      string
-	Arguments string
-}
-
-// parseCatalogueCall reads a call_mcp_tool input. Arguments may be an
-// object or a string holding one, as call_mcp_tool accepts both.
-func parseCatalogueCall(input string) (catalogueCall, bool) {
-	var raw struct {
-		Server    string          `json:"server"`
-		Tool      string          `json:"tool"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	if err := json.Unmarshal([]byte(input), &raw); err != nil || raw.Server == "" || raw.Tool == "" {
-		return catalogueCall{}, false
-	}
-	args := string(raw.Arguments)
-	var asString string
-	if json.Unmarshal(raw.Arguments, &asString) == nil {
-		args = asString
-	}
-	if args == "" || args == "null" {
-		args = "{}"
-	}
-	return catalogueCall{Server: raw.Server, Tool: raw.Tool, Arguments: args}, true
+// parseCatalogueCall reads a call_mcp_tool input that names its server
+// and tool.
+func parseCatalogueCall(input string) (tools.CatalogueCall, bool) {
+	call, err := tools.ParseCatalogueCall(input)
+	return call, err == nil && call.Server != "" && call.Tool != ""
 }
 
 // expandName is the name expanded_tools patterns match a call by: a
