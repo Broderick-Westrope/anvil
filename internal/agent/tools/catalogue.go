@@ -225,7 +225,13 @@ func (c *catalogue) ready(ctx context.Context, server, caller string) (string, e
 		case mcp.StateDisabled:
 			return "", errUnusable{fmt.Sprintf("MCP '%s' is disabled. Tell the user if the task needs it.", server)}
 		case mcp.StateError:
-			return "", stateErrorProblem(server, info, caller)
+			if !mcp.IsConnecting(server) {
+				return "", stateErrorProblem(server, info, caller)
+			}
+			// A first, transient failure; the retry is still running.
+			if err := c.settle(ctx, server); err != nil {
+				return "", err
+			}
 		case mcp.StateStarting:
 			if err := c.settle(ctx, server); err != nil {
 				return "", err

@@ -11,6 +11,14 @@ import (
 // across its retry.
 var connecting = csync.NewMap[string, struct{}]()
 
+// IsConnecting reports whether a ConnectDeferred call is connecting the
+// named server, including between a transient failure and its retry,
+// when the server's state reads as an error.
+func IsConnecting(name string) bool {
+	_, busy := connecting.Get(name)
+	return busy
+}
+
 // settlePoll bounds how long WaitSettled can miss a transition: the
 // event broker drops events for slow subscribers, so it also re-reads the
 // state on a timer.
@@ -30,7 +38,7 @@ func WaitSettled(ctx context.Context, name string) (ClientInfo, error) {
 		// Read after subscribing, so a transition between the two
 		// can't be missed.
 		info, _ := GetState(name)
-		if _, busy := connecting.Get(name); info.State != StateStarting && !busy {
+		if info.State != StateStarting && !IsConnecting(name) {
 			return info, nil
 		}
 		select {

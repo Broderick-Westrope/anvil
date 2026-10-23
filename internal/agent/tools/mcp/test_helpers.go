@@ -39,3 +39,13 @@ func SetToolsForTest(name string, tools ...*Tool) {
 func DeleteToolsForTest(name string) {
 	allTools.Del(name)
 }
+
+// SetConnectingForTest marks a server as being connected by a
+// ConnectDeferred call, as during its retry, or clears the mark.
+func SetConnectingForTest(name string, busy bool) {
+	if busy {
+		connecting.Set(name, struct{}{})
+		return
+	}
+	connecting.Del(name)
+}

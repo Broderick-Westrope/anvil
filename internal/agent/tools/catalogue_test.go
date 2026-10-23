@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/fantasy"
@@ -438,4 +439,21 @@ func TestDescribeSaysWhichNamesItLeftOut(t *testing.T) {
 	text := f.run(t, DescribeMCPToolToolName, map[string]any{"server": "cat-describe-many", "tools": names}).Content
 
 	require.Contains(t, text, "Not described (limit 10): search_logs, k")
+}
+
+func TestSearchWaitsOutAConnectRetryInsteadOfReportingItsError(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-retry", "", true, logSearchTool)
+	mcp.SetStateWithErrorForTest("cat-retry", mcp.StateError, errors.New("dial: i/o timeout"))
+	mcp.SetConnectingForTest("cat-retry", true)
+	t.Cleanup(func() { mcp.SetConnectingForTest("cat-retry", false) })
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		mcp.SetToolsForTest("cat-retry", &mcp.Tool{Name: "search_logs", Description: "Search logs.", InputSchema: logSearchTool.schema})
+		mcp.SetStateForTest("cat-retry", mcp.StateLazy)
+		mcp.SetConnectingForTest("cat-retry", false)
+	}()
+
+	resp := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-retry", "query": "logs"})
+
+	require.Contains(t, resp.Content, "- search_logs")
 }
