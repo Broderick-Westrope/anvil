@@ -189,7 +189,7 @@ func (e errUnusable) Error() string { return e.msg }
 // caller names the catalogue tool asking, for the auth-expiry text.
 func (c *catalogue) serverTools(ctx context.Context, server, caller string) (string, []CatalogueTool, error) {
 	if _, ok := c.descriptions[server]; !ok {
-		names := make([]string, 0, len(c.opts.Servers))
+		var names []string
 		for _, s := range c.opts.Servers {
 			names = append(names, s.Name)
 		}
@@ -607,7 +607,7 @@ func unknownToolMessage(server, name string, tools []CatalogueTool) string {
 	if len(matches) == 0 {
 		return fmt.Sprintf("no tool %q on %s. Use search_mcp_tools to find it.", name, server)
 	}
-	names := make([]string, 0, maxClosestMatches)
+	var names []string
 	for _, match := range matches[:min(len(matches), maxClosestMatches)] {
 		names = append(names, match.tool.MCPToolName())
 	}
