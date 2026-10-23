@@ -166,6 +166,9 @@ func (t *catalogueTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy
 // name: models echo the case they last saw, and the OAuth rename
 // capitalises server names.
 func (c *catalogue) canonicalServer(name string) string {
+	if _, ok := c.descriptions[name]; ok {
+		return name
+	}
 	for _, server := range c.opts.Servers {
 		if strings.EqualFold(server.Name, name) {
 			return server.Name
@@ -529,8 +532,13 @@ func compactSchema(tool *Tool) string {
 // findTool matches name against the server's tools by raw MCP name, by
 // the <server>/<tool> form a server-less search prints, or by the full
 // mcp_<server>_<tool> name, in any case: models echo whichever form they
-// last saw.
+// last saw. An exact raw name wins over a case-fold match.
 func findTool(server, name string, tools []CatalogueTool) (CatalogueTool, bool) {
+	for _, tool := range tools {
+		if tool.MCP.MCPToolName() == name {
+			return tool, true
+		}
+	}
 	lower := strings.TrimPrefix(strings.ToLower(name), strings.ToLower(server)+"/")
 	for _, tool := range tools {
 		raw := strings.ToLower(tool.MCP.MCPToolName())

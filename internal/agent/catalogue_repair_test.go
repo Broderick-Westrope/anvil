@@ -76,3 +76,16 @@ func TestRepairToolCall(t *testing.T) {
 		})
 	}
 }
+
+func TestRepairPrefersTheServerWhoseCaseMatches(t *testing.T) {
+	t.Parallel()
+	repair := repairToolCall(mcpListing{catalogue: map[string]bool{"Jira": true, "jira": true}, routed: []string{"Jira", "jira"}})
+
+	got, err := repair(t.Context(), fantasy.ToolCallRepairOptions{
+		OriginalToolCall: fantasy.ToolCallContent{ToolName: "mcp_jira_get", Input: `{}`},
+		AvailableTools:   []fantasy.AgentTool{namedTool{name: tools.CallMCPToolToolName}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, `{"server":"jira","tool":"get","arguments":{}}`, got.Input)
+}

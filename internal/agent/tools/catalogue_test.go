@@ -542,3 +542,15 @@ func TestInstructionSchemasMayFillExactlyFourKilobytes(t *testing.T) {
 	require.Contains(t, text, "Input schema for first_tool")
 	require.Contains(t, text, "Input schema for second_tool", "4096 bytes in total fits")
 }
+
+func TestAnExactServerNameWinsOverACaseFoldMatch(t *testing.T) {
+	t.Parallel()
+	c := &catalogue{
+		opts:         CatalogueOptions{Servers: []CatalogueServer{{Name: "Jira"}, {Name: "jira"}}},
+		descriptions: map[string]string{"Jira": "", "jira": ""},
+	}
+
+	require.Equal(t, "jira", c.canonicalServer("jira"))
+	require.Equal(t, "Jira", c.canonicalServer("Jira"))
+	require.Equal(t, "Jira", c.canonicalServer("JIRA"), "with no exact match, the first fold match")
+}

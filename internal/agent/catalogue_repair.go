@@ -69,14 +69,19 @@ func forwardToCatalogue(call fantasy.ToolCallContent, listing mcpListing, availa
 
 // longestServerPrefix returns the server whose mcp_<server>_ prefix name
 // starts with, preferring the longest since server names can contain "_",
-// or "". The match ignores case (the OAuth rename capitalises the server)
+// then one whose case matches exactly, or "". The match ignores case (the OAuth rename capitalises the server)
 // over the prefix's own bytes, so slicing the tool name off is safe.
 func longestServerPrefix(name string, servers []string) string {
-	best := ""
+	best, bestExact := "", false
 	for _, server := range servers {
 		prefix := "mcp_" + server + "_"
-		if len(name) > len(prefix) && strings.EqualFold(name[:len(prefix)], prefix) && len(server) > len(best) {
-			best = server
+		if len(name) <= len(prefix) || !strings.EqualFold(name[:len(prefix)], prefix) {
+			continue
+		}
+		// Longer wins; at equal length, a case-exact prefix wins.
+		exact := name[:len(prefix)] == prefix
+		if len(server) > len(best) || len(server) == len(best) && exact && !bestExact {
+			best, bestExact = server, exact
 		}
 	}
 	return best
