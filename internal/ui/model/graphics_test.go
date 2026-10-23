@@ -689,8 +689,6 @@ func TestGraphicsFeatureRedrawsWhenDiagramsBecomeUndrawable(t *testing.T) {
 func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 	t.Parallel()
 
-	// Engines with no Pele make any render panic, as a renderer bug would.
-	broken := &diagramEngines{}
 	tests := map[string]diagramRequest{
 		"image":  {key: diagramKey{hash: 1}, source: "A"},
 		"export": {key: diagramKey{hash: 2}, source: "A", job: diagramJobExport},
@@ -700,7 +698,10 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
-			msg, ok := f.runRequest(broken, req)
+			// Engines with no Pele make any render panic, as a renderer
+			// bug would. Each subtest has its own, since loading the
+			// rasterizer writes to them.
+			msg, ok := f.runRequest(&diagramEngines{}, req)
 			require.False(t, ok, "the engines are dropped")
 			switch msg := msg.(type) {
 			case diagramReadyMsg:
