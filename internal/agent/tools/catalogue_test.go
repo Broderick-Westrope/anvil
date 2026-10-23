@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
@@ -372,4 +373,44 @@ func TestDescribeWithNoToolsSaysSo(t *testing.T) {
 
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, "tools is empty")
+}
+
+func TestCallOnAnUnusableServerIsAnErrorNamingTheCall(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-call-down", "", true, logSearchTool)
+	mcp.SetStateWithErrorForTest("cat-call-down", mcp.StateError, mcp.ErrNeedsAuth)
+
+	resp := f.run(t, CallMCPToolToolName, map[string]any{"server": "cat-call-down", "tool": "search_logs", "arguments": map[string]any{}})
+
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "Do not retry call_mcp_tool")
+}
+
+func TestSearchSplitsCamelCaseAndIgnoresPlurals(t *testing.T) {
+	jira := catalogueServerTool{name: "getJiraIssue", description: "Fetch one.", schema: objectSchema(nil, map[string]any{})}
+	f := newCatalogueFixture(t, "cat-camel", "", false, jira, logSearchTool)
+
+	require.Contains(t, f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-camel", "query": "jira issues"}).Content, "- getJiraIssue")
+	require.Contains(t, f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-camel", "query": "log"}).Content, "- search_logs")
+}
+
+func TestCallWithoutArgumentsSendsAnEmptyObject(t *testing.T) {
+	noArgs := catalogueServerTool{name: "whoami", description: "Who.", schema: objectSchema(nil, map[string]any{})}
+	f := newCatalogueFixture(t, "cat-noargs", "", false, noArgs)
+	for _, tool := range f.tools {
+		if tool.Info().Name == CallMCPToolToolName {
+			require.NotContains(t, tool.Info().Required, "arguments")
+		}
+	}
+
+	resp := f.run(t, CallMCPToolToolName, map[string]any{"server": "cat-noargs", "tool": "whoami"})
+
+	require.False(t, resp.IsError, resp.Content)
+	require.Equal(t, "whoami ran with {}", resp.Content)
+}
+
+func TestFirstSentenceCutsOnRunes(t *testing.T) {
+	t.Parallel()
+	got := firstSentence("a" + strings.Repeat("é", 250))
+	require.True(t, strings.HasSuffix(got, "..."))
+	require.True(t, utf8.ValidString(got))
 }

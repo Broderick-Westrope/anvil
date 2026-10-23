@@ -129,7 +129,8 @@ func NewCatalogueTools(opts CatalogueOptions) []fantasy.AgentTool {
 				// property-less object type is what Gemini rejects.
 				"arguments": map[string]any{"description": "The tool's arguments: a JSON object matching its input schema."},
 			},
-			Required: []string{"server", "tool", "arguments"},
+			// arguments is optional: a tool without parameters gets {}.
+			Required: []string{"server", "tool"},
 		}, run: c.call},
 	}
 }
@@ -170,7 +171,8 @@ func (e errUnusable) Error() string { return e.msg }
 // serverTools resolves server for this agent: it checks the agent may use
 // it, connects it if deferred or waits if it is starting, and returns the
 // server's instructions and the agent's tools on it, in name order.
-func (c *catalogue) serverTools(ctx context.Context, server string) (string, []CatalogueTool, error) {
+// caller names the catalogue tool asking, for the auth-expiry text.
+func (c *catalogue) serverTools(ctx context.Context, server, caller string) (string, []CatalogueTool, error) {
 	if _, ok := c.descriptions[server]; !ok {
 		names := make([]string, 0, len(c.opts.Servers))
 		for _, s := range c.opts.Servers {
@@ -178,7 +180,7 @@ func (c *catalogue) serverTools(ctx context.Context, server string) (string, []C
 		}
 		return "", nil, fmt.Errorf("unknown catalogue server %q, available servers: %s", server, strings.Join(names, ", "))
 	}
-	instructions, err := c.ready(ctx, server)
+	instructions, err := c.ready(ctx, server, caller)
 	if err != nil {
 		return "", nil, err
 	}
@@ -191,7 +193,7 @@ func (c *catalogue) serverTools(ctx context.Context, server string) (string, []C
 
 // ready brings server to a usable state, following enable_mcp's handling
 // of each connection state, and returns its instructions.
-func (c *catalogue) ready(ctx context.Context, server string) (string, error) {
+func (c *catalogue) ready(ctx context.Context, server, caller string) (string, error) {
 	// A deferred server takes one connect, and a starting one one wait;
 	// three passes cover a connect that finds another caller connecting.
 	for range 3 {
@@ -208,13 +210,13 @@ func (c *catalogue) ready(ctx context.Context, server string) (string, error) {
 		case mcp.StateDisabled:
 			return "", errUnusable{fmt.Sprintf("MCP '%s' is disabled. Tell the user if the task needs it.", server)}
 		case mcp.StateError:
-			return "", stateErrorProblem(server, info)
+			return "", stateErrorProblem(server, info, caller)
 		case mcp.StateStarting:
 			if err := c.settle(ctx, server); err != nil {
 				return "", err
 			}
 		case mcp.StateDeferred:
-			if err := c.connect(ctx, server); err != nil {
+			if err := c.connect(ctx, server, caller); err != nil {
 				return "", err
 			}
 		}
@@ -222,9 +224,9 @@ func (c *catalogue) ready(ctx context.Context, server string) (string, error) {
 	return "", errUnusable{fmt.Sprintf("MCP '%s' is still starting, retry shortly", server)}
 }
 
-func stateErrorProblem(server string, info mcp.ClientInfo) error {
+func stateErrorProblem(server string, info mcp.ClientInfo, caller string) error {
 	if info.NeedsAuth {
-		return errUnusable{authRequiredResponse(server, SearchMCPToolsToolName).Content}
+		return errUnusable{authRequiredResponse(server, caller).Content}
 	}
 	reason := "unknown error"
 	if info.Error != nil {
@@ -233,7 +235,7 @@ func stateErrorProblem(server string, info mcp.ClientInfo) error {
 	return errUnusable{fmt.Sprintf("MCP '%s' failed to connect: %s", server, reason)}
 }
 
-func (c *catalogue) connect(ctx context.Context, server string) error {
+func (c *catalogue) connect(ctx context.Context, server, caller string) error {
 	err := mcp.ConnectDeferred(ctx, server, c.opts.Config)
 	switch {
 	case err == nil:
@@ -241,7 +243,7 @@ func (c *catalogue) connect(ctx context.Context, server string) error {
 	case errors.Is(err, mcp.ErrAlreadyConnecting):
 		return c.settle(ctx, server)
 	case mcp.NeedsAuth(err):
-		return errUnusable{authRequiredResponse(server, SearchMCPToolsToolName).Content}
+		return errUnusable{authRequiredResponse(server, caller).Content}
 	default:
 		return errUnusable{fmt.Sprintf("Failed to connect MCP '%s': %s", server, err)}
 	}
@@ -261,10 +263,11 @@ func (c *catalogue) settle(ctx context.Context, server string) error {
 	return nil
 }
 
-// problemResponse turns a resolve error into a tool response: a server
-// that can't be used now is reported as a result, anything else as an
-// error.
-func problemResponse(err error) fantasy.ToolResponse {
+// searchProblem turns a resolve error into a search result: a server that
+// can't be used now is reported as a result, so it never reads as "no
+// such tools", and anything else as an error. describe and call report
+// both as errors: they didn't do what was asked.
+func searchProblem(err error) fantasy.ToolResponse {
 	var unusable errUnusable
 	if errors.As(err, &unusable) {
 		return fantasy.NewTextResponse(unusable.msg)
@@ -286,9 +289,9 @@ func (c *catalogue) search(ctx context.Context, call fantasy.ToolCall) (fantasy.
 	if params.Server == "" {
 		return fantasy.NewTextResponse(c.searchConnected(ctx, query)), nil
 	}
-	instructions, tools, err := c.serverTools(ctx, params.Server)
+	instructions, tools, err := c.serverTools(ctx, params.Server, SearchMCPToolsToolName)
 	if err != nil {
-		return problemResponse(err), nil
+		return searchProblem(err), nil
 	}
 	var out strings.Builder
 	if instructions != "" {
@@ -330,7 +333,7 @@ func (c *catalogue) searchConnected(ctx context.Context, query []string) string 
 			}
 			continue
 		}
-		_, tools, err := c.serverTools(ctx, server.Name)
+		_, tools, err := c.serverTools(ctx, server.Name, SearchMCPToolsToolName)
 		if err != nil {
 			continue
 		}
@@ -395,10 +398,28 @@ func writeMatches(out *strings.Builder, matches []searchMatch, withServer bool) 
 	}
 }
 
+// searchTerms splits s into lowercase terms at anything that isn't a
+// letter or digit and at camelCase humps, and drops a plural "s", so
+// "getJiraIssues" and "jira issue" share terms.
 func searchTerms(s string) []string {
-	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+	var spaced strings.Builder
+	prev := ' '
+	for _, r := range s {
+		if unicode.IsUpper(r) && unicode.IsLower(prev) {
+			spaced.WriteRune(' ')
+		}
+		spaced.WriteRune(r)
+		prev = r
+	}
+	terms := strings.FieldsFunc(strings.ToLower(spaced.String()), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
+	for i, term := range terms {
+		if len(term) > 3 && strings.HasSuffix(term, "s") && !strings.HasSuffix(term, "ss") {
+			terms[i] = strings.TrimSuffix(term, "s")
+		}
+	}
+	return terms
 }
 
 func matchesAny(query, terms []string) bool {
@@ -415,9 +436,9 @@ func firstSentence(s string) string {
 	if i := strings.Index(s, ". "); i > 0 {
 		s = s[:i+1]
 	}
-	const maxLen = 200
-	if len(s) > maxLen {
-		s = s[:maxLen] + "..."
+	const maxRunes = 200
+	if runes := []rune(s); len(runes) > maxRunes {
+		s = string(runes[:maxRunes]) + "..."
 	}
 	return s
 }
@@ -510,9 +531,9 @@ func (c *catalogue) describe(ctx context.Context, call fantasy.ToolCall) (fantas
 	if len(params.Tools) == 0 {
 		return fantasy.NewTextErrorResponse("tools is empty: name up to 10 tools, as search_mcp_tools returns them"), nil
 	}
-	_, tools, err := c.serverTools(ctx, params.Server)
+	_, tools, err := c.serverTools(ctx, params.Server, DescribeMCPToolToolName)
 	if err != nil {
-		return problemResponse(err), nil
+		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	var out strings.Builder
 	for _, name := range params.Tools[:min(len(params.Tools), maxDescribedTools)] {
@@ -537,9 +558,9 @@ func (c *catalogue) call(ctx context.Context, call fantasy.ToolCall) (fantasy.To
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return fantasy.NewTextErrorResponse("invalid input: " + err.Error()), nil
 	}
-	instructions, tools, err := c.serverTools(ctx, params.Server)
+	instructions, tools, err := c.serverTools(ctx, params.Server, CallMCPToolToolName)
 	if err != nil {
-		return problemResponse(err), nil
+		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	tool, ok := findTool(params.Server, params.Tool, tools)
 	if !ok {
