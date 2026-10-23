@@ -81,9 +81,9 @@ switch, in separate processes:
 | Source to SVG, median (3 runs) | 529–569 µs | 34–39 µs |
 | Source to SVG, p99 (3 runs) | 7.5–20.6 ms | 0.58–0.71 ms |
 
-- Memory follows pele-go's `scripts/anvil-memory` method, which
-  `internal/mermaidbench` now reimplements: render and
-  rasterize `info` 20 times with resvg loaded from a warm compilation
+- Memory follows the method of pele-go's former `scripts/anvil-memory`,
+  which `internal/mermaidbench` now reimplements: render and rasterize
+  `info` 20 times with resvg loaded from a warm compilation
   cache, keep the last image, and compare the settled process against its
   start. What's left is resvg and the image.
 - Latency covers every source in pele-go's oracle corpus
