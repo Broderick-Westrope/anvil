@@ -228,3 +228,15 @@ func TestBranchSummaryItem_CollapsedMarksCutLines(t *testing.T) {
 		})
 	}
 }
+
+func TestBranchSummaryItem_SelectionSourceIsTheSummary(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	running := NewBranchSummaryItem(&sty, "anchor", "call", "branch-summarizer", nil)
+	require.Empty(t, running.SelectionSource(), "nothing to copy while it runs")
+
+	summary := "## Outcome\nDone."
+	stored := NewBranchSummaryItem(&sty, "anchor", "call", "branch-summarizer", &summary)
+	require.Equal(t, summary, stored.SelectionSource())
+}
