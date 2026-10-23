@@ -14,7 +14,9 @@
 # nothing, so also check NewRasterizer's medians match: a compile takes
 # about 300 ms against about 10 ms for a load. It doesn't apply
 # the latency or memory pass bars; read those off benchstat's output. With
-# a dozen metrics, one at p < 0.05 with a small delta is likely noise.
+# a dozen metrics, one at p < 0.05 with a small delta is likely noise. The
+# memory bar is the difference of the two medians; the added bytes can be
+# near zero or negative, so benchstat's percentages mean little there.
 set -euo pipefail
 
 if (($# < 3)); then
