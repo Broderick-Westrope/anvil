@@ -11,7 +11,8 @@
 # It prints benchstat's comparison and fails if the two builds fail
 # different corpus sources, or if B wrote new entries to the shared
 # compilation cache. A load that fails and falls back to compiling writes
-# nothing, so also check NewRasterizer's time matches. It doesn't apply
+# nothing, so also check NewRasterizer's medians match: a compile takes
+# about 300 ms against about 10 ms for a load. It doesn't apply
 # the latency or memory pass bars; read those off benchstat's output. With
 # a dozen metrics, one at p < 0.05 with a small delta is likely noise.
 set -euo pipefail
@@ -24,7 +25,16 @@ a="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 b="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 export PELE_CORPUS="$3"
 runs="${4:-8}"
+if ! [[ $runs =~ ^[1-9][0-9]*$ ]]; then
+	echo "runs must be a positive integer, not $runs" >&2
+	exit 2
+fi
 benchstat=(go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e)
+# Fetch benchstat before measuring, so a failure doesn't waste the runs.
+"${benchstat[@]}" -h >/dev/null 2>&1 || {
+	echo "can't run benchstat: ${benchstat[*]}" >&2
+	exit 1
+}
 
 out="$(mktemp -d)"
 MERMAIDBENCH_CACHE="$(mktemp -d)"
@@ -44,12 +54,13 @@ run_test() {
 	fi
 }
 
-# A fills the cache, as an earlier Anvil session would have. Running B's
-# memory test once too means neither build's first measured run is the one
-# that pages its binary in.
+# A fills the cache, as an earlier Anvil session would have. B's first
+# load comes after the snapshot, so a miss shows as a new entry. Running B
+# once before measuring also means neither build's first measured run is
+# the one that pages its binary in.
 run_test "$a" TestMemory "$out/warm-a.log"
-run_test "$b" TestMemory "$out/warm-b.log"
 before="$(entries)"
+run_test "$b" TestMemory "$out/warm-b.log"
 
 # Alternate ABBA so whichever goes first in a pair isn't always the same
 # build.
