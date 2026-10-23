@@ -136,6 +136,13 @@ Optional surfaces, found by type assertion when the feature registers:
   `Render` returns exactly `Lines()` lines, each one row; cut multi-line
   text at its first line. A panel with no lines isn't rendered.
 - `paletteFeature.PaletteEntries` adds entries to the command palette.
+- `cancelFeature.Cancel` can claim the cancel keys (Escape, and Ctrl+C on
+  an empty composer) before `UI` cancels a busy agent, for work of the
+  feature's own that makes the agent look busy.
+- `navigationGuard.BlockNavigation` can refuse anything that moves the
+  session's leaf: a rewind (`handleNavigateTree`), a return to the
+  pre-branch conversation (`beginBranchReturn`), an MCP toggle, and the
+  model and reasoning metadata writes (`canWriteLeafMetadata`).
 
 A feature never holds `*UI`. It asks `UI` for things through `featureHost`,
 and for workspace calls it declares the narrow interface it needs. Add a

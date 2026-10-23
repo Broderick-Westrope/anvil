@@ -175,6 +175,22 @@ Terms with a specific meaning in this codebase are defined in
   the duration once it reaches 10s (`internal/ui/chat/tool_timer.go`,
   refreshed by the elapsed tick in `internal/ui/model/tool_timer.go`).
   Design: `plans/completed/design-2026-10-18-tool-call-timer.md`.
+- **Branch summaries**: rewinding past an assistant reply offers a
+  summarizer agent (frontmatter `branch_summarizer: true`; the built-in
+  is `templates/agents/branch-summarizer.md`) that summarises the branch
+  left behind. `internal/agent/branchsummary` holds the pure parts: the
+  abandoned range, the ledger built from tool calls, the serialised
+  prompt (redacted, budgeted, with tags content can't forge) and the
+  stored text. `coordinator.SummarizeBranch` runs the agent with
+  read-only tools in an agent-tool child session and stores a
+  `branch_summary` message under the rewind target with
+  `messages.CreateAtLeaf`, which checks the leaf in the same transaction.
+  `internal/app/branchsummaries.Service` owns runs (one per root session)
+  and reserves the session synchronously when one starts, so a message
+  sent meanwhile queues behind it. The TUI feature
+  (`internal/ui/model/branch_summary.go`) renders only the service's
+  events, showing the run as a live agent item. Design:
+  `plans/completed/design-2026-10-20-branch-summaries.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
   normalised token counts, prices and hashed request fingerprints. The

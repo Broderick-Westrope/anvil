@@ -138,3 +138,39 @@ return to it and send or clear it before choosing another branch point.
 > The saved pre-branch draft is in memory only. Recover it before quitting; restarting cannot restore it.
 > The normal quit confirmation warns when a nonempty saved draft would be lost, but the pinned-session
 > quit dialog does not show that warning. Branching and returning never roll back files or undo tool effects.
+
+### Summarize the branch you left
+
+When you rewind past an assistant reply, Anvil asks whether to summarize the branch you're leaving, so the
+conversation you return to knows what it changed, decided and left open. This helps when you went off to do
+one item of a plan or chase a bug and come back with "1 is done, let's do 2". Without a summary, the agent
+has to rediscover the commits, worktrees and decisions the tangent made.
+
+The picker lists **No summary** and each summarizer agent. Type in its field to tell the summarizer what to
+focus on, then press **Enter**. **Escape** cancels the branch itself and returns you to where you were.
+
+The summary runs in the background as a subagent, in the chat where you'll send your next message. You can
+keep typing while it works; a message you send queues behind it and lands after it. Once it's done:
+
+- It shows the summary under the subagent's header, cut to four lines until you expand it. Press
+  **→** or **l** on it, or click it, to open the summarizer's own session.
+- It records what the tangent's tool calls did: files changed, and each `git`, `gh` and `wtp` command
+  with how it ended and the SHAs and pull request URLs it printed. These come from the commands
+  themselves, not the model.
+- It reaches the model labelled as a summary written by an agent, not as something you said.
+
+| To | Do |
+| --- | --- |
+| Stop a summary that's running | **Escape** or **Ctrl+C**, or **Ctrl+P → Cancel Branch Summary**. The rewind stays. |
+| Drop a summary before sending | **Ctrl+P → Discard Branch Summary**, or return to the pre-branch conversation |
+| Rewind again | Wait for the summary or cancel it first; Anvil won't rewind while one runs |
+
+While a summary runs, toggling an MCP server is refused, and model or reasoning changes take effect without
+being recorded in the conversation. Either would move the conversation past the point the summary is for.
+
+Summaries are best-effort: the summarizer works from the branch's messages and the tool calls it can see,
+with secrets redacted before anything is sent, and it may still get details wrong. It's a snapshot as of the
+branch's last message, so check live `git` and `gh` state before relying on it.
+
+Set `options.branch_summary.offer` to `always` to summarize with the default summarizer without asking, or to
+`never` to turn summaries off. Plugins can add summarizers; see [Writing an agent](./plugins.md#writing-an-agent).
