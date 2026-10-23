@@ -266,26 +266,26 @@ Only Datadog's case is evidenced: it names 2 tools and says to call them first, 
 - **Indirection.** Logs, `step_usage` tool counts and `anvil_info` tool counts show the catalogue tools, not the inner ones. Permission records and hooks show the inner name.
 
 **Success Criteria:**
-- [ ] With a fixture config of one non-lazy server at 10,190 sent bytes of tools, one non-lazy server at 12,000, one non-lazy server in error at startup, one lazy server and one server disabled in config:
+- [x] With a fixture config of one non-lazy server at 10,190 sent bytes of tools, one non-lazy server at 12,000, one non-lazy server in error at startup, one lazy server and one server disabled in config:
   - `anvil_info` shows the first as `direct`, the next three as `catalogue`, each with its reason, and omits the disabled one.
   - Setting `route` on a server overrides its route.
   - An unknown `route` value fails config load.
-- [ ] A non-lazy server whose sent tool bytes are 12,000 is routed to the catalogue, and one at 11,999 is listed directly.
-- [ ] The first prompt of a session is sent with a tool list built from the route map, never from a pre-snapshot build.
-- [ ] None of these changes the route map, the catalogue tools' descriptions or which servers are direct within a process:
+- [x] A non-lazy server whose sent tool bytes are 12,000 is routed to the catalogue, and one at 11,999 is listed directly.
+- [x] The first prompt of a session is sent with a tool list built from the route map, never from a pre-snapshot build.
+- [x] None of these changes the route map, the catalogue tools' descriptions or which servers are direct within a process:
   - renewing a server's auth,
   - a `tools/list_changed` on any server,
   - a palette disable or enable,
   - a config reload that edits `route` or `lazy_description`,
   - re-authenticating a server that was in error at startup.
-- [ ] A session that searches, describes and calls two Datadog tools has the same `tool_count` on every `step_usage` turn row and no `tools_changed` miss. After the `Info()` copy fix, `tools_hash` is the same on every row too, including with a direct server listed.
-- [ ] `search_mcp_tools(server=datadog, query=...)` returns Datadog's instructions followed by the schemas of `load_datadog_skill` and `list_datadog_skills`. `search_mcp_tools(server=figma, ...)` appends at most 2 schemas and 4 KB.
+- [x] A session that searches, describes and calls two Datadog tools has the same `tool_count` on every `step_usage` turn row and no `tools_changed` miss. After the `Info()` copy fix, `tools_hash` is the same on every row too, including with a direct server listed.
+- [x] `search_mcp_tools(server=datadog, query=...)` returns Datadog's instructions followed by the schemas of `load_datadog_skill` and `list_datadog_skills`. `search_mcp_tools(server=figma, ...)` appends at most 2 schemas and 4 KB.
 - [ ] Rerunning the spike harness (`plans/spike-data/run.py` on branch `spike/mcp-catalogue-cost`, adapted to the built feature) on Opus and Sonnet:
   - invalid-argument errors on Datadog's two skill tools stay at or under 1 in 20 of their calls,
   - added cases (a subagent using a catalogue server, and a task that crosses a lazy `route: "direct"` server, a direct server and a catalogue server) show no routing errors.
-- [ ] The first `search_mcp_tools(server=datadog)` in a session connects the deferred server and returns its matches in the same result, in both the orchestrator and a subagent. Two concurrent subagents whose first search hits the same deferred server both return matches.
-- [ ] An agent with `tools: [glob, grep, ls, view]` and `mcps: {datadog: []}` can search and call Datadog tools. An agent with `tools: ["!call_mcp_tool", "!search_mcp_tools", "!describe_mcp_tool"]` gets none of the three and keeps every other built-in.
-- [ ] Searching a server that is in error or disabled returns a message saying so, not an empty match list.
+- [x] The first `search_mcp_tools(server=datadog)` in a session connects the deferred server and returns its matches in the same result, in both the orchestrator and a subagent. Two concurrent subagents whose first search hits the same deferred server both return matches.
+- [x] An agent with `tools: [glob, grep, ls, view]` and `mcps: {datadog: []}` can search and call Datadog tools. An agent with `tools: ["!call_mcp_tool", "!search_mcp_tools", "!describe_mcp_tool"]` gets none of the three and keeps every other built-in.
+- [x] Searching a server that is in error or disabled returns a message saying so, not an empty match list.
 - [ ] `call_mcp_tool` succeeds on an Anthropic, an OpenAI and a Gemini model, with `arguments` sent as an object and as a JSON string.
 - [ ] Each of these sees the inner name `mcp_datadog_<tool>` (or `mcp_Datadog_<tool>` under Anthropic OAuth) and the inner arguments for a proxied call:
   - a permission rule `"mcp_datadog_*": "deny"`,
@@ -294,15 +294,15 @@ Only Datadog's case is evidenced: it names 2 tools and says to call them first, 
 
   A hook matching `.*` fires once per proxied call.
 - [ ] A proxied call that waits on a permission prompt shows the chat's awaiting-permission state, and its timer restarts when the prompt is granted.
-- [ ] `call_mcp_tool` with arguments that violate the schema returns an error result listing the violation and the schema, and never contacts the server.
+- [x] `call_mcp_tool` with arguments that violate the schema returns an error result listing the violation and the schema, and never contacts the server.
 - [ ] A tool excluded by `disabled_tools`, or a server outside a subagent's `allowed_mcp`, is absent from search and describe, and `call_mcp_tool` rejects it.
-- [ ] `search_mcp_tools` without `server` connects no deferred server.
+- [x] `search_mcp_tools` without `server` connects no deferred server.
 - [ ] A catalogue-routed server's tools never appear in the tool list, including after a mid-run connect, a `tools/list_changed` refresh, or a session that enabled the server through `enable_mcp` or the palette before the change. Its instructions never appear in the system prompt.
-- [ ] A lazy server with `route: "direct"` behaves exactly as lazy servers do today (`enable_mcp`, palette toggle, ADR 0002 state).
-- [ ] A workflow `agent()` naming `mcp_datadog_<tool>` gets that tool as a direct tool, including when Datadog is a non-lazy catalogue server.
-- [ ] Calling a catalogue-routed tool by its direct name (`mcp_datadog_<tool>`, for example from a resumed session's history) runs it through `call_mcp_tool`, and the chat shows it as the inner tool.
-- [ ] The sent-bytes size used for routing and the parameters `Info()` returns come from the same function, measured after normalisation.
-- [ ] With every server routed `direct`, the tool list and system prompt are byte-identical to today's.
+- [x] A lazy server with `route: "direct"` behaves exactly as lazy servers do today (`enable_mcp`, palette toggle, ADR 0002 state).
+- [x] A workflow `agent()` naming `mcp_datadog_<tool>` gets that tool as a direct tool, including when Datadog is a non-lazy catalogue server.
+- [x] Calling a catalogue-routed tool by its direct name (`mcp_datadog_<tool>`, for example from a resumed session's history) runs it through `call_mcp_tool`, and the chat shows it as the inner tool.
+- [x] The sent-bytes size used for routing and the parameters `Info()` returns come from the same function, measured after normalisation.
+- [x] With every server routed `direct`, the tool list and system prompt are byte-identical to today's.
 - [ ] An MCP image result returned through `call_mcp_tool` draws in the tool drill-in.
 
 **Context Files:**
