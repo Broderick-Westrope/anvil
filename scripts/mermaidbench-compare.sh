@@ -3,8 +3,8 @@
 # to the Mermaid pipeline) and B (after), run interleaved on one machine so
 # drift doesn't line up with the split. Build each with
 # `go test -c -o <file> ./internal/mermaidbench`, A at the commit before the
-# change but with the harness as it is at B, so the two differ only in
-# what they measure.
+# change but with the harness as it is at B, its `pipeline` import pointed
+# at the package A has, so the two differ only in what they measure.
 #
 # Usage: scripts/mermaidbench-compare.sh <A test binary> <B test binary> <pele-go corpus dir> [runs]
 #
@@ -32,8 +32,11 @@ trap 'rm -rf "$MERMAIDBENCH_CACHE"; echo "raw results: $out" >&2' EXIT
 
 entries() { find "$MERMAIDBENCH_CACHE" -type f | sort; }
 
-# A fills the cache, as an earlier Anvil session would have.
+# A fills the cache, as an earlier Anvil session would have. Running B
+# once too means neither build's first measured run is the one that pages
+# its binary in.
 "$a" -test.run '^TestMemory$' >/dev/null
+"$b" -test.run '^$' >/dev/null 2>&1
 before="$(entries)"
 
 # Alternate ABBA so whichever goes first in a pair isn't always the same
@@ -44,8 +47,15 @@ for i in $(seq "$runs"); do
 	for build in $order; do
 		bin="$a"
 		[[ $build == b ]] && bin="$b"
-		"$bin" -test.run '^TestLatency$' | grep -E '^(Benchmark|# )' >>"$out/$build.txt"
-		"$bin" -test.run '^TestMemory$' | grep '^Benchmark' >>"$out/$build.txt"
+		for test in TestLatency TestMemory; do
+			log="$out/$build-$test-$i.log"
+			if ! "$bin" -test.run "^$test\$" >"$log" 2>&1; then
+				echo "FAIL: $build $test, run $i:" >&2
+				cat "$log" >&2
+				exit 1
+			fi
+			grep -E '^(Benchmark|# )' "$log" >>"$out/$build.txt"
+		done
 	done
 	echo "run $i of $runs done" >&2
 done
