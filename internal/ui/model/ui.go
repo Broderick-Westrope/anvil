@@ -5237,14 +5237,16 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 		return nil
 	}
 
-	// Build entries from config + current state.
+	// Build entries from config + current state. Routes are in-memory
+	// in the coordinator, so reading them here does no IO.
+	routes, routesReady := m.com.Workspace.MCPRoutes()
 	var entries []dialog.MCPPaletteEntry
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
 		state, ok := m.mcpStates[mcpCfg.Name]
 		if !ok {
 			continue
 		}
-		entries = append(entries, dialog.MCPPaletteEntry{
+		entry := dialog.MCPPaletteEntry{
 			Name:        mcpCfg.Name,
 			Description: mcpCfg.MCP.LazyDescription,
 			IsLazy:      mcpCfg.MCP.IsLazy(),
@@ -5252,12 +5254,35 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 			NeedsAuth:   state.NeedsAuth,
 			State:       state.State,
 			Counts:      state.Counts,
-		})
+		}
+		applyMCPRoute(&entry, routes, routesReady)
+		entries = append(entries, entry)
 	}
 
 	d := dialog.NewMCPPalette(m.com, entries)
 	m.dialog.OpenDialog(d)
 	return nil
+}
+
+// applyMCPRoute labels entry with its server's route. A catalogue server
+// isn't lazy-toggled: its tools are never listed, whatever the toggle.
+func applyMCPRoute(entry *dialog.MCPPaletteEntry, routes []agenttools.MCPRoute, ready bool) {
+	if !ready {
+		entry.Route = "route pending"
+		return
+	}
+	for _, route := range routes {
+		if route.Server != entry.Name {
+			continue
+		}
+		if route.Catalogue {
+			entry.Catalogue = true
+			entry.IsLazy = false
+			entry.Enabled = false
+		}
+		entry.Route = route.String()
+		return
+	}
 }
 
 // deriveEnabledLazyMCPs scans branch-path messages for lazy MCP state

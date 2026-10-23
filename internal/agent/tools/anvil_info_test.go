@@ -23,7 +23,7 @@ func TestAnvilInfo_MinimalConfig(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.NotContains(t, output, "[providers]")
 	require.NotContains(t, output, "[lsp]")
 	require.NotContains(t, output, "[mcp]")
@@ -39,7 +39,7 @@ func TestAnvilInfo_ConfigFiles(t *testing.T) {
 		"/home/user/.config/anvil/anvil.json",
 		"/project/.anvil/anvil.json",
 	)
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[config_files]")
 	require.Contains(t, output, "/home/user/.config/anvil/anvil.json")
 	require.Contains(t, output, "/project/.anvil/anvil.json")
@@ -55,7 +55,7 @@ func TestAnvilInfo_Models(t *testing.T) {
 		},
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[model]")
 	require.Contains(t, output, "large = claude-sonnet-4-20250514 (anthropic)")
 	require.Contains(t, output, "small = claude-haiku-3-20250307 (anthropic)")
@@ -85,7 +85,7 @@ func TestAnvilInfo_AgenticFetchModelOverride(t *testing.T) {
 				},
 				Tools: config.Tools{AgenticFetch: config.ToolAgenticFetch{Model: tt.model}},
 			})
-			output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+			output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 			require.Contains(t, output, tt.want)
 		})
 	}
@@ -101,7 +101,7 @@ func TestAnvilInfo_AgenticFetchWithoutSmallModel(t *testing.T) {
 		},
 		Tools: config.Tools{AgenticFetch: config.ToolAgenticFetch{Model: "bogus"}},
 	})
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "large = claude-opus-4 (anthropic)")
 	require.NotContains(t, output, "agentic_fetch =")
 }
@@ -114,7 +114,7 @@ func TestAnvilInfo_Providers(t *testing.T) {
 	providers.Set("anthropic", config.ProviderConfig{Models: make([]catwalk.Model, 12)})
 
 	cfg := config.NewTestStore(&config.Config{Providers: providers})
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[providers]")
 	anthropicIdx := strings.Index(output, "anthropic = enabled")
 	openaiIdx := strings.Index(output, "openai = enabled")
@@ -133,7 +133,7 @@ func TestAnvilInfo_DisabledProvidersOmitted(t *testing.T) {
 	providers.Set("anthropic", config.ProviderConfig{Models: make([]catwalk.Model, 12)})
 
 	cfg := config.NewTestStore(&config.Config{Providers: providers})
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "anthropic = enabled")
 	require.NotContains(t, output, "openai")
 }
@@ -153,7 +153,7 @@ func TestAnvilInfo_LSPStates(t *testing.T) {
 	mgr.Clients().Set("pyright", errorClient)
 
 	cfg := config.NewTestStore(&config.Config{Providers: csync.NewMap[string, config.ProviderConfig]()})
-	output := buildAnvilInfo(cfg, mgr, nil, nil, nil)
+	output := buildAnvilInfo(cfg, mgr, nil, nil, nil, nil)
 	require.Contains(t, output, "[lsp]")
 	require.Contains(t, output, "gopls = ready")
 	require.Contains(t, output, "pyright = error")
@@ -200,7 +200,7 @@ func TestAnvilInfo_YoloMode(t *testing.T) {
 	})
 	cfg.Overrides().YoloLevel = config.YoloStandard
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[permissions]")
 	require.Contains(t, output, "mode = yolo (standard)")
 }
@@ -216,7 +216,7 @@ func TestAnvilInfo_AllowedTools(t *testing.T) {
 		}},
 	})
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[permissions]")
 	require.Contains(t, output, "bash = allow")
 	require.Contains(t, output, "edit = allow")
@@ -230,7 +230,7 @@ func TestAnvilInfo_DisabledTools(t *testing.T) {
 		Options:   &config.Options{DisabledTools: []string{"sourcegraph", "agentic_fetch"}},
 	})
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[tools]")
 	require.Contains(t, output, "disabled = agentic_fetch, sourcegraph")
 }
@@ -247,7 +247,7 @@ func TestAnvilInfo_Options(t *testing.T) {
 		},
 	})
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[options]")
 	require.Contains(t, output, "auto_lsp = true")
 	require.Contains(t, output, "auto_summarize = false")
@@ -262,14 +262,14 @@ func TestAnvilInfo_AutoSummarizeInversion(t *testing.T) {
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 		Options:   &config.Options{DisableAutoSummarize: true},
 	})
-	outputFalse := buildAnvilInfo(cfgFalse, nil, nil, nil, nil)
+	outputFalse := buildAnvilInfo(cfgFalse, nil, nil, nil, nil, nil)
 	require.Contains(t, outputFalse, "auto_summarize = false")
 
 	cfgTrue := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 		Options:   &config.Options{DisableAutoSummarize: false},
 	})
-	outputTrue := buildAnvilInfo(cfgTrue, nil, nil, nil, nil)
+	outputTrue := buildAnvilInfo(cfgTrue, nil, nil, nil, nil, nil)
 	require.Contains(t, outputTrue, "auto_summarize = true")
 }
 
@@ -283,7 +283,7 @@ func TestAnvilInfo_NoSecrets(t *testing.T) {
 	})
 
 	cfg := config.NewTestStore(&config.Config{Providers: providers})
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.NotContains(t, output, "sk-super-secret-key-12345")
 	require.NotContains(t, output, "secret")
 	require.Contains(t, output, "openai = enabled (8 models)")
@@ -322,7 +322,7 @@ func TestAnvilInfo_DeterministicOrdering(t *testing.T) {
 	zMcpIdx := strings.Index(mcpOutput, "z-mcp = connected")
 	require.Less(t, aMcpIdx, zMcpIdx)
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 
 	alphaIdx := strings.Index(output, "alpha = enabled")
 	middleIdx := strings.Index(output, "middle = enabled")
@@ -349,7 +349,7 @@ func TestAnvilInfo_EmptySectionsOmitted(t *testing.T) {
 		Options:     &config.Options{},
 	})
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.NotContains(t, output, "[tools]")
 	require.NotContains(t, output, "[permissions]")
 	require.NotContains(t, output, "[lsp]")
@@ -371,7 +371,7 @@ func TestAnvilInfo_ConfigStaleness_Clean(t *testing.T) {
 	// Capture snapshot (normally done in Load)
 	store.CaptureStalenessSnapshot([]string{configPath})
 
-	output := buildAnvilInfo(store, nil, nil, nil, nil)
+	output := buildAnvilInfo(store, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[config]")
 	require.Contains(t, output, "dirty = false")
 	require.NotContains(t, output, "changed_paths")
@@ -396,7 +396,7 @@ func TestAnvilInfo_ConfigStaleness_Dirty(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	require.NoError(t, os.WriteFile(configPath, []byte(`{"debug": true}`), 0o600))
 
-	output := buildAnvilInfo(store, nil, nil, nil, nil)
+	output := buildAnvilInfo(store, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[config]")
 	require.Contains(t, output, "dirty = true")
 	require.Contains(t, output, "changed_paths")
@@ -420,7 +420,7 @@ func TestAnvilInfo_ConfigStaleness_MissingPath(t *testing.T) {
 	// Delete file to trigger missing state
 	require.NoError(t, os.Remove(configPath))
 
-	output := buildAnvilInfo(store, nil, nil, nil, nil)
+	output := buildAnvilInfo(store, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[config]")
 	require.Contains(t, output, "dirty = true")
 	require.Contains(t, output, "missing_paths")
@@ -433,7 +433,7 @@ func TestAnvilInfo_Skills_NoSkills(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.NotContains(t, output, "[skills]")
 }
 
@@ -454,7 +454,7 @@ func TestAnvilInfo_Skills_MixedLoadedUnloaded(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
+	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker, nil)
 	require.Contains(t, output, "[skills]")
 	require.Contains(t, output, "bash = user, loaded")
 	require.Contains(t, output, "anvil-config = builtin, loaded")
@@ -480,7 +480,7 @@ func TestAnvilInfo_Skills_DisabledSkills(t *testing.T) {
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 		Options:   &config.Options{DisabledSkills: []string{"image-convert"}},
 	})
-	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
+	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker, nil)
 	require.Contains(t, output, "[skills]")
 	require.Contains(t, output, "bash = user, unloaded")
 	require.Contains(t, output, "anvil-config = builtin, unloaded")
@@ -501,7 +501,7 @@ func TestAnvilInfo_Skills_Ordering(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
+	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker, nil)
 
 	aIdx := strings.Index(output, "a-skill")
 	mIdx := strings.Index(output, "m-skill")
@@ -523,7 +523,7 @@ func TestAnvilInfo_Skills_BuiltinOrigin(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
+	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker, nil)
 	require.Contains(t, output, "anvil-config = builtin, unloaded")
 	require.Contains(t, output, "my-skill = user, unloaded")
 }
@@ -541,7 +541,7 @@ func TestAnvilInfo_Skills_PluginSource(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker)
+	output := buildAnvilInfo(cfg, nil, allSkills, activeSkills, tracker, nil)
 	require.Contains(t, output, "[skills]")
 	// Plugin source should show short form "ce", not full "plugin:ce".
 	require.Contains(t, output, "ce-helpers = ce, unloaded")
@@ -562,7 +562,7 @@ func TestAnvilInfo_Hooks(t *testing.T) {
 		},
 	})
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.Contains(t, output, "[hooks]")
 	require.Contains(t, output, "PreToolUse (matcher: edit|write) = check-privates.sh")
 	require.Contains(t, output, "PreToolUse = audit.sh")
@@ -575,7 +575,7 @@ func TestAnvilInfo_Hooks_NoHooks(t *testing.T) {
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
 
-	output := buildAnvilInfo(cfg, nil, nil, nil, nil)
+	output := buildAnvilInfo(cfg, nil, nil, nil, nil, nil)
 	require.NotContains(t, output, "[hooks]")
 }
 
@@ -591,7 +591,7 @@ func TestAnvilInfo_Skills_Unlisted(t *testing.T) {
 	cfg := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
 	})
-	output := buildAnvilInfo(cfg, nil, allSkills, allSkills, tracker)
+	output := buildAnvilInfo(cfg, nil, allSkills, allSkills, tracker, nil)
 	require.Contains(t, output, "design-twice = user, unlisted, unloaded")
 	require.Contains(t, output, "my-skill = user, unloaded")
 }
@@ -702,6 +702,41 @@ func TestAnvilInfo_MCPConfiguredServers(t *testing.T) {
 			var b strings.Builder
 			writeMCP(&b, tc.states, cfg)
 
+			require.Equal(t, tc.want, b.String())
+		})
+	}
+}
+
+func TestWriteMCPRoutes(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		routes MCPRoutesFunc
+		want   string
+	}{
+		"pending": {
+			routes: func() ([]MCPRoute, bool) { return nil, false },
+			want:   "[mcp_routes]\npending (MCP servers are still starting)\n\n",
+		},
+		"routed": {
+			routes: func() ([]MCPRoute, bool) {
+				return []MCPRoute{
+					{Server: "datadog", Catalogue: true, Reason: "auto: lazy"},
+					{Server: "muninn", Reason: "auto: 10,190 bytes, under 12,000"},
+				}, true
+			},
+			want: "[mcp_routes]\ndatadog = catalogue (auto: lazy)\nmuninn = direct (auto: 10,190 bytes, under 12,000)\n\n",
+		},
+		"none": {
+			routes: func() ([]MCPRoute, bool) { return nil, true },
+			want:   "",
+		},
+		"no route source": {want: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var b strings.Builder
+			writeMCPRoutes(&b, tc.routes)
 			require.Equal(t, tc.want, b.String())
 		})
 	}

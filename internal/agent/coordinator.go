@@ -139,6 +139,9 @@ type Coordinator interface {
 	// PrepareStep would still use a stale snapshot that omits the
 	// server's tools.
 	RefreshMCPTools(ctx context.Context, name string) error
+	// MCPRoutes returns how each MCP server's tools reach the model, in
+	// name order, and false until MCP initialisation has finished.
+	MCPRoutes() ([]tools.MCPRoute, bool)
 }
 
 type coordinator struct {
@@ -1065,7 +1068,7 @@ func (c *coordinator) buildToolsWithState(
 		candidateTools,
 		agenticFetch,
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), spillDataDir, c.jobWakeEnabled),
-		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
+		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker, c.MCPRoutes),
 		tools.NewAnvilLogsTool(logFile),
 		tools.NewJobOutputTool(jobOpts),
 		tools.NewJobKillTool(jobOpts),

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/dustin/go-humanize"
@@ -22,7 +23,9 @@ const catalogueThresholdBytes = 12_000
 // process, and why.
 type mcpRoute struct {
 	catalogue bool
-	reason    string
+	// auto is set when the size rule chose the route.
+	auto   bool
+	reason string
 	// description introduces the server in the catalogue tools: its
 	// lazy_description, else its name. Never connect state, so it can't
 	// change when the server connects later.
@@ -49,7 +52,8 @@ func deriveMCPRoutes(snap map[string]toolsmcp.ServerSnapshot) mcpRoutes {
 		if description == "" {
 			description = name
 		}
-		routes[name] = mcpRoute{catalogue: catalogue, reason: reason, description: description}
+		auto := server.Config.Route != config.MCPRouteDirect && server.Config.Route != config.MCPRouteCatalogue
+		routes[name] = mcpRoute{catalogue: catalogue, auto: auto, reason: reason, description: description}
 	}
 	return routes
 }
@@ -89,4 +93,25 @@ func (r mcpRoutes) catalogueServers() []string {
 		}
 	}
 	return names
+}
+
+// MCPRoutes returns every routed server's route for display, flagging an
+// auto-direct server whose tools have since grown past the threshold: it
+// stays direct until restart, so the tool list can't change mid-process.
+func (c *coordinator) MCPRoutes() ([]tools.MCPRoute, bool) {
+	routes, ready := c.mcpRoutes()
+	if !ready {
+		return nil, false
+	}
+	var out []tools.MCPRoute
+	for _, name := range slices.Sorted(maps.Keys(routes)) {
+		route := routes[name]
+		reason := route.reason
+		if size := toolsmcp.SentToolBytes(name); route.auto && !route.catalogue && size >= catalogueThresholdBytes {
+			reason += fmt.Sprintf("; now %s bytes, past %s, so it moves to the catalogue at the next restart",
+				humanize.Comma(int64(size)), humanize.Comma(catalogueThresholdBytes))
+		}
+		out = append(out, tools.MCPRoute{Server: name, Catalogue: route.catalogue, Reason: reason})
+	}
+	return out, true
 }

@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
@@ -529,6 +530,13 @@ func (w *AppWorkspace) MCPRefreshResources(ctx context.Context, name string) {
 
 func (w *AppWorkspace) RefreshMCPTools(ctx context.Context, name string) {
 	mcptools.RefreshTools(ctx, w.store, name)
+}
+
+func (w *AppWorkspace) MCPRoutes() ([]agenttools.MCPRoute, bool) {
+	if w.app.AgentCoordinator == nil {
+		return nil, false
+	}
+	return w.app.AgentCoordinator.MCPRoutes()
 }
 
 func (w *AppWorkspace) ReadMCPResource(ctx context.Context, name, uri string) ([]MCPResourceContents, error) {
