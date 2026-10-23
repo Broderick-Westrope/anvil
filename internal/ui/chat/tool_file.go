@@ -45,6 +45,8 @@ var fileTools = map[string]bool{
 // asked on every render, and a write's input holds the whole file.
 type toolFile struct {
 	source ToolMessageItem
+	// images draws the call's result when it's an image, or is nil.
+	images ImageRenderer
 
 	// lastInput is the input path and line were parsed from. Their zero
 	// values are what an empty input parses as. A call's tool never
@@ -66,22 +68,21 @@ func (f *toolFile) file() (string, int) {
 	return f.path, f.line
 }
 
-// parseToolFile is file for a call to the tool name with input.
+// parseToolFile reads which local file, and line in it, a call to the
+// built-in tool name with input names.
 func parseToolFile(name, input string) (string, int) {
 	if !fileTools[name] {
 		return "", 0
 	}
-	// Raw, so the other parameters are skipped rather than copied, and a
-	// malformed offset doesn't lose the path.
 	var params struct {
-		FilePath json.RawMessage `json:"file_path"`
-		Offset   json.RawMessage `json:"offset"`
+		FilePath string `json:"file_path"`
+		// Raw, so a malformed offset doesn't lose the path.
+		Offset json.RawMessage `json:"offset"`
 	}
-	var path string
-	if json.Unmarshal([]byte(input), &params) != nil || json.Unmarshal(params.FilePath, &path) != nil {
-		return "", 0
-	}
-	if path == "" || strings.HasPrefix(path, "anvil://") {
+	// Malformed input sets nothing, and a file_path that isn't a string
+	// stays empty, so both leave no path to open.
+	_ = json.Unmarshal([]byte(input), &params)
+	if params.FilePath == "" || strings.HasPrefix(params.FilePath, "anvil://") {
 		return "", 0
 	}
 	line := 0
@@ -90,20 +91,34 @@ func parseToolFile(name, input string) (string, int) {
 	if name == tools.ViewToolName && json.Unmarshal(params.Offset, &offset) == nil && offset >= 0 {
 		line = offset + 1
 	}
-	return path, line
+	return params.FilePath, line
+}
+
+// keys reports whether o and e open the call's file. On a call whose
+// result is a drawn image, o opens the image instead, wherever it's
+// pressed, so the keys mean one thing throughout the drill-in.
+func (f *toolFile) keys() (open, edit bool) {
+	path, _ := f.file()
+	edit = path != ""
+	open = edit && (f.images == nil || resultImage(f.source) == nil)
+	return open, edit
 }
 
 // HandleKeyEvent implements KeyEventHandler.
 func (f *toolFile) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
+	open, edit := f.keys()
 	path, line := f.file()
-	if path == "" {
-		return false, nil
-	}
 	var msg tea.Msg
 	switch key.String() {
 	case "o":
+		if !open {
+			return false, nil
+		}
 		msg = FileOpenMsg{Path: path}
 	case "e":
+		if !edit {
+			return false, nil
+		}
 		msg = FileEditMsg{Path: path, Line: line}
 	default:
 		return false, nil
@@ -111,13 +126,12 @@ func (f *toolFile) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	return true, func() tea.Msg { return msg }
 }
 
-// OpensFile reports whether item is part of a tool drill-in whose call
-// names a file, so o and e open it.
-func OpensFile(item list.Item) bool {
-	f, ok := item.(interface{ file() (string, int) })
+// FileKeys reports whether o and e open the file a tool drill-in item's
+// call names.
+func FileKeys(item list.Item) (open, edit bool) {
+	f, ok := item.(interface{ keys() (bool, bool) })
 	if !ok {
-		return false
+		return false, false
 	}
-	path, _ := f.file()
-	return path != ""
+	return f.keys()
 }

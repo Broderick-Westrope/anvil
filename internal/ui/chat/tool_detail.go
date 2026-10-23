@@ -45,7 +45,7 @@ type detailRenderConfigurable interface {
 func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images ImageRenderer) []MessageItem {
 	tc := source.ToolCall()
 	status := source.Status()
-	file := &toolFile{source: source}
+	file := &toolFile{source: source, images: images}
 
 	var items []MessageItem
 
@@ -54,7 +54,6 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images Ima
 		Versioned: list.NewVersioned(),
 		toolFile:  file,
 		sty:       sty,
-		images:    images,
 	})
 
 	// 2. Input section divider.
@@ -173,12 +172,12 @@ type toolDetailHeaderItem struct {
 	*list.Versioned
 	*toolFile
 	sty          *styles.Styles
-	images       ImageRenderer
 	focused      bool
 	cachedRender string
 	cachedWidth  int
 	cachedFocus  bool
-	cachedHint   string
+	cachedOpen   bool
+	cachedEdit   bool
 	lastStatus   ToolStatus
 }
 
@@ -198,8 +197,9 @@ func (h *toolDetailHeaderItem) RawRender(width int) string {
 // Render implements list.Item.
 func (h *toolDetailHeaderItem) Render(width int) string {
 	status := h.source.Status()
-	hint := h.fileHint()
-	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused && h.cachedHint == hint {
+	open, edit := h.keys()
+	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused &&
+		h.cachedOpen == open && h.cachedEdit == edit {
 		return h.cachedRender
 	}
 
@@ -214,7 +214,7 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
 	rendered := fmt.Sprintf("%s %s", icon, name)
 	// The hint goes when it doesn't fit; the help bar still has the keys.
-	if hint != "" && lipgloss.Width(prefix+rendered+hint) <= width {
+	if hint := h.fileHint(open, edit); lipgloss.Width(prefix+rendered+hint) <= width {
 		rendered += hint
 	}
 	rendered = prefix + rendered
@@ -222,24 +222,22 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	h.cachedRender = rendered
 	h.cachedWidth = width
 	h.cachedFocus = h.focused
-	h.cachedHint = hint
+	h.cachedOpen, h.cachedEdit = open, edit
 	h.lastStatus = status
 	return rendered
 }
 
-// fileHint is the header's hint for the keys that open the call's file,
-// or "" when it names none. On a drawn image o opens the image, so the
-// hint leaves o to the image's own.
-func (h *toolDetailHeaderItem) fileHint() string {
-	if path, _ := h.file(); path == "" {
-		return ""
-	}
+// fileHint is the header's hint for the keys that open the call's file.
+func (h *toolDetailHeaderItem) fileHint(open, edit bool) string {
 	key := func(k, tip string) string {
 		return "  " + h.sty.Header.Keystroke.Render(k) + " " + h.sty.Header.KeystrokeTip.Render(tip)
 	}
-	hint := key("e", "open in $EDITOR")
-	if h.images == nil || resultImage(h.source) == nil {
-		hint = key("o", "open file") + hint
+	var hint string
+	if open {
+		hint += key("o", "open file")
+	}
+	if edit {
+		hint += key("e", "open in $EDITOR")
 	}
 	return hint
 }

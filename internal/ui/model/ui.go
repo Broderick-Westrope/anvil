@@ -483,13 +483,13 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
 	graphics := newGraphicsFeature(uiHost{ui}, &ui.caps, com)
 	ui.features.register(graphics)
-	ui.features.register(newFileOpenFeature(com.Workspace.WorkingDir))
 	ui.graphics = graphics
 	if com.Workspace.DiagramsEnabled() {
 		ui.diagrams = graphics
 		ui.chat.SetDiagrams(graphics)
 	}
 	ui.features.register(newBranchSummaryFeature(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newFileOpenFeature(com.Workspace.WorkingDir))
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -4009,15 +4009,12 @@ func (m *UI) selectedItemBindings() []key.Binding {
 		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyImage}
 	}
 	var binds []key.Binding
-	image := chat.ShowsToolImage(selected)
-	if image {
+	if chat.ShowsToolImage(selected) {
 		binds = append(binds, m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage)
 	}
-	if chat.OpensFile(selected) {
-		// On an image, o opens the image.
-		if !image {
-			binds = append(binds, m.keyMap.Chat.OpenFile)
-		}
+	if open, edit := chat.FileKeys(selected); open {
+		binds = append(binds, m.keyMap.Chat.OpenFile, m.keyMap.Chat.EditFile)
+	} else if edit {
 		binds = append(binds, m.keyMap.Chat.EditFile)
 	}
 	return binds
