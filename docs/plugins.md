@@ -111,6 +111,7 @@ You are a codebase search specialist...
 | `tools` | Built-in tools the agent may use. Omitted means all; `[]` means none. |
 | `skills` | Skills listed in the agent's catalog. Omitted means all; `[]` means none. |
 | `mcps` | MCP servers the agent may use, each mapped to a list of tools or left empty for all of them. Omitted means all servers. |
+| `branch_summarizer` | `true` makes the agent a summarizer offered when the user rewinds (see [Summarize the branch you left](./sessions.md#summarize-the-branch-you-left)) instead of a delegation target. It gets the branch as its task and its final message is the summary. Whatever `tools` says, it runs with at most `view`, `grep`, `glob` and `ls`. Naming one in `delegates_to` stops Anvil from starting. An agent named `branch-summarizer` replaces the built-in one. |
 
 Use `agents` in `anvil.json` to retune a plugin's agent without editing it,
 and `disabled_agents` to drop agents you don't want:

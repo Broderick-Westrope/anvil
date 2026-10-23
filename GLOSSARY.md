@@ -16,6 +16,20 @@ One root-to-leaf path through a session's message tree. Sending from an earlier 
 - **Code:** `message/tree.go`, `session.Session.LeafMessageID` marks the current branch's tip
 - **Not:** fork, separate session. A branch never creates a new session.
 
+## Branch Ledger
+
+The facts a branch summary records from the abandoned branch's tool calls rather than from the model: files modified and read, and each state-changing `git`, `gh` or `wtp` command with how it ended and the SHAs and pull request URLs it printed. Later summaries carry it forward.
+
+- **Code:** `message.BranchLedger`, `message.LedgerEvent`; built by `branchsummary.Ledger`
+- **Not:** a transcript or current state. It records what was attempted and observed.
+
+## Branch Summary
+
+A summary of the branch the user left by rewinding, written by a summarizer agent and stored as a message under the point they rewound to, so the conversation they return to knows what the tangent changed, decided and left open. It carries a ledger built in code from the tangent's tool calls.
+
+- **Code:** `message.BranchSummaryContent` and `message.BranchLedger` (`internal/message`), `coordinator.SummarizeBranch` (`internal/agent/branch_summary.go`), range, ledger and prompt in `internal/agent/branchsummary`, runs owned by `branchsummaries.Service` (`internal/app/branchsummaries`)
+- **Not:** compaction (summary), which replaces history on the current branch to save context; a branch summary describes a different branch.
+
 ## Child Session
 
 A session linked to the session that started it: the session a specialist agent runs in (a task session), or the one used to generate a title.
@@ -146,10 +160,10 @@ Knowledge or a procedure in a `SKILL.md` file that an agent loads into its conve
 
 ## Specialist Agent
 
-An agent defined in a plugin's agent `.md` file, with its own model, tools and prompt. The orchestrator delegates to it, and it runs in a child session.
+An agent defined in an agent `.md` file, built in or from a plugin, with its own model, tools and prompt. The orchestrator delegates to it, and it runs in a child session.
 
 - **Code:** built by the coordinator, prompt from `templates/specialist.md.tpl`
-- **Not:** subagent is acceptable in conversation, but code and docs say specialist agent.
+- **Not:** subagent is acceptable in conversation, but code and docs say specialist agent. A summarizer agent is defined the same way but is never delegated to.
 
 ## Step
 
@@ -163,6 +177,13 @@ One model request inside a turn, with the assistant message it creates and the t
 One recorded model response with its normalised token counts, price and request fingerprints, used to study prompt caching.
 
 - **Code:** `step_usage` table, `internal/agent/cacheusage`
+
+## Summarizer Agent
+
+An agent marked `branch_summarizer: true` in its frontmatter, which the user can pick to write a branch summary when they rewind. Anvil ships `branch-summarizer`, and plugins can add their own. It runs with at most the read-only tools `view`, `grep`, `glob` and `ls`, and it is never a delegation target.
+
+- **Code:** `prompt.AgentMD.BranchSummarizer`, `coordinator.BranchSummarizers`; built-in prompt in `internal/agent/templates/agents/branch-summarizer.md`
+- **Not:** specialist agent, which the orchestrator delegates to.
 
 ## Tool Access
 

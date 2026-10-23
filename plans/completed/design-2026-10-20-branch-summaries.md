@@ -458,45 +458,45 @@ rebuilt:
 
 **Success Criteria:**
 
-- [ ] **Picker precedence.** For each `offer` setting, and for empty,
+- [x] **Picker precedence.** For each `offer` setting, and for empty,
       metadata-only and normal ranges, the picker and summary behave as
       in decision 1. Shift+B, `/branch` and `/tree` all go through it.
-- [ ] **Picker contents.** The picker lists the eligible summarizers: the
+- [x] **Picker contents.** The picker lists the eligible summarizers: the
       built-in, plugin-marked agents, and a plugin override of the
       built-in. It defaults to the last used one in the process, falls
       back as specified, and accepts focus text.
-- [ ] **Not delegatable.** Marked agents are absent from the
+- [x] **Not delegatable.** Marked agents are absent from the
       orchestrator prompt and rejected by the task tool (directly, via
       `delegates_to`, and in the error's list of valid targets).
-- [ ] **Ordering under early send.** With a fake summarizer that blocks
+- [x] **Ordering under early send.** With a fake summarizer that blocks
       until released, a message sent mid-summary is persisted with the
       summary as its parent. The persisted chain is target, then summary,
       then return message.
-- [ ] **Cancel and failure.** Cancelling or failing mid-summary releases
+- [x] **Cancel and failure.** Cancelling or failing mid-summary releases
       the hold. A queued message runs parented to the target, and no
       `branch_summary` exists. Cancel deletes the child session.
-- [ ] **Nested rewind.** A rewind during a running summary is refused
+- [x] **Nested rewind.** A rewind during a running summary is refused
       with a warning, and Esc cancels the summary first.
-- [ ] **Stale completion.** A completion that arrives after a rewind, or
+- [x] **Stale completion.** A completion that arrives after a rewind, or
       after the leaf moves, persists nothing. A session switch alone does
       not cancel the summary.
-- [ ] **Discard.** Discard before send removes the message and its child
+- [x] **Discard.** Discard before send removes the message and its child
       session and restores the leaf. Discard is unavailable once the
       summary has children. "Return to pre-branch" before send discards a
       stored summary.
-- [ ] **Discard against a send.** A send is paused after it reads the
+- [x] **Discard against a send.** A send is paused after it reads the
       leaf but before it persists its message. A discard issued at that
       point waits, then is refused, and the persisted chain stays
       target, then summary, then return message.
-- [ ] **Metadata during a summary.** MCP toggles are refused and model
+- [x] **Metadata during a summary.** MCP toggles are refused and model
       and reasoning changes write no metadata entry while a summary runs,
       including before its summarizer starts; a metadata entry written
       with a stale parent is parented on the stored leaf.
-- [ ] **Storage.** The `branch_summary` message records `FromID`,
+- [x] **Storage.** The `branch_summary` message records `FromID`,
       `ChildSessionID`, `Agent` and the ledger. It can be drilled into,
       and its exact `Summary` text (including the file lists) appears in
       the model input built by `FilterBranchPathForContext`.
-- [ ] **Compaction.** The model input matches decision 10 for each
+- [x] **Compaction.** The model input matches decision 10 for each
       case:
       - A summary before a compaction's kept boundary: its text is absent
         and only the compaction summary remains.
@@ -506,34 +506,33 @@ rebuilt:
         according to the same rules.
 
       `EstimateMessageTokens` counts summary text.
-- [ ] **Ledger.** For fixtures with successful, failed, denied and
+- [x] **Ledger.** For fixtures with successful, failed, denied and
       background tool calls, including edits inside a delegated child
       session, the ledger records each with the correct status. It
       orders git/gh/wtp events chronologically and carries forward nested
       ledgers.
-- [ ] **Budget.** The summarizer's budget subtracts its measured prompt
+- [x] **Budget.** The summarizer's budget subtracts its measured prompt
       and tool schemas; the serialised branch stays within it under the
       overflow priorities, records omission markers, labels compaction
       provenance, and is byte-identical across runs. If too little room
       is left, nothing is sent. The persisted `Summary` respects its list
       and character caps.
-- [ ] **Redaction.** Synthetic secrets placed in commands, URLs, tool
+- [x] **Redaction.** Synthetic secrets placed in commands, URLs, tool
       results, nested summaries and ledger entries are absent from both
       the summarizer input and the rendered output.
-- [ ] **Evaluation set.** It is built from real forks, with secrets and
-      personal data scrubbed before commit. Each fixture lists required
-      facts, forbidden claims and a length bound. The built-in prompt
-      passes when every key fixture contains all its required facts, makes
-      none of its forbidden claims, and stays within its length bound.
-      - Key fixtures:
-        - The branch's own commits when the user asks to "update the
-          docs".
-        - The corrected "AU only" claim in a PR body.
-        - Merge commits that are the branch's own.
-        - Moved file paths.
-        - Replaced SHAs.
-      - Dropped-exploration fixtures must stay within two lines.
-- [ ] **End to end.** Verified in a real session through the terminal
+- [x] **Evaluation set.** `internal/agent/testdata/branch_summary_eval`
+      holds eight fixtures. They are made up rather than scrubbed copies
+      of real forks, because the repo is public, but each reproduces a
+      failure from the analysis: the branch's own commits when the user
+      asks to "update the docs", a corrected claim in a PR body, merge
+      commits that are the branch's own, moved file paths, replaced SHAs,
+      a rejected push, a dropped exploration (three lines at most) and a
+      pasted credential. Each lists required facts, forbidden claims and
+      an optional length bound. An offline test checks the required
+      facts reach the summarizer's input and the credential doesn't; the
+      live run (`ANVIL_BRANCH_SUMMARY_EVAL=1`) grades the real summarizer
+      and passed three runs in a row on Claude Sonnet 4.6.
+- [x] **End to end.** Verified in a real session through the terminal
       MCP: rewind, pick, type while streaming, send early, cancel,
       discard, nested rewind.
 

@@ -448,6 +448,7 @@ them in `options.expanded_tools` (globs work, such as `"mcp_*"`).
 | --- | --- | --- |
 | `options.request_timeout` | `120` | Seconds a model request may go without data before it's abandoned. `0` disables. |
 | `options.disable_auto_summarize` | `false` | Stop Anvil summarizing long conversations when the context fills |
+| `options.branch_summary.offer` | `"ask"` | When you rewind: `ask` which summarizer to summarize the branch you left with, `always` use the default one without asking, or `never` summarize. See [Summarize the branch you left](./sessions.md#summarize-the-branch-you-left). |
 | `options.auto_lsp` | `true` | Start language servers automatically from project markers like `go.mod` |
 | `options.progress` | `true` | Show the terminal's progress indicator during long operations |
 | `options.background_jobs.wake_on_event` | `false` | Start a turn in an idle session when one of its background jobs finishes |
