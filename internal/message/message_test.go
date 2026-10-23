@@ -393,6 +393,36 @@ func TestDelete_DropsPendingState(t *testing.T) {
 	require.Error(t, err, "deleted message must remain deleted")
 }
 
+// TestDeleteChildless_DropsPendingStateAndPublishes deletes a message whose
+// pending baseline has no timer, as after a structural flush.
+func TestDeleteChildless_DropsPendingStateAndPublishes(t *testing.T) {
+	t.Parallel()
+
+	svc, sessionID := newTestService(t, WithDebounce(time.Hour))
+	impl := svc.(*service)
+	subCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	collector := collect(subCtx, svc.Subscribe(subCtx))
+
+	msg, err := svc.Create(t.Context(), sessionID, CreateMessageParams{Role: Assistant})
+	require.NoError(t, err)
+	msg.AddToolCall(ToolCall{ID: "tc1", Name: "view"})
+	require.NoError(t, svc.Update(testCtx(t), msg))
+	require.Equal(t, 1, impl.PendingCount())
+
+	require.NoError(t, svc.DeleteChildless(t.Context(), sessionID, msg.ID))
+
+	require.Zero(t, impl.PendingCount())
+	require.Eventually(t, func() bool {
+		for _, ev := range collector.snapshot() {
+			if ev.Type == pubsub.DeletedEvent && ev.Payload.ID == msg.ID {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
 func TestBroker_PublishLossyDropCounter(t *testing.T) {
 	t.Parallel()
 

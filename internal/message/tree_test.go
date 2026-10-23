@@ -516,7 +516,10 @@ func TestComputeFirstKeptEntryID(t *testing.T) {
 func TestEstimateMessageTokens_CountsBranchSummaryText(t *testing.T) {
 	t.Parallel()
 
-	part := message.BranchSummaryContent{Summary: strings.Repeat("a", 400)}
-	got := message.EstimateMessageTokens(message.Message{Parts: []message.ContentPart{part}})
-	require.Equal(t, 100, got)
+	parts := []message.ContentPart{
+		message.TextContent{Text: strings.Repeat("a", 40)},
+		message.BranchSummaryContent{Summary: strings.Repeat("a", 400)},
+	}
+	got := message.EstimateMessageTokens(message.Message{Parts: parts})
+	require.Equal(t, 110, got)
 }
