@@ -283,26 +283,26 @@ Terms with a specific meaning in this codebase are defined in
   has a `file_path` (`fileTools` in `internal/ui/chat/tool_file.go`; an
   MCP tool's may not be local), `o` opens the file in the OS default app,
   `e` opens it in `$EDITOR` (at `view`'s offset), and `r` shows it in the
-  file manager (`revealCommands`: `open -R`; `explorer /select,"<path>"`
-  through a raw Windows command line, since Explorer parses its own; or the
-  FileManager1 D-Bus call, falling back to a detached `xdg-open` on the
-  file's directory. Each command gets its own timeout. They open at most
-  the directory, so `r` needs no allowlist), from any item. The header
-  drops hints from the right when they don't fit. The
-  drill-in's items share one `chat.toolFile`, which re-parses the input
-  only when it changes, since it's asked on every render. When the call
-  returned an image, `o` opens that image instead, from every item. That
-  rule is `toolFile.keys`: item keys and the header hint read it directly,
-  and the help reads it through `chat.FileKeys`. `fileOpenFeature`
-  (`internal/ui/model/file_open.go`) refuses UNC and device paths in any
-  slash as the model wrote them, before anything touches them
-  (`isNetworkPath`), joins relative ones like the tools
-  (`filepathext.SmartJoin`), and follows symlinks. The model chose the
-  path and may have written the file, so `o` opens only passive types
+  file manager, from any item. The drill-in's items share one
+  `chat.toolFile`, which re-parses the input only when it changes, since
+  it's asked on every render. When the call returned an image, `o` opens
+  that image instead, from every item. That rule is `toolFile.keys`: item
+  keys and the header hints read it directly, and the help reads it
+  through `chat.FileKeys`. The header drops hints from the right when they
+  don't fit. `fileOpenFeature` (`internal/ui/model/file_open.go`) refuses
+  UNC and device paths in any slash as the model wrote them, before
+  anything touches them (`isNetworkPath`), joins relative ones like the
+  tools (`filepathext.SmartJoin`), and follows symlinks. The model chose
+  the path and may have written the file, so `o` opens only passive types
   whose bytes sniff as that type (`openTypes`, an allowlist like
   `imageExts`: text, source and raster images; HTML content under a text
   name is refused too), never an executable file; `e` opens anything as
-  text.
+  text. `r` runs `revealCommands`, each with its own timeout: `open -R` on
+  macOS, and on Windows `explorer /select,"<path>"` as a raw command line
+  (`setRawCmdLine`), since Explorer parses its own. On Linux it makes the
+  FileManager1 D-Bus call, falling back to a detached `xdg-open` on the
+  file's directory. They open at most the directory, so `r` needs no
+  allowlist.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
