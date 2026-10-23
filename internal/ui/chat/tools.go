@@ -327,7 +327,7 @@ func NewToolMessageItem(
 	case tools.LSPRestartToolName:
 		item = NewLSPRestartToolMessageItem(sty, toolCall, result, canceled)
 	case tools.CallMCPToolToolName:
-		item = NewCatalogueCallMessageItem(sty, toolCall, result, canceled)
+		item = NewCatalogueCallMessageItem(sty, toolCall, result, canceled, opts.ExpandedPatterns)
 	default:
 		if IsDockerMCPTool(toolCall.Name) {
 			item = NewDockerMCPToolMessageItem(sty, toolCall, result, canceled)
@@ -346,9 +346,6 @@ func NewToolMessageItem(
 		compact := !config.IsToolExpanded(opts.ExpandedPatterns, expandName(toolCall))
 		if compactable, ok := item.(Compactable); ok {
 			compactable.SetCompact(compact)
-		}
-		if base, ok := item.(interface{ setExpandPatterns([]string) }); ok && toolCall.Name == tools.CallMCPToolToolName {
-			base.setExpandPatterns(opts.ExpandedPatterns)
 		}
 	}
 
@@ -519,9 +516,6 @@ func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
 	t.Bump()
 }
 
-func (t *baseToolMessageItem) setExpandPatterns(patterns []string) {
-	t.expandPatterns = patterns
-}
 
 // SetResult sets the tool result associated with this message item.
 func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {

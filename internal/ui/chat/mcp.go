@@ -46,14 +46,19 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 }
 
 // NewCatalogueCallMessageItem creates the item for a call_mcp_tool call,
-// which renders as the MCP tool call it proxies.
+// which renders as the MCP tool call it proxies. expandPatterns are the
+// expanded_tools patterns, which match the inner name once its input has
+// streamed in.
 func NewCatalogueCallMessageItem(
 	sty *styles.Styles,
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
+	expandPatterns []string,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &CatalogueCallRenderContext{}, canceled)
+	item := newBaseToolMessageItem(sty, toolCall, result, &CatalogueCallRenderContext{}, canceled)
+	item.expandPatterns = expandPatterns
+	return item
 }
 
 // CatalogueCallRenderContext renders a call_mcp_tool call as the MCP
