@@ -211,10 +211,13 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	icon := toolIcon(h.sty, status)
 	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
 	rendered := fmt.Sprintf("%s %s", icon, name)
-	// The hint goes when it doesn't fit; the help bar still has the keys.
-	if hint := h.fileHint(keys); lipgloss.Width(prefix+rendered+hint) <= width {
-		rendered += hint
+	// Hints go from the right until the rest fit; the help bar still has
+	// the keys.
+	hints := h.fileHints(keys)
+	for len(hints) > 0 && lipgloss.Width(prefix+rendered+strings.Join(hints, "")) > width {
+		hints = hints[:len(hints)-1]
 	}
+	rendered += strings.Join(hints, "")
 	rendered = prefix + rendered
 
 	h.cachedRender = rendered
@@ -225,22 +228,22 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	return rendered
 }
 
-// fileHint is the header's hint for o, e and r.
-func (h *toolDetailHeaderItem) fileHint(keys fileKeys) string {
+// fileHints are the header's hints for o, e and r, in that order.
+func (h *toolDetailHeaderItem) fileHints(keys fileKeys) []string {
 	key := func(k, tip string) string {
 		return "  " + h.sty.Header.Keystroke.Render(k) + " " + h.sty.Header.KeystrokeTip.Render(tip)
 	}
-	var hint string
+	var hints []string
 	switch keys.open {
 	case OpensFile:
-		hint = key("o", "open file")
+		hints = append(hints, key("o", "open file"))
 	case OpensImage:
-		hint = key("o", "open in viewer")
+		hints = append(hints, key("o", "open in viewer"))
 	}
 	if keys.file {
-		hint += key("e", "open in $EDITOR") + key("r", RevealLabel(runtime.GOOS))
+		hints = append(hints, key("e", "open in $EDITOR"), key("r", RevealLabel(runtime.GOOS)))
 	}
-	return hint
+	return hints
 }
 
 // SetFocused implements list.Focusable.

@@ -57,7 +57,8 @@ var fileTools = map[string]bool{
 
 // toolFile is the file a tool drill-in's call names in its file_path
 // input. Every item of the drill-in shares one, so o opens the file in the
-// OS default app and e opens it in $EDITOR whichever item is selected. It
+// OS default app, e opens it in $EDITOR and r shows it in the file manager
+// whichever item is selected. It
 // reads the call each time it's asked, since the input may still have been
 // streaming when the drill-in opened, but parses an input only once: it's
 // asked on every render, and a write's input holds the whole file.

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -210,19 +211,35 @@ func TestToolDetailHeaderHintsWhatOOpensOnAnImage(t *testing.T) {
 	require.Contains(t, header, "o open file", "nothing draws the image, so o opens the file")
 }
 
-func TestToolDetailHeaderDropsTheHintWhenItDoesntFit(t *testing.T) {
+func TestToolDetailHeaderDropsHintsFromTheRightUntilTheRestFit(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "view", `{"file_path":"/a"}`, &message.ToolResult{Content: "x"}, ToolStatusSuccess)
 	header := BuildToolDetailItems(&sty, source, nil)[0]
+	reveal := "r " + RevealLabel(runtime.GOOS)
+	widthUpTo := func(text string) int {
+		plain := ansi.Strip(header.Render(200))
+		end := strings.Index(plain, text) + len(text)
+		return ansi.StringWidth(plain[:end])
+	}
 
-	full := header.Render(200)
-	fits := ansi.StringWidth(full)
-	require.Contains(t, ansi.Strip(header.Render(fits)), "open in $EDITOR", "exactly as wide as the hint")
-	narrow := header.Render(fits - 1)
-	require.NotContains(t, ansi.Strip(narrow), "open")
-	require.Contains(t, ansi.Strip(narrow), "View")
+	all := widthUpTo(reveal)
+	require.Contains(t, ansi.Strip(header.Render(all)), reveal, "exactly as wide as every hint")
+
+	edit := widthUpTo("e open in $EDITOR")
+	out := ansi.Strip(header.Render(all - 1))
+	require.Contains(t, out, "e open in $EDITOR")
+	require.NotContains(t, out, reveal)
+	require.Contains(t, ansi.Strip(header.Render(edit)), "e open in $EDITOR")
+
+	out = ansi.Strip(header.Render(edit - 1))
+	require.Contains(t, out, "o open file")
+	require.NotContains(t, out, "$EDITOR")
+
+	out = ansi.Strip(header.Render(widthUpTo("o open file") - 1))
+	require.NotContains(t, out, "open")
+	require.Contains(t, out, "View")
 }
 
 func TestAnImageResultKeepsOForTheImageThroughoutTheDrillIn(t *testing.T) {
