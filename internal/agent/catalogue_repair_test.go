@@ -35,13 +35,29 @@ func TestRepairToolCall(t *testing.T) {
 			call:      fantasy.ToolCallContent{ToolName: "mcp_other_search", Input: `{}`},
 			available: withCall,
 		},
+		"a listed tool that failed validation is left alone": {
+			call:      fantasy.ToolCallContent{ToolName: "mcp_data_dog_search", Input: `{}`},
+			available: append([]fantasy.AgentTool{namedTool{name: "mcp_data_dog_search"}}, withCall...),
+		},
+		"a longer direct server wins over a catalogue prefix": {
+			call:      fantasy.ToolCallContent{ToolName: "mcp_data_dog_x_search", Input: `{}`},
+			available: withCall,
+		},
+		"malformed JSON in a direct name is repaired, then forwarded": {
+			call:      fantasy.ToolCallContent{ToolName: "mcp_data_dog_search", Input: `{"q":1`},
+			available: withCall,
+			want:      &fantasy.ToolCallContent{ToolName: tools.CallMCPToolToolName, Input: `{"server":"data_dog","tool":"search","arguments":{"q":1}}`},
+		},
 		"malformed JSON is repaired as before": {
 			call:      fantasy.ToolCallContent{ToolName: "view", Input: `{"path":"a"`},
 			available: withCall,
 			want:      &fantasy.ToolCallContent{ToolName: "view", Input: `{"path": "a"}`},
 		},
 	}
-	repair := repairToolCall(map[string]bool{"data": true, "data_dog": true})
+	repair := repairToolCall(mcpListing{
+		catalogue: map[string]bool{"data": true, "data_dog": true},
+		routed:    []string{"data", "data_dog", "data_dog_x"},
+	})
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"maps"
 	"slices"
 
 	"charm.land/fantasy"
@@ -19,6 +20,9 @@ type mcpListing struct {
 	// are listed. Their instructions stay out of the system prompt and
 	// replayed enables of them are ignored.
 	catalogue map[string]bool
+	// routed lists every server in the route map, in name order, so a
+	// direct-name call can be matched to its server.
+	routed []string
 }
 
 // agentMCPTools builds one agent's MCP tools. The tool list and the
@@ -69,6 +73,7 @@ func (m agentMCPTools) listed(named []string) ([]fantasy.AgentTool, mcpListing) 
 	for _, server := range m.routes.catalogueServers() {
 		listing.catalogue[server] = true
 	}
+	listing.routed = slices.Sorted(maps.Keys(m.routes))
 	cfg := m.c.cfg.Config()
 	var out []fantasy.AgentTool
 	for _, tool := range m.allowed() {

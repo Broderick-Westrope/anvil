@@ -231,7 +231,7 @@ func (t *turn) streamCall(history []fantasy.Message, files []fantasy.FilePart) f
 		PrepareStep:      t.prepareStep,
 		// Set on the call: fantasy's Stream doesn't apply an agent-level
 		// repair function.
-		RepairToolCall: repairToolCall(t.mcpListing.catalogue),
+		RepairToolCall: repairToolCall(t.mcpListing),
 		OnReasoningStart: func(_ string, reasoning fantasy.ReasoningContent) error {
 			t.assistant.AppendReasoningContent(reasoning.Text)
 			return t.a.messages.Update(t.genCtx, *t.assistant)
