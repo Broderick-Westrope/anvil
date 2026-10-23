@@ -701,7 +701,9 @@ func TestMermaidRequestPanicBecomesAFailure(t *testing.T) {
 			// Engines with no Pele make any render panic, as a renderer
 			// bug would. Each subtest has its own, since loading the
 			// rasterizer writes to them.
-			msg, ok := f.runRequest(&diagramEngines{}, req)
+			broken := &diagramEngines{cacheDir: f.compileCacheDir}
+			t.Cleanup(broken.close)
+			msg, ok := f.runRequest(broken, req)
 			require.False(t, ok, "the engines are dropped")
 			switch msg := msg.(type) {
 			case diagramReadyMsg:
