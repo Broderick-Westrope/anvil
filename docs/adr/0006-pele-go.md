@@ -47,8 +47,9 @@ is Anvil's old `measure.go` generalised.
 
 - **Pele:** bump `github.com/Broderick-Westrope/pele-go/raster` to the
   release that requires the pele-go release porting the new Pele version.
-  Run `go test ./internal/mermaid/...` here and in pele-go's `raster/`,
-  and compare the output from `MERMAID_TEST_OUT=<dir>` before and after.
+  Run `go test ./internal/mermaid/...` here and `go test .` in pele-go's
+  `raster/`, at the old raster version and then the new one, and compare
+  the output from `MERMAID_TEST_OUT=<dir>`.
   Gantt marks the current time, so make the two runs back to back. Build
   both sides with the same Go toolchain (`GOTOOLCHAIN=<Anvil's go.mod
   version>` in pele-go's `raster/`): `image/png` compresses differently

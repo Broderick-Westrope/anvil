@@ -40,11 +40,7 @@ The spike (`plans/completed/spike-2026-10-20-mermaid-rendering.md`) found:
 
 ### Upgrading
 
-- **Pele:** replace `pele.global.js` with the `pele.global.js` (IIFE)
-  build from the Pele release, keeping its licence banner, and update the
-  version here. Run
-  `go test ./internal/mermaid/...` (the sample diagrams cover every type we
-  render) and look at the output with `MERMAID_TEST_OUT=<dir>`.
+- **Pele:** see ADR 0006; Pele no longer runs in goja.
 - **resvg or its fonts:** they live in pele-go's `raster` module now.
   Follow "Upgrading resvg or the fonts" and its release order in
   `raster/README.md` there, then bump
