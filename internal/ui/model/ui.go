@@ -316,10 +316,6 @@ type UI struct {
 	mcpAuthFlows      map[string]*mcpAuthFlow
 	nextMCPAuthFlowID uint64
 	enabledLazyMCPs   map[string]bool
-	// catalogueMCPs holds the servers routed through the MCP catalogue.
-	// Routes are fixed once MCP initialisation finishes, so it is read
-	// once and then kept; nil means they are still pending.
-	catalogueMCPs map[string]bool
 	// pendingEnableMCPs tracks in-flight enable_mcp ToolCalls by
 	// ToolCallID → server name. The result has not yet arrived, so
 	// we defer the enabled/disabled decision until the correlated
@@ -879,9 +875,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.handleConfigReloaded(msg))
 	case mcpStateChangedMsg:
 		m.mcpStates = msg.states
-		if m.catalogueMCPs == nil {
-			m.catalogueMCPs = catalogueServers(m.com.Workspace.MCPRoutes())
-		}
 		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
 			if palette, ok := dia.(*dialog.MCPPalette); ok {
 				for name, state := range msg.states {
@@ -5244,8 +5237,9 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 		return nil
 	}
 
-	// Build entries from config + current state. Routes are in-memory
-	// in the coordinator, so reading them here does no IO.
+	// Build entries from config + current state. Routes are in memory
+	// in the coordinator and their sizes measured at registration, so
+	// reading them here is cheap.
 	routes, routesReady := m.com.Workspace.MCPRoutes()
 	var entries []dialog.MCPPaletteEntry
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {

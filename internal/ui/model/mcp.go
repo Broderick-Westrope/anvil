@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
@@ -20,7 +19,12 @@ func (m *UI) mcpInfo(width, maxItems int, isSection bool) string {
 
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
 		if state, ok := m.mcpStates[mcpCfg.Name]; ok {
-			state.State = sidebarMCPState(state.State, m.catalogueMCPs[mcpCfg.Name], m.enabledLazyMCPs[mcpCfg.Name])
+			// A lazy MCP that's connected shows as connected when this
+			// branch enabled it or it goes through the catalogue, which
+			// needs no enabling.
+			if state.State == mcp.StateLazy && (m.enabledLazyMCPs[mcpCfg.Name] || m.isCatalogueMCP(mcpCfg.Name)) {
+				state.State = mcp.StateConnected
+			}
 			mcps = append(mcps, state)
 		}
 	}
@@ -37,29 +41,16 @@ func (m *UI) mcpInfo(width, maxItems int, isSection bool) string {
 	return lipgloss.NewStyle().Width(width).Render(fmt.Sprintf("%s\n\n%s", title, list))
 }
 
-// sidebarMCPState is the state the sidebar shows for a server. A lazy
-// server that is connected shows as connected when the branch has enabled
-// it, or when it goes through the catalogue, which needs no enabling.
-func sidebarMCPState(state mcp.State, catalogue, enabledOnBranch bool) mcp.State {
-	if state == mcp.StateLazy && (catalogue || enabledOnBranch) {
-		return mcp.StateConnected
-	}
-	return state
-}
-
-// catalogueServers returns the servers routed through the catalogue, or
-// nil while the routes are pending.
-func catalogueServers(routes []agenttools.MCPRoute, ready bool) map[string]bool {
-	if !ready {
-		return nil
-	}
-	servers := map[string]bool{}
+// isCatalogueMCP reports whether the server goes through the MCP
+// catalogue. Routes are in memory and fixed once MCP initialisation ends.
+func (m *UI) isCatalogueMCP(name string) bool {
+	routes, _ := m.com.Workspace.MCPRoutes()
 	for _, route := range routes {
-		if route.Catalogue {
-			servers[route.Server] = true
+		if route.Server == name {
+			return route.Catalogue
 		}
 	}
-	return servers
+	return false
 }
 
 // mcpCounts formats tool, prompt, and resource counts for display.
