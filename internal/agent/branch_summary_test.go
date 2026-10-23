@@ -13,6 +13,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
@@ -535,6 +536,10 @@ func TestBranchSummarizers_ListsMarkedAgentsBuiltinFirst(t *testing.T) {
 	unresolvable := f.c.agentConfigs["b-unresolvable"]
 	unresolvable.Model = "missing/model"
 	f.c.agentConfigs["b-unresolvable"] = unresolvable
+	// An ordinary agent that sorts before every summarizer: listing must
+	// skip it, not stop at it.
+	f.c.agentMDs["0-helper"] = prompt.AgentMD{Name: "0-helper"}
+	f.c.agentConfigs["0-helper"] = f.c.agentConfigs[BuiltinBranchSummarizer]
 	f.c.orchestratorMu.Unlock()
 
 	require.Equal(t, []string{BuiltinBranchSummarizer, "a-summarizer", "c-summarizer"}, f.c.BranchSummarizers())
