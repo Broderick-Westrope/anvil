@@ -1,0 +1,36 @@
+{
+  "why": "The branch made commits the main thread never saw; after the return the agent said there was nothing to update.",
+  "trunk": [
+    {"role": "user", "text": "We're working on the Acme vendor integration spec in ~/notes/acme and docs/specs/acme.md."},
+    {"role": "assistant", "text": "Got it. The open questions are Q3 (retry window) and Q7 (webhook auth)."}
+  ],
+  "branch": [
+    {"role": "user", "text": "Acme replied to our email. Their answer: the retry window is 72 hours and webhooks are signed with HMAC-SHA256. Record it and update the spec."},
+    {"role": "assistant", "text": "Recording the reply in the notes repo first.", "calls": [
+      {"id": "c1", "name": "write", "input": {"file_path": "/home/dev/notes/acme/replies/2026-10-02.md", "content": "Retry window 72h; HMAC-SHA256 webhooks."}},
+      {"id": "c2", "name": "bash", "input": {"command": "git -C /home/dev/notes/acme add -A && git -C /home/dev/notes/acme commit -m \"Record Acme reply on retries and webhooks\""}}
+    ]},
+    {"role": "tool", "results": [
+      {"id": "c1", "content": "File written"},
+      {"id": "c2", "content": "[main 1a2b3c4] Record Acme reply on retries and webhooks\n 1 file changed, 1 insertion(+)", "metadata": {"exit_code": 0}}
+    ]},
+    {"role": "assistant", "text": "Closing Q3 and Q7 in the spec.", "calls": [
+      {"id": "c3", "name": "edit", "input": {"file_path": "/home/dev/work/docs/specs/acme.md", "old_string": "Q3: retry window?", "new_string": "Retry window is 72 hours (Acme, 2026-10-02)."}},
+      {"id": "c4", "name": "bash", "input": {"command": "git -C /home/dev/work/docs commit -am \"Close Q3 and Q7 in the Acme spec\""}}
+    ]},
+    {"role": "tool", "results": [
+      {"id": "c3", "content": "Edited"},
+      {"id": "c4", "content": "[acme-spec 5d6e7f8] Close Q3 and Q7 in the Acme spec\n 1 file changed", "metadata": {"exit_code": 0}}
+    ]},
+    {"role": "user", "text": "I sent our reply email. Note that it's sent."},
+    {"role": "assistant", "text": "Noted in the log.", "calls": [
+      {"id": "c5", "name": "bash", "input": {"command": "git -C /home/dev/notes/acme commit -am \"Log that our reply was sent\""}}
+    ]},
+    {"role": "tool", "results": [
+      {"id": "c5", "content": "[main 9a8b7c6] Log that our reply was sent", "metadata": {"exit_code": 0}}
+    ]},
+    {"role": "assistant", "text": "Done: reply recorded, spec updated, sending logged. The docs branch acme-spec isn't pushed yet."}
+  ],
+  "required": ["1a2b3c4", "5d6e7f8", "9a8b7c6", "docs/specs/acme\\.md", "(not|n't|un)\\s*pushed"],
+  "forbidden": []
+}
