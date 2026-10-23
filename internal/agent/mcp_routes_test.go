@@ -29,6 +29,9 @@ func TestDeriveMCPRoutes(t *testing.T) {
 		"forced":    {Config: with(func(m *config.MCPConfig) { m.Route = config.MCPRouteCatalogue }), State: toolsmcp.StateConnected, SentBytes: 10},
 		"lazypin":   {Config: with(func(m *config.MCPConfig) { m.LazyDescription = "Old flow."; m.Route = config.MCPRouteDirect }), State: toolsmcp.StateDeferred},
 		"autoexact": {Config: with(func(m *config.MCPConfig) { m.Route = config.MCPRouteAuto }), State: toolsmcp.StateConnected, SentBytes: 1},
+		// Persisted Docker MCP is in config at startup, but is never
+		// routed: it keeps its own renderer and listing.
+		config.DockerMCPName: {Config: stdio, State: toolsmcp.StateConnected, SentBytes: 90_000},
 	}
 
 	routes := deriveMCPRoutes(snap)

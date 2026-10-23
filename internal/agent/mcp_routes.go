@@ -15,8 +15,7 @@ import (
 // auto routing stops listing them directly. Listing costs the schema on
 // every step; the catalogue costs about two extra steps in sessions that
 // use the server. 12,000 bytes is about 5k tokens, which keeps small
-// servers fast and sends every large one through the catalogue. See
-// plans/completed/design-2026-10-23-mcp-tool-catalogue.md.
+// servers fast and sends every large one through the catalogue.
 const catalogueThresholdBytes = 12_000
 
 // mcpRoute is how one server's tools reach the model for the rest of the
@@ -37,16 +36,17 @@ type mcpRoute struct {
 // mcpRoutes maps each server in the startup snapshot to its route. It is
 // derived once per process and never written afterwards, so the tool
 // list and catalogue descriptions stay fixed. A server missing from it
-// (disabled in config at startup, Docker MCP, added by a reload) keeps
-// today's behaviour: listed directly once connected.
+// (disabled in config at startup, Docker MCP, added by a reload) is
+// listed directly once connected.
 type mcpRoutes map[string]mcpRoute
 
 // deriveMCPRoutes applies the route rule to every enabled server in the
-// snapshot.
+// snapshot except Docker MCP, which is listed directly however it was
+// enabled.
 func deriveMCPRoutes(snap map[string]toolsmcp.ServerSnapshot) mcpRoutes {
 	routes := mcpRoutes{}
 	for name, server := range snap {
-		if server.Config.Disabled {
+		if server.Config.Disabled || name == config.DockerMCPName {
 			continue
 		}
 		catalogue, reason, short := routeFor(server)
