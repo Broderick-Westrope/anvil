@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	pipeline "github.com/Broderick-Westrope/anvil/internal/mermaid"
+	pipeline "github.com/Broderick-Westrope/pele-go/raster"
 	"github.com/stretchr/testify/require"
 )
 

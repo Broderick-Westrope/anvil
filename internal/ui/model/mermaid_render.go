@@ -20,8 +20,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
-	"github.com/Broderick-Westrope/anvil/internal/mermaid/resvg"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/Broderick-Westrope/pele-go/raster"
 )
 
 // This file is the graphics feature's worker side: it owns the Mermaid
@@ -78,22 +78,22 @@ var errEnginesUnavailable = errors.New("load diagram renderer")
 // diagram is worth one more try: it ran out of time, or an engine didn't
 // load.
 func transientRenderError(err error) bool {
-	return errors.Is(err, mermaid.ErrRenderTimeout) || errors.Is(err, resvg.ErrRenderTimeout) || errors.Is(err, errEnginesUnavailable)
+	return errors.Is(err, raster.ErrRenderTimeout) || errors.Is(err, raster.ErrRasterTimeout) || errors.Is(err, errEnginesUnavailable)
 }
 
 // diagramEngines is everything a render needs. The worker owns it alone,
 // since the rasterizer isn't safe for concurrent use. The rasterizer loads on
 // the first image, so exporting alone doesn't compile resvg.
 type diagramEngines struct {
-	pele   *mermaid.Renderer
-	raster *mermaid.Rasterizer
+	pele   *raster.Renderer
+	raster *raster.Rasterizer
 	// cacheDir is where the rasterizer keeps its compiled code.
 	cacheDir string
 }
 
-func (e *diagramEngines) rasterizer() (*mermaid.Rasterizer, error) {
+func (e *diagramEngines) rasterizer() (*raster.Rasterizer, error) {
 	if e.raster == nil {
-		r, err := mermaid.NewRasterizer(context.Background(), e.cacheDir)
+		r, err := raster.NewRasterizer(context.Background(), e.cacheDir)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", errEnginesUnavailable, err)
 		}
@@ -201,15 +201,15 @@ func (f *graphicsFeature) job(req diagramRequest) (run func(*diagramEngines) tea
 // they were asked for.
 func (f *graphicsFeature) copyDiagram(e *diagramEngines, req diagramRequest) diagramCopiedMsg {
 	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{what: diagramCopy, err: err} }
-	raster, err := e.rasterizer()
+	rast, err := e.rasterizer()
 	if err != nil {
 		return fail(err)
 	}
-	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{})
+	res, err := e.pele.Render(context.Background(), req.source, raster.Options{})
 	if err != nil {
 		return fail(err)
 	}
-	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: diagramCopyScale})
+	img, err := rast.Rasterize(res, req.theme, raster.RasterOptions{Scale: diagramCopyScale})
 	if err != nil {
 		return fail(err)
 	}
@@ -225,7 +225,7 @@ func (f *graphicsFeature) copyDiagram(e *diagramEngines, req diagramRequest) dia
 }
 
 func (f *graphicsFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {
-	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{})
+	res, err := e.pele.Render(context.Background(), req.source, raster.Options{})
 	if err != nil {
 		return diagramExportedMsg{err: err}
 	}
@@ -246,13 +246,13 @@ func (f *graphicsFeature) export(e *diagramEngines, req diagramRequest) tea.Msg 
 
 func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 	fail := func(err error) diagramReadyMsg { return diagramReadyMsg{key: req.key, err: err} }
-	raster, err := e.rasterizer()
+	rast, err := e.rasterizer()
 	if err != nil {
 		return fail(err)
 	}
 	cw, ch := float64(req.cellW), float64(req.cellH)
 	fit := newDiagramFit(req)
-	res, err := e.pele.Render(context.Background(), req.source, mermaid.Options{MaxWidth: fit.maxWidth})
+	res, err := e.pele.Render(context.Background(), req.source, raster.Options{MaxWidth: fit.maxWidth})
 	if err != nil {
 		return fail(err)
 	}
@@ -261,7 +261,7 @@ func renderDiagram(e *diagramEngines, req diagramRequest) diagramReadyMsg {
 		return fail(err)
 	}
 
-	img, err := raster.Rasterize(res, req.theme, mermaid.RasterOptions{Scale: scale, MaxPixels: fit.maxPixels})
+	img, err := rast.Rasterize(res, req.theme, raster.RasterOptions{Scale: scale, MaxPixels: fit.maxPixels})
 	if err != nil {
 		return fail(err)
 	}
@@ -292,7 +292,7 @@ func newDiagramFit(req diagramRequest) diagramFit {
 	natural := diagramTextCellRatio * ch / peleBaseFontPx
 	fit := diagramFit{
 		maxPx: maxPx, cellH: ch, natural: natural, maxWidth: int(maxPx / natural),
-		maxRows: diagramMaxRows, maxPixels: mermaid.MaxPixels,
+		maxRows: diagramMaxRows, maxPixels: raster.MaxPixels,
 	}
 	if req.key.kind == diagramFull {
 		fit.maxRows, fit.maxPixels = diagramMaxFullRows, diagramFullMaxPixels

@@ -1,3 +1,5 @@
+// Package mermaid exports a rendered Mermaid diagram as a standalone HTML
+// page. Layout and rasterizing live in the pele-go raster module.
 package mermaid
 
 import (
@@ -5,6 +7,8 @@ import (
 	"fmt"
 	"html"
 	"strings"
+
+	"github.com/Broderick-Westrope/pele-go/raster"
 )
 
 // exportFontFamily names the embedded DejaVu Sans in exported pages, so the
@@ -16,15 +20,15 @@ const exportFontFamily = "Anvil DejaVu Sans"
 // the label fonts so the layout matches the terminal rendering. Its content
 // policy blocks every load from outside the page, because the SVG comes
 // from model-written source.
-func HTMLDocument(res Result, theme Theme, title string) (string, error) {
+func HTMLDocument(res raster.Result, theme raster.Theme, title string) (string, error) {
 	var faces strings.Builder
-	for _, f := range fontFaces {
+	for _, f := range raster.FontFaces() {
 		fmt.Fprintf(&faces, "@font-face{font-family:%q;font-weight:%s;font-style:%s;src:url(data:font/ttf;base64,%s) format(\"truetype\")}\n",
-			exportFontFamily, f.weight, f.style, base64.StdEncoding.EncodeToString(f.data))
+			exportFontFamily, f.Weight, f.Style, base64.StdEncoding.EncodeToString(f.Data))
 	}
 	bg := theme["pele-bg"]
 	fg := theme["pele-fg"]
-	svg, err := resolveVars(res.SVG, theme)
+	svg, err := raster.ResolveVars(res.SVG, theme)
 	if err != nil {
 		return "", fmt.Errorf("export diagram: %w", err)
 	}

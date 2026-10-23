@@ -17,12 +17,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
 	uistyles "github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/Broderick-Westrope/pele-go/raster"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
@@ -390,7 +390,7 @@ func TestGraphicsFeatureThemeIsTheTokyoNightPalette(t *testing.T) {
 
 	host := &fakeDiagramHost{bg: color.RGBA{R: 0x0c, G: 0x0e, B: 0x14, A: 0xff}}
 	f := newTestGraphicsFeature(t, host, kittyCaps())
-	require.Equal(t, mermaid.Theme{
+	require.Equal(t, raster.Theme{
 		"pele-bg":           "#0c0e14",
 		"pele-fg":           "#c0caf5",
 		"pele-muted":        "#565f89",
@@ -775,11 +775,11 @@ func TestGraphicsFeatureRetriesATransientFailureOnce(t *testing.T) {
 	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State)
 	first := waitReady(t, f)
 
-	f.HandleMsg(diagramReadyMsg{key: first.key, err: mermaid.ErrRenderTimeout})
+	f.HandleMsg(diagramReadyMsg{key: first.key, err: raster.ErrRenderTimeout})
 	require.Equal(t, chat.DiagramPending, f.Diagram(src, 80).State, "a timeout is tried again")
 	waitReady(t, f)
 
-	f.HandleMsg(diagramReadyMsg{key: first.key, err: mermaid.ErrRenderTimeout})
+	f.HandleMsg(diagramReadyMsg{key: first.key, err: raster.ErrRenderTimeout})
 	require.Equal(t, chat.DiagramFailed, f.Diagram(src, 80).State, "but only once")
 }
 
@@ -1146,7 +1146,7 @@ func TestGraphicsFeatureReportsEnginesThatWontLoad(t *testing.T) {
 
 	f := newIdleGraphicsFeature(&fakeDiagramHost{}, kittyCaps())
 	loads := 0
-	f.newRenderer = func() (*mermaid.Renderer, error) {
+	f.newRenderer = func() (*raster.Renderer, error) {
 		loads++
 		return nil, errors.New("no goja today")
 	}
