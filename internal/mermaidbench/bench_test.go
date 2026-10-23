@@ -5,7 +5,9 @@
 // pele-go's oracle corpus (internal/oracle/testdata/corpus).
 //
 // Compare two builds with compare.sh, which runs them interleaved on one
-// machine. TestMemory must run in a process of its own.
+// machine. TestMemory also needs MERMAIDBENCH_CACHE, a compilation cache an
+// earlier process filled, and must run in a process of its own. rssBytes
+// reads ps, so neither runs on Windows.
 package mermaidbench_test
 
 import (
@@ -50,8 +52,7 @@ var theme = pipeline.Theme{
 	"pele-accent":  "#7090f0",
 }
 
-// samples are internal/mermaid's sample diagrams before the switch, one of
-// each type Anvil's tests draw.
+// samples are one diagram of each type Anvil draws in its tests.
 var samples = map[string]string{
 	"flowchart": `flowchart TD
   A[Mermaid text] --> B{Flowchart?}
@@ -122,10 +123,10 @@ func corpusDir(t *testing.T) string {
 	return dir
 }
 
-// cacheDir is the compilation cache to load resvg from, MERMAIDBENCH_CACHE
-// when it's set so that runs of two builds can share one, and warmed so
-// that every load times a cache hit.
-func cacheDir(t *testing.T) string {
+// warmCacheDir is the compilation cache to load resvg from,
+// MERMAIDBENCH_CACHE when it's set so that runs of two builds can share one,
+// and warmed so that every load times a cache hit.
+func warmCacheDir(t *testing.T) string {
 	t.Helper()
 	dir := os.Getenv("MERMAIDBENCH_CACHE")
 	if dir == "" {
@@ -177,7 +178,7 @@ func percentile(ds []time.Duration, p float64) time.Duration {
 // cache, and rasterizing each sample diagram.
 func TestLatency(t *testing.T) {
 	sources := loadCorpus(t, corpusDir(t))
-	cache := cacheDir(t)
+	cache := warmCacheDir(t)
 	ctx := t.Context()
 
 	r, err := pipeline.NewRenderer()
@@ -252,10 +253,14 @@ func settle() runtime.MemStats {
 
 // TestMemory follows ADR 0006: render and rasterize info 20 times with
 // resvg loaded from a warm cache, keep the last image, and compare the
-// settled process against its start.
+// settled process against its start. Nothing loads before the baseline, so
+// the cache must have been warmed by another process.
 func TestMemory(t *testing.T) {
 	corpusDir(t)
-	cache := cacheDir(t)
+	cache := os.Getenv("MERMAIDBENCH_CACHE")
+	if cache == "" {
+		t.Skip("MERMAIDBENCH_CACHE is unset; run TestMemory through compare.sh, which warms a cache in another process first")
+	}
 	base, baseRSS := settle(), rssBytes(t)
 
 	r, err := pipeline.NewRenderer()
@@ -265,7 +270,7 @@ func TestMemory(t *testing.T) {
 	// The chat keeps the image it shows.
 	var shown *image.RGBA
 	for range iters {
-		res, err := r.Render(context.Background(), memSource, pipeline.Options{MaxWidth: maxWidth})
+		res, err := r.Render(context.Background(), memSource, pipeline.Options{})
 		require.NoError(t, err)
 		shown, err = rast.Rasterize(res, theme, pipeline.RasterOptions{Scale: scale})
 		require.NoError(t, err)

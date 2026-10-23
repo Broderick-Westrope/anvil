@@ -7,12 +7,17 @@
 #
 # It prints benchstat's comparison and fails if the two builds fail
 # different corpus sources, or if B compiled resvg again instead of loading
-# A's compiled code from the shared cache.
+# A's compiled code from the shared cache. It doesn't apply the latency or
+# memory pass bars; read those off benchstat's output.
 set -euo pipefail
 
+if (($# < 3)); then
+	echo "usage: compare.sh <A test binary> <B test binary> <corpus dir> [runs]" >&2
+	exit 2
+fi
 a="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 b="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
-export PELE_CORPUS="${3:?usage: compare.sh <A> <B> <corpus dir> [runs]}"
+export PELE_CORPUS="$3"
 runs="${4:-8}"
 benchstat=(go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e)
 
@@ -27,8 +32,12 @@ entries() { find "$MERMAIDBENCH_CACHE" -type f | sort; }
 "$a" -test.run '^TestMemory$' >/dev/null
 before="$(entries)"
 
+# Alternate ABBA so whichever goes first in a pair isn't always the same
+# build.
 for i in $(seq "$runs"); do
-	for build in a b; do
+	order="a b"
+	((i % 2 == 0)) && order="b a"
+	for build in $order; do
 		bin="$a"
 		[[ $build == b ]] && bin="$b"
 		"$bin" -test.run '^TestLatency$' | grep -E '^(Benchmark|# )' >>"$out/$build.txt"
