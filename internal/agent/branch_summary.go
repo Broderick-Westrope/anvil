@@ -62,6 +62,9 @@ type BranchSummaryRequest struct {
 	TargetID string
 	Agent    string
 	Focus    string
+	// ChildSessionID is the session the summarizer runs in, chosen by the
+	// caller so the UI can show it as it runs; generated when empty.
+	ChildSessionID string
 }
 
 // BranchSummarizers lists the agents that can summarize branches: marked
@@ -134,7 +137,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 		ParentSessionID: req.SessionID,
 		Agent:           req.Agent,
 		Title:           "Branch summary",
-		SessionID:       uuid.NewString(),
+		SessionID:       cmp.Or(req.ChildSessionID, uuid.NewString()),
 		Tools:           summarizerTools(agentCfg, c.cfg.Config().Options),
 	}
 	// The budget is measured on the agent that runs, with its restricted

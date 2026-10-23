@@ -153,6 +153,26 @@ func TestSummarizeBranch_StoresSummaryUnderTarget(t *testing.T) {
 	require.Equal(t, got.ID, sess.LeafMessageID)
 }
 
+func TestSummarizeBranch_RunsInTheChildSessionTheCallerChose(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	var ranIn string
+	f.setSummarizer(func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		ranIn = call.SessionID
+		return agentResultWithText("## Outcome\nItem 1 done."), nil
+	})
+	req := f.request()
+	req.ChildSessionID = session.AgentToolSessionID(f.a1, "call-1")
+
+	got, err := f.c.SummarizeBranch(t.Context(), req)
+	require.NoError(t, err)
+
+	require.Equal(t, req.ChildSessionID, ranIn)
+	content, ok := got.Parts[0].(message.BranchSummaryContent)
+	require.True(t, ok)
+	require.Equal(t, req.ChildSessionID, content.ChildSessionID)
+}
+
 func TestSummarizeBranch_SendDuringSummaryRunsAfterIt(t *testing.T) {
 	t.Parallel()
 	f := newBranchFixture(t)
