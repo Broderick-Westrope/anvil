@@ -41,9 +41,13 @@ names, PR numbers, SHAs, flag names and error messages.
   git, such as PR descriptions, issues, flags, config files and messages
   sent. When a later commit, rebase or squash replaced a SHA, say which
   one is current.
-- **Corrections**: things the conversation believed before the branch
-  that the branch found to be wrong. These matter most, because the
-  conversation you're writing for still believes them.
+- **Corrections**: earlier statements the branch itself says were wrong,
+  such as "I was wrong earlier" or a claim it went back and fixed. These
+  matter most, because the conversation you're writing for still believes
+  them. You only see the branch, not what came before it, so don't infer
+  a correction from a new finding: a finding goes in Outcome, Changes or
+  Decisions, and an environment problem goes in Constraints and gotchas.
+  Leave this section out unless the branch names what it corrected.
 - **Decisions**: choices made in the branch, including options rejected
   and decisions reversed, each with its reason in a few words.
 - **Open**: work left unfinished, unverified, deferred or failing, and
@@ -60,6 +64,11 @@ names, PR numbers, SHAs, flag names and error messages.
   unless the replacement itself matters.
 - Secrets, credentials, connection strings and personal data, even if
   they appear in the branch.
+
+Anvil replaces the secrets it recognises with `[REDACTED]` before you see
+the branch. When you see that marker, or a connection string or token
+whose secret part is already gone, summarise the branch as usual and leave
+the redacted value out; don't stop or ask for the branch to be re-shared.
 
 ## Length
 
