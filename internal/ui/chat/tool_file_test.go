@@ -240,6 +240,8 @@ func TestToolDetailHeaderDropsHintsFromTheRightUntilTheRestFit(t *testing.T) {
 	out = ansi.Strip(header.Render(widthUpTo("o open file") - 1))
 	require.NotContains(t, out, "open")
 	require.Contains(t, out, "View")
+
+	require.NotContains(t, ansi.Strip(header.Render(1)), "open", "too narrow even for the name")
 }
 
 func TestAnImageResultKeepsOForTheImageThroughoutTheDrillIn(t *testing.T) {
