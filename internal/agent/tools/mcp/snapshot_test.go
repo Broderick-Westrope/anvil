@@ -84,3 +84,21 @@ func TestStartupSnapshotWithoutArmingReadsTheCurrentState(t *testing.T) {
 	require.Equal(t, StateConnected, snap[name].State)
 	require.Equal(t, SentToolBytes(name), snap[name].SentBytes)
 }
+
+func TestASecondInitializeKeepsTheFirstSnapshot(t *testing.T) {
+	const first, second = "snap-once-a", "snap-once-b"
+	t.Cleanup(func() {
+		states.Del(first)
+		states.Del(second)
+		ResetInitForTest()
+	})
+	ResetInitForTest()
+	Initialize(context.Background(), nil, config.NewTestStore(&config.Config{MCP: config.MCPs{first: {Disabled: true}}}), nil)
+	cfg := config.NewTestStore(&config.Config{MCP: config.MCPs{second: {Disabled: true}}})
+
+	recordSnapshot(cfg.Config().MCP)
+
+	snap, _ := StartupSnapshot(cfg)
+	require.Contains(t, snap, first)
+	require.NotContains(t, snap, second)
+}
