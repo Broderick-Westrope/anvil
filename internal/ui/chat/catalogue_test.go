@@ -50,3 +50,16 @@ func TestAForwardedDirectCallRendersAsTheInnerToolOnceRenamed(t *testing.T) {
 
 	require.Equal(t, ansi.Strip(direct.Render(80)), ansi.Strip(item.Render(80)))
 }
+
+func TestALiveCallMCPToolMatchesExpandedPatternsOnceItsInputArrives(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	streaming := message.ToolCall{ID: "tc", Name: "call_mcp_tool"}
+	item := NewToolMessageItem(&sty, "msg", streaming, nil, false, ToolItemOptions{ExpandedPatterns: []string{"mcp_datadog_*"}})
+	compactable := item.(interface{ IsCompact() bool })
+	require.True(t, compactable.IsCompact(), "no inner name to match yet")
+
+	item.SetToolCall(message.ToolCall{ID: "tc", Name: "call_mcp_tool", Input: `{"server":"datadog","tool":"search_logs","arguments":{}}`, Finished: true})
+
+	require.False(t, compactable.IsCompact())
+}

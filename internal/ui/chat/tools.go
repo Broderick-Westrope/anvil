@@ -186,6 +186,10 @@ type baseToolMessageItem struct {
 	hasCappedWidth bool
 	// isCompact indicates this tool should render in compact mode.
 	isCompact bool
+	// expandPatterns are the expanded_tools patterns, kept for a
+	// call_mcp_tool item: its inner name, which they match, is only known
+	// once its input has streamed in.
+	expandPatterns []string
 	// spinningFunc allows tools to override the default spinning logic.
 	// If nil, uses the default: !toolCall.Finished && !canceled.
 	spinningFunc SpinningFunc
@@ -342,6 +346,9 @@ func NewToolMessageItem(
 		compact := !config.IsToolExpanded(opts.ExpandedPatterns, expandName(toolCall))
 		if compactable, ok := item.(Compactable); ok {
 			compactable.SetCompact(compact)
+		}
+		if base, ok := item.(interface{ setExpandPatterns([]string) }); ok && toolCall.Name == tools.CallMCPToolToolName {
+			base.setExpandPatterns(opts.ExpandedPatterns)
 		}
 	}
 
@@ -503,9 +510,17 @@ func (t *baseToolMessageItem) ToolCall() message.ToolCall {
 
 // SetToolCall sets the tool call associated with this message item.
 func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
+	before := expandName(t.toolCall)
 	t.toolCall = tc
+	if after := expandName(tc); t.expandPatterns != nil && after != before {
+		t.isCompact = !config.IsToolExpanded(t.expandPatterns, after)
+	}
 	t.clearCache()
 	t.Bump()
+}
+
+func (t *baseToolMessageItem) setExpandPatterns(patterns []string) {
+	t.expandPatterns = patterns
 }
 
 // SetResult sets the tool result associated with this message item.
