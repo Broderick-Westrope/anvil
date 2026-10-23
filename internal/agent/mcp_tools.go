@@ -6,7 +6,6 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
-	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
 )
 
@@ -118,7 +117,7 @@ func (m agentMCPTools) enableMCPTool(connect tools.ConnectFn) fantasy.AgentTool 
 // catalogue-routed server passes the agent's allowed_mcp, else nil. The
 // server list comes from the route map alone, so it is fixed for the
 // process.
-func (m agentMCPTools) catalogueTools(cfg *config.ConfigStore) []fantasy.AgentTool {
+func (m agentMCPTools) catalogueTools() []fantasy.AgentTool {
 	var servers []tools.CatalogueServer
 	for _, name := range m.routes.catalogueServers() {
 		if m.access.allowsMCPServer(name) {
@@ -129,7 +128,7 @@ func (m agentMCPTools) catalogueTools(cfg *config.ConfigStore) []fantasy.AgentTo
 		return nil
 	}
 	var allowed []fantasy.AgentTool
-	for _, tool := range tools.NewCatalogueTools(tools.CatalogueOptions{Servers: servers, Tools: m.resolve, Config: cfg}) {
+	for _, tool := range tools.NewCatalogueTools(tools.CatalogueOptions{Servers: servers, Tools: m.resolve, Config: m.c.cfg}) {
 		if m.access.allowsCatalogueTool(tool.Info().Name) {
 			allowed = append(allowed, tool)
 		}
