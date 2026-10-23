@@ -30,7 +30,7 @@ func DeleteStateForTest(name string) {
 func SetToolsForTest(name string, tools ...*Tool) {
 	var registered []*RegisteredTool
 	for _, tool := range tools {
-		registered = append(registered, newRegisteredTool(tool))
+		registered = append(registered, newRegisteredTool(name, tool))
 	}
 	allTools.Set(name, registered)
 }

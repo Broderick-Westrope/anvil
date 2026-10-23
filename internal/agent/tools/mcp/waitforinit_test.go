@@ -102,7 +102,7 @@ func TestWaitForInit_ToolsVisibleAfterInit(t *testing.T) {
 	// guaranteed visible once WaitForInit returns.
 	go func() {
 		sessions.Set(name, sess)
-		allTools.Set(name, []*RegisteredTool{newRegisteredTool(&Tool{Name: "slow_tool"})})
+		allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "slow_tool"})})
 		updateState(name, StateConnected, nil, sess, Counts{Tools: 1})
 		close(gate)
 	}()

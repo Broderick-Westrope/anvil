@@ -38,6 +38,8 @@ type RegisteredTool struct {
 	*Tool
 	Parameters map[string]any
 	Required   []string
+	// sentBytes is what SentToolBytes counts for this tool.
+	sentBytes int
 }
 
 var allTools = csync.NewMap[string, []*RegisteredTool]()
@@ -67,29 +69,36 @@ func ToolName(server, tool string) string {
 // model receives them: the compact JSON of each tool's name, description,
 // parameters and required list. Fields the model never sees (_meta,
 // annotations, outputSchema, title) don't count. It is 0 for a server with
-// no registered tools.
+// no registered tools. Each tool is measured once, when registered.
 func SentToolBytes(name string) int {
 	total := 0
 	for _, tool := range ServerTools(name) {
-		sent, err := json.Marshal(struct {
-			Name        string         `json:"name"`
-			Description string         `json:"description"`
-			Parameters  map[string]any `json:"parameters"`
-			Required    []string       `json:"required"`
-		}{fmt.Sprintf("mcp_%s_%s", name, tool.Name), tool.Description, tool.Parameters, tool.Required})
-		if err != nil {
-			slog.Debug("Failed to measure MCP tool", "name", name, "tool", tool.Name, "error", err)
-			continue
-		}
-		total += len(sent)
+		total += tool.sentBytes
 	}
 	return total
 }
 
-// newRegisteredTool extracts the parameters fantasy sends for tool and
-// normalises a deep copy of them.
-func newRegisteredTool(tool *Tool) *RegisteredTool {
+// sentSize measures one tool as the model receives it. The name is
+// measured without the OAuth rename, which only changes a letter's case.
+func sentSize(server string, tool *RegisteredTool) int {
+	sent, err := json.Marshal(struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Parameters  map[string]any `json:"parameters"`
+		Required    []string       `json:"required"`
+	}{fmt.Sprintf("mcp_%s_%s", server, tool.Name), tool.Description, tool.Parameters, tool.Required})
+	if err != nil {
+		slog.Debug("Failed to measure MCP tool", "name", server, "tool", tool.Name, "error", err)
+		return 0
+	}
+	return len(sent)
+}
+
+// newRegisteredTool extracts the parameters fantasy sends for the server's
+// tool, normalises a deep copy of them and measures the result.
+func newRegisteredTool(server string, tool *Tool) *RegisteredTool {
 	registered := &RegisteredTool{Tool: tool, Parameters: map[string]any{}, Required: []string{}}
+	defer func() { registered.sentBytes = sentSize(server, registered) }()
 	input, ok := tool.InputSchema.(map[string]any)
 	if !ok {
 		return registered
@@ -270,7 +279,7 @@ func updateTools(cfg *config.ConfigStore, name string, tools []*Tool) int {
 	}
 	var registered []*RegisteredTool
 	for _, tool := range tools {
-		registered = append(registered, newRegisteredTool(tool))
+		registered = append(registered, newRegisteredTool(name, tool))
 	}
 	allTools.Set(name, registered)
 	return len(tools)

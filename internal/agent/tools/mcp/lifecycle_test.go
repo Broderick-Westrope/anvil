@@ -102,7 +102,7 @@ func TestUpdateState_ErrorClosesSessionAndClearsTools(t *testing.T) {
 
 	sess, sessCtx := liveSession(t, "do_thing")
 	sessions.Set(name, sess)
-	allTools.Set(name, []*RegisteredTool{newRegisteredTool(&Tool{Name: "do_thing"})})
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "do_thing"})})
 
 	// Preconditions: tool registered and session live.
 	_, ok := allTools.Get(name)
@@ -149,7 +149,7 @@ func TestUpdateState_ErrorFromStaleSessionPreservesHealthyReplacement(t *testing
 
 	// The registry holds the fresh session and its registrations.
 	sessions.Set(name, fresh)
-	allTools.Set(name, []*RegisteredTool{newRegisteredTool(&Tool{Name: "new_tool"})})
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "new_tool"})})
 	allPrompts.Set(name, []*Prompt{{Name: "new_prompt"}})
 
 	// A stale error arrives for the OLD session.
@@ -185,7 +185,7 @@ func TestUpdateState_ErrorFromCurrentSessionClearsEverything(t *testing.T) {
 
 	sess, sessCtx := liveSession(t, "do_thing")
 	sessions.Set(name, sess)
-	allTools.Set(name, []*RegisteredTool{newRegisteredTool(&Tool{Name: "do_thing"})})
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "do_thing"})})
 	allPrompts.Set(name, []*Prompt{{Name: "a_prompt"}})
 
 	updateState(name, StateError, errors.New("pipe broke"), sess, Counts{})
@@ -219,7 +219,7 @@ func TestUpdateState_ErrorClearsPromptsAndResources(t *testing.T) {
 		states.Del(name)
 	})
 
-	allTools.Set(name, []*RegisteredTool{newRegisteredTool(&Tool{Name: "do_thing"})})
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "do_thing"})})
 	allPrompts.Set(name, []*Prompt{{Name: "a_prompt"}})
 	allResources.Set(name, []*Resource{{Name: "a_resource"}})
 
