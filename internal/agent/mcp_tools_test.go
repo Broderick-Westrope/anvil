@@ -65,3 +65,36 @@ func TestCatalogueToolsFollowAllowedMCPNotTheBuiltInFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestAllDirectRoutesBuildTheSameToolListAsUnroutedServers(t *testing.T) {
+	const lazy, eager = "test-alldirect-lazy", "test-alldirect-eager"
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
+	cfg := connectMCPServers(t, map[string]string{lazy: "Lazy says hi.", eager: "Eager says hi."}, lazy)
+	for _, name := range []string{lazy, eager} {
+		m := cfg.Config().MCP[name]
+		m.Route = config.MCPRouteDirect
+		cfg.Config().MCP[name] = m
+	}
+	agent := config.Agent{ID: "all"}
+	describe := func(c *coordinator) (string, string) {
+		built, listing, err := c.buildToolsWithState(t.Context(), agent, 1, nil, nil, nil, nil, nil, nil)
+		require.NoError(t, err)
+		var out string
+		for _, tool := range built {
+			info := tool.Info()
+			out += info.Name + "|" + info.Description + "\n"
+		}
+		return out, mcpInstructions(listing, tools.NewLazyMCPState(map[string]bool{lazy: true}))
+	}
+
+	routedTools, routedPrompt := describe(&coordinator{cfg: cfg})
+	// An empty route map is how servers unknown to the snapshot (and so
+	// every server before this change) are handled.
+	unroutedTools, unroutedPrompt := describe(&coordinator{cfg: cfg, routes: mcpRoutes{}})
+
+	require.Equal(t, unroutedTools, routedTools)
+	require.Equal(t, unroutedPrompt, routedPrompt)
+	require.Contains(t, routedPrompt, "Lazy says hi.")
+}
