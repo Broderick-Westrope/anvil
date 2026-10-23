@@ -81,20 +81,22 @@ func TestFileOpenFeatureOpensAFileInTheDefaultApp(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		path func(ft *fileOpenTest) string
+		path func(t *testing.T, ft *fileOpenTest, target string) string
 	}{
-		"an absolute path": {path: func(ft *fileOpenTest) string { return filepath.Join(ft.dir, "notes.md") }},
-		"a relative path":  {path: func(*fileOpenTest) string { return "notes.md" }},
-		"a symlink":        {path: func(ft *fileOpenTest) string { return "link.md" }},
+		"an absolute path": {path: func(_ *testing.T, _ *fileOpenTest, target string) string { return target }},
+		"a relative path":  {path: func(*testing.T, *fileOpenTest, string) string { return "notes.md" }},
+		"a symlink": {path: func(t *testing.T, ft *fileOpenTest, target string) string {
+			symlink(t, target, filepath.Join(ft.dir, "link.md"))
+			return "link.md"
+		}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ft := newFileOpenTest(t)
 			target := ft.write(t, "notes.md", 0o644)
-			symlink(t, target, filepath.Join(ft.dir, "link.md"))
 
-			msg := ft.run(t, chat.FileOpenMsg{Path: tc.path(ft)})
+			msg := ft.run(t, chat.FileOpenMsg{Path: tc.path(t, ft, target)})
 
 			requireInfo(t, msg, util.InfoTypeInfo, "Opened notes.md")
 			require.Equal(t, []string{fileURL(target)}, ft.opened)

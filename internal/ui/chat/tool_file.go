@@ -119,7 +119,7 @@ func (f *toolFile) keys() fileKeys {
 	path, _ := f.file()
 	keys := fileKeys{edit: path != ""}
 	switch {
-	case f.images != nil && resultImage(f.source) != nil:
+	case f.image() != nil:
 		keys.open = OpensImage
 	case keys.edit:
 		keys.open = OpensFile
@@ -134,7 +134,7 @@ func (f *toolFile) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	var msg tea.Msg
 	switch {
 	case key.String() == "o" && keys.open == OpensImage:
-		msg = ImageOpenMsg{Data: resultImage(f.source).Data}
+		msg = ImageOpenMsg{Data: f.image().Data}
 	case key.String() == "o" && keys.open == OpensFile:
 		msg = FileOpenMsg{Path: path}
 	case key.String() == "e" && keys.edit:

@@ -232,9 +232,9 @@ func (h *toolDetailHeaderItem) fileHint(keys fileKeys) string {
 	var hint string
 	switch keys.open {
 	case OpensFile:
-		hint += key("o", "open file")
+		hint = key("o", "open file")
 	case OpensImage:
-		hint += key("o", "open in viewer")
+		hint = key("o", "open in viewer")
 	}
 	if keys.edit {
 		hint += key("e", "open in $EDITOR")
@@ -517,7 +517,7 @@ type toolDetailOutputItem struct {
 	*list.Versioned
 	*toolFile
 	sty *styles.Styles
-	// shownImage is the image result last rendered, which o opens, or nil
+	// shownImage is the image result last rendered, which Y copies, or nil
 	// when the output last rendered as text.
 	shownImage *message.ToolResult
 

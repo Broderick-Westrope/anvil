@@ -20,11 +20,15 @@ type ImageRenderer interface {
 }
 
 // sourceImage is the image the output item's source returned, or nil.
-func (o *toolDetailOutputItem) sourceImage() *message.ToolResult {
-	if o.images == nil {
+func (o *toolDetailOutputItem) sourceImage() *message.ToolResult { return o.image() }
+
+// image is the image result the drill-in draws, or nil: one rule for what
+// the output item draws and what o opens from every item.
+func (f *toolFile) image() *message.ToolResult {
+	if f.images == nil {
 		return nil
 	}
-	return resultImage(o.source)
+	return resultImage(f.source)
 }
 
 // resultImage is source's result when it carries an image, or nil.
@@ -113,7 +117,7 @@ type ImageCopyMsg struct {
 
 // HandleKeyEvent implements KeyEventHandler: o opens the image on screen
 // in the viewer and Y copies it, even when Anvil can't draw it. Other keys,
-// and o without an image, go to the file the call names.
+// and o before an image is drawn, go to the drill-in's toolFile.
 func (o *toolDetailOutputItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	res := o.shownImage
 	if res == nil {

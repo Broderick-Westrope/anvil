@@ -4016,6 +4016,7 @@ func (m *UI) selectedItemBindings() []key.Binding {
 	open, edit := chat.FileKeys(selected)
 	switch {
 	case image:
+		// The image item already listed OpenImage.
 	case open == chat.OpensImage:
 		binds = append(binds, m.keyMap.Chat.OpenImage)
 	case open == chat.OpensFile:
