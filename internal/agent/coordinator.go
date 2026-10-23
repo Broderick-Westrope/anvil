@@ -1135,9 +1135,15 @@ func (c *coordinator) buildToolsWithState(
 	// sub-agent tool itself is still wrapped from the orchestrator's side.
 	filteredTools = mcpTools.wrap(filteredTools)
 
-	// The catalogue tools are not hook-wrapped: the inner tool a call
-	// runs is, so a hook fires once per call, under the inner name.
-	filteredTools = append(filteredTools, wrapToolsWithErrorResults(mcpTools.catalogueTools(c.cfg))...)
+	// call_mcp_tool is not hook-wrapped: the inner tool it runs is, so a
+	// hook fires once per call, under the inner name.
+	for _, tool := range mcpTools.catalogueTools(c.cfg) {
+		if tool.Info().Name == tools.CallMCPToolToolName {
+			filteredTools = append(filteredTools, wrapToolsWithErrorResults([]fantasy.AgentTool{tool})...)
+		} else {
+			filteredTools = append(filteredTools, mcpTools.wrap([]fantasy.AgentTool{tool})...)
+		}
+	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})

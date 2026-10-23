@@ -228,6 +228,7 @@ func TestHooksSeeAProxiedCallOnceUnderTheInnerName(t *testing.T) {
 	session := newParent(t, f)
 	f.Permissions.AutoApproveSession(session)
 	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "search_mcp_tools", ToolInput: `{"server":"cathook","query":"ping"}`},
 		branchfixture.Response{ToolName: "call_mcp_tool", ToolInput: `{"server":"cathook","tool":"ping","arguments":{"word":"hi"}}`},
 		branchfixture.Response{Text: "done"},
 	)
@@ -235,10 +236,11 @@ func TestHooksSeeAProxiedCallOnceUnderTheInnerName(t *testing.T) {
 	_, err := f.Coordinator.Run(f.Context, session, "ping it")
 	require.NoError(t, err)
 
-	for _, log := range []string{inner, anyTool} {
-		got, err := os.ReadFile(log)
-		require.NoError(t, err)
-		require.Equal(t, "mcp_cathook_ping\n", string(got), "fires once, under the inner name")
-	}
+	got, err := os.ReadFile(inner)
+	require.NoError(t, err)
+	require.Equal(t, "mcp_cathook_ping\n", string(got), "fires once, under the inner name")
+	got, err = os.ReadFile(anyTool)
+	require.NoError(t, err)
+	require.Equal(t, "search_mcp_tools\nmcp_cathook_ping\n", string(got), "search is hooked like any tool; the proxied call fires once")
 	require.Equal(t, int32(1), calls.Load())
 }
