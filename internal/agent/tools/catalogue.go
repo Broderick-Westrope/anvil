@@ -254,7 +254,7 @@ func stateErrorProblem(server string, info mcp.ClientInfo, caller string) error 
 	if info.Error != nil {
 		reason = info.Error.Error()
 	}
-	return errUnusable{fmt.Sprintf("MCP '%s' failed to connect: %s", server, reason)}
+	return errUnusable{fmt.Sprintf("MCP '%s' failed to connect: %s. A human can reconnect it from the MCP palette; don't retry it this turn.", server, reason)}
 }
 
 func (c *catalogue) connect(ctx context.Context, server, caller string) error {

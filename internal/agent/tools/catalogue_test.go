@@ -263,7 +263,7 @@ func TestSearchReportsAServerThatCantBeUsed(t *testing.T) {
 		err   error
 		want  string
 	}{
-		"error":    {state: mcp.StateError, err: errors.New("boom"), want: "MCP 'cat-down' failed to connect: boom"},
+		"error":    {state: mcp.StateError, err: errors.New("boom"), want: "MCP 'cat-down' failed to connect: boom. A human can reconnect it from the MCP palette; don't retry it this turn."},
 		"disabled": {state: mcp.StateDisabled, want: "MCP 'cat-down' is disabled"},
 		"auth":     {state: mcp.StateError, err: mcp.ErrNeedsAuth, want: "only a human can renew it"},
 	}
