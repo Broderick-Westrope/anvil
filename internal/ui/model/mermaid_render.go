@@ -85,26 +85,26 @@ func transientRenderError(err error) bool {
 // since the rasterizer isn't safe for concurrent use. The rasterizer loads on
 // the first image, so exporting alone doesn't compile resvg.
 type diagramEngines struct {
-	pele   *raster.Renderer
-	raster *raster.Rasterizer
+	pele *raster.Renderer
+	rast *raster.Rasterizer
 	// cacheDir is where the rasterizer keeps its compiled code.
 	cacheDir string
 }
 
 func (e *diagramEngines) rasterizer() (*raster.Rasterizer, error) {
-	if e.raster == nil {
+	if e.rast == nil {
 		r, err := raster.NewRasterizer(context.Background(), e.cacheDir)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", errEnginesUnavailable, err)
 		}
-		e.raster = r
+		e.rast = r
 	}
-	return e.raster, nil
+	return e.rast, nil
 }
 
 func (e *diagramEngines) close() {
-	if e.raster != nil {
-		_ = e.raster.Close()
+	if e.rast != nil {
+		_ = e.rast.Close()
 	}
 }
 
