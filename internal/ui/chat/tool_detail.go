@@ -45,7 +45,7 @@ type detailRenderConfigurable interface {
 func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images ImageRenderer) []MessageItem {
 	tc := source.ToolCall()
 	status := source.Status()
-	file := toolFile{source: source}
+	file := &toolFile{source: source}
 
 	var items []MessageItem
 
@@ -102,7 +102,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images Ima
 
 // buildParamItems parses the tool call input JSON and returns a
 // toolDetailParamItem for each parameter, sorted by key.
-func buildParamItems(sty *styles.Styles, tc message.ToolCall, file toolFile) []MessageItem {
+func buildParamItems(sty *styles.Styles, tc message.ToolCall, file *toolFile) []MessageItem {
 	if tc.Input == "" {
 		return []MessageItem{&toolDetailStaticItem{
 			Versioned:  list.NewVersioned(),
@@ -170,7 +170,7 @@ func sectionHeader(sty *styles.Styles, label string, width int) string {
 // toolDetailHeaderItem renders the metadata header: icon + tool display name.
 type toolDetailHeaderItem struct {
 	*list.Versioned
-	toolFile
+	*toolFile
 	sty          *styles.Styles
 	focused      bool
 	cachedRender string
@@ -245,7 +245,7 @@ func (h *toolDetailHeaderItem) SetFocused(v bool) {
 // toolDetailSectionItem renders a section divider line.
 type toolDetailSectionItem struct {
 	*list.Versioned
-	toolFile
+	*toolFile
 	sty          *styles.Styles
 	label        string
 	toolCallID   string
@@ -307,7 +307,7 @@ func (s *toolDetailSectionItem) SetFocused(v bool) {
 // toolDetailStaticItem renders a static text line. Not expandable.
 type toolDetailStaticItem struct {
 	*list.Versioned
-	toolFile
+	*toolFile
 	sty          *styles.Styles
 	id           string
 	content      string
@@ -372,7 +372,7 @@ func (s *toolDetailStaticItem) SetFocused(v bool) {
 // are always inline. Multi-line values are expandable/collapsible.
 type toolDetailParamItem struct {
 	*list.Versioned
-	toolFile
+	*toolFile
 	sty        *styles.Styles
 	key        string
 	value      any
@@ -504,7 +504,7 @@ func (p *toolDetailParamItem) SetFocused(v bool) {
 // truncated output; expanded shows the full output.
 type toolDetailOutputItem struct {
 	*list.Versioned
-	toolFile
+	*toolFile
 	sty    *styles.Styles
 	images ImageRenderer
 	// shownImage is the image result last rendered, which o opens, or nil

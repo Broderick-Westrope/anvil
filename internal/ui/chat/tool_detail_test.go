@@ -234,7 +234,7 @@ func TestToolDetailOutputItem_ToggleExpanded(t *testing.T) {
 	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, &message.ToolResult{Content: "hi"}, ToolStatusSuccess)
 	o := &toolDetailOutputItem{
 		Versioned: list.NewVersioned(),
-		toolFile:  toolFile{source: source},
+		toolFile:  &toolFile{source: source},
 		sty:       &sty,
 	}
 	require.False(t, o.expanded)

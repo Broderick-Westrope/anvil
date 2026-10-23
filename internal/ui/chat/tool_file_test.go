@@ -93,6 +93,7 @@ func TestToolDrillInWithoutAFileLeavesTheKeys(t *testing.T) {
 		"a non-string":    {tool: "view", input: `{"file_path":3}`},
 		"malformed input": {tool: "view", input: `{"file_path":`},
 		"no input":        {tool: "view", input: ``},
+		"an MCP tool":     {tool: "mcp_github_get_file", input: `{"file_path":"README.md"}`},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -156,4 +157,30 @@ func TestToolDetailHeaderHintAppearsOnceTheInputNamesAFile(t *testing.T) {
 	source.SetToolCall(tc)
 
 	require.Contains(t, ansi.Strip(header.Render(80)), "open file")
+}
+
+func TestEveryBuiltInFileToolOpensItsFile(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"view", "edit", "multiedit", "write", "download", "lsp_symbols", "lsp_diagnostics", "lsp_rename"} {
+		sty := styles.TokyoNight()
+		source := helperToolItem(t, name, `{"file_path":"/a"}`, &message.ToolResult{Content: "x"}, ToolStatusSuccess)
+		require.True(t, OpensFile(BuildToolDetailItems(&sty, source, nil)[0]), name)
+	}
+}
+
+func TestToolFileFollowsTheInputAsItChanges(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/a"}`, nil, ToolStatusRunning)
+	header := BuildToolDetailItems(&sty, source, nil)[0]
+	_, msg := pressKey(header, "o")
+	require.Equal(t, FileOpenMsg{Path: "/a"}, msg)
+
+	tc := source.ToolCall()
+	tc.Input = `{"file_path":"/b"}`
+	source.SetToolCall(tc)
+	_, msg = pressKey(header, "o")
+	require.Equal(t, FileOpenMsg{Path: "/b"}, msg)
 }
