@@ -60,7 +60,8 @@ func runRevealCommand(ctx context.Context, c revealCommand) error {
 	setRawCmdLine(cmd, c.cmdLine)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	// Bounds Wait after a kill, should a child still hold stderr open.
+	// Bounds Wait should a child still hold stderr open after it exits or
+	// is killed.
 	cmd.WaitDelay = time.Second
 	err := cmd.Run()
 	switch {

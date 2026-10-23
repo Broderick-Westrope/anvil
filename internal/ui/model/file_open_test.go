@@ -596,29 +596,38 @@ func TestRevealHelperProcess(t *testing.T) {
 	case "hang":
 		time.Sleep(time.Minute)
 	case "linger":
-		time.Sleep(5 * time.Second)
+		// It says it started, then waits for the test to say stop, so
+		// nothing outlives the test.
+		started, stop, exited := args[1], args[2], args[3]
+		_ = os.WriteFile(started, nil, 0o600)
+		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if _, err := os.Stat(stop); err == nil {
+				break
+			}
+		}
+		_ = os.WriteFile(exited, nil, 0o600)
 	}
 }
 
-func helper(mode string) revealCommand {
-	return revealCommand{args: []string{os.Args[0], "-test.run=^TestRevealHelperProcess$", "--", mode}}
+func revealHelper(mode string, args ...string) revealCommand {
+	return revealCommand{args: append([]string{os.Args[0], "-test.run=^TestRevealHelperProcess$", "--", mode}, args...)}
 }
 
 func TestRunRevealCommand(t *testing.T) {
 	t.Parallel()
 
-	require.NoError(t, runRevealCommand(t.Context(), helper("ok")))
+	require.NoError(t, runRevealCommand(t.Context(), revealHelper("ok")))
 
-	err := runRevealCommand(t.Context(), helper("fail"))
+	err := runRevealCommand(t.Context(), revealHelper("fail"))
 	require.ErrorContains(t, err, "exit status 1: no FileManager1")
 	require.NotContains(t, err.Error(), "second line")
 
-	err = runRevealCommand(t.Context(), helper("fail-quietly"))
+	err = runRevealCommand(t.Context(), revealHelper("fail-quietly"))
 	require.EqualError(t, err, "exit status 1")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
-	require.EqualError(t, runRevealCommand(ctx, helper("hang")), "didn't answer within 10s")
+	require.EqualError(t, runRevealCommand(ctx, revealHelper("hang")), "didn't answer within 10s")
 
 	missing := revealCommand{args: []string{filepath.Join(t.TempDir(), "missing")}}
 	require.Error(t, runRevealCommand(t.Context(), missing))
@@ -627,11 +636,23 @@ func TestRunRevealCommand(t *testing.T) {
 func TestRunRevealCommandDoesntWaitOnADetachedCommand(t *testing.T) {
 	t.Parallel()
 
-	linger := helper("linger")
+	dir := t.TempDir()
+	started, stop, exited := filepath.Join(dir, "started"), filepath.Join(dir, "stop"), filepath.Join(dir, "exited")
+	exists := func(path string) bool { _, err := os.Stat(path); return err == nil }
+	t.Cleanup(func() {
+		_ = os.WriteFile(stop, nil, 0o600)
+		require.Eventually(t, func() bool { return exists(exited) }, 30*time.Second, 20*time.Millisecond)
+	})
+	linger := revealHelper("linger", started, stop, exited)
 	linger.detach = true
-	start := time.Now()
-	require.NoError(t, runRevealCommand(t.Context(), linger))
-	require.Less(t, time.Since(start), 4*time.Second, "it returned once started")
+	ctx, cancel := context.WithCancel(t.Context())
+
+	require.NoError(t, runRevealCommand(ctx, linger), "it returns once started")
+	cancel()
+
+	require.Eventually(t, func() bool { return exists(started) }, 30*time.Second, 20*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	require.False(t, exists(exited), "cancelling the context didn't kill it")
 
 	missing := revealCommand{args: []string{filepath.Join(t.TempDir(), "missing")}, detach: true}
 	require.Error(t, runRevealCommand(t.Context(), missing))
