@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/hooks"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
 )
 
@@ -207,4 +210,35 @@ func TestADirectCallToACatalogueToolGoesThroughCallMCPTool(t *testing.T) {
 	}
 	require.Equal(t, []string{`call_mcp_tool {"server":"catdirect","tool":"ping","arguments":{"word":"hi"}}`}, called)
 	require.Contains(t, toolResultTexts(t, f, session), "pong")
+}
+
+func TestHooksSeeAProxiedCallOnceUnderTheInnerName(t *testing.T) {
+	const name = "cathook"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls), Route: config.MCPRouteCatalogue}})
+	dir := t.TempDir()
+	inner, anyTool := filepath.Join(dir, "inner.log"), filepath.Join(dir, "any.log")
+	f.Config.Config().Hooks = map[string][]config.HookConfig{
+		hooks.EventPreToolUse: {
+			{Matcher: "^mcp_cathook_.*", Command: `echo "$ANVIL_TOOL_NAME" >> ` + inner},
+			{Matcher: ".*", Command: `echo "$ANVIL_TOOL_NAME" >> ` + anyTool},
+		},
+	}
+	require.NoError(t, f.Config.Config().ValidateHooks())
+	session := newParent(t, f)
+	f.Permissions.AutoApproveSession(session)
+	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "call_mcp_tool", ToolInput: `{"server":"cathook","tool":"ping","arguments":{"word":"hi"}}`},
+		branchfixture.Response{Text: "done"},
+	)
+
+	_, err := f.Coordinator.Run(f.Context, session, "ping it")
+	require.NoError(t, err)
+
+	for _, log := range []string{inner, anyTool} {
+		got, err := os.ReadFile(log)
+		require.NoError(t, err)
+		require.Equal(t, "mcp_cathook_ping\n", string(got), "fires once, under the inner name")
+	}
+	require.Equal(t, int32(1), calls.Load())
 }

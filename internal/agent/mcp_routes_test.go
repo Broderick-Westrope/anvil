@@ -86,3 +86,26 @@ func TestCoordinatorMCPRoutesFlagsADirectServerThatGrew(t *testing.T) {
 	require.Equal(t, "auto: 84 bytes, under 12,000; now 12,083 bytes, past 12,000, so it moves to the catalogue at the next restart", after[0].Reason)
 	require.Equal(t, "route: direct", after[1].Reason)
 }
+
+func TestRoutesStayFixedForTheProcess(t *testing.T) {
+	const server = "test-routes-fixed"
+	cfg := config.NewTestStore(&config.Config{MCP: config.MCPs{server: {Type: config.MCPStdio, Command: "x"}}})
+	toolsmcp.SetToolsForTest(server, &toolsmcp.Tool{Name: "ping"})
+	toolsmcp.SetStateForTest(server, toolsmcp.StateConnected)
+	t.Cleanup(func() {
+		toolsmcp.DeleteToolsForTest(server)
+		toolsmcp.DeleteStateForTest(server)
+	})
+	c := &coordinator{cfg: cfg}
+	before, _ := c.mcpRoutes()
+
+	// A reload editing route and lazy_description, a list_changed that
+	// grows the server, and a palette disable.
+	cfg.Config().MCP[server] = config.MCPConfig{Type: config.MCPStdio, Command: "x", Route: config.MCPRouteCatalogue, LazyDescription: "Now lazy."}
+	toolsmcp.SetToolsForTest(server, &toolsmcp.Tool{Name: "big", Description: strings.Repeat("x", catalogueThresholdBytes)})
+	toolsmcp.SetStateForTest(server, toolsmcp.StateDisabled)
+
+	after, _ := c.mcpRoutes()
+	require.Equal(t, before, after)
+	require.False(t, after.isCatalogue(server))
+}
