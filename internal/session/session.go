@@ -525,18 +525,30 @@ func (s *service) removeJobLogs(keys []int64) {
 	}
 }
 
-// CreateAgentToolSessionID creates a session ID for agent tool sessions using the format "messageID$$toolCallID"
-func (s *service) CreateAgentToolSessionID(messageID, toolCallID string) string {
+// AgentToolSessionID is the ID of the child session an agent tool call
+// runs in: "messageID$$toolCallID".
+func AgentToolSessionID(messageID, toolCallID string) string {
 	return fmt.Sprintf("%s$$%s", messageID, toolCallID)
 }
 
-// ParseAgentToolSessionID parses an agent tool session ID into its components
-func (s *service) ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool) {
-	parts := strings.Split(sessionID, "$$")
+// ParseAgentToolSessionID splits an ID made by AgentToolSessionID. ok is
+// false for any other ID.
+func ParseAgentToolSessionID(id string) (messageID, toolCallID string, ok bool) {
+	parts := strings.Split(id, "$$")
 	if len(parts) != 2 {
 		return "", "", false
 	}
 	return parts[0], parts[1], true
+}
+
+// CreateAgentToolSessionID creates a session ID for agent tool sessions using the format "messageID$$toolCallID"
+func (s *service) CreateAgentToolSessionID(messageID, toolCallID string) string {
+	return AgentToolSessionID(messageID, toolCallID)
+}
+
+// ParseAgentToolSessionID parses an agent tool session ID into its components
+func (s *service) ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool) {
+	return ParseAgentToolSessionID(sessionID)
 }
 
 // IsAgentToolSession checks if a session ID follows the agent tool session format
