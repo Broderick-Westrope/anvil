@@ -130,6 +130,8 @@ That matches the 448 "same count, `tools_changed`" rows (402 of them cache hits)
 
 ## Reproducing
 
+The prototype, fake server and harness are on branch `spike/mcp-catalogue-cost` and aren't meant to merge. From that branch:
+
 ```bash
 go build -o /tmp/anvil-spike . && go build -o /tmp/fakemcp ./spike/fakemcp
 /tmp/anvil-spike mcp dump-tools plans/spike-data/fixtures datadog launchdarkly linear slack terminal figma muninn
