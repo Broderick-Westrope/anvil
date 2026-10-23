@@ -539,6 +539,16 @@
         "lazy_description": {
           "type": "string",
           "description": "Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"
+        },
+        "route": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "catalogue",
+            "direct"
+          ],
+          "description": "How the server's tools reach the model: auto lists small connected servers directly and routes the rest through the catalogue",
+          "default": "auto"
         }
       },
       "additionalProperties": false,

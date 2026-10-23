@@ -1469,6 +1469,9 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	if err := cfg.ValidateMCPAuth(); err != nil {
 		return fmt.Errorf("invalid MCP auth configuration on reload: %w", err)
 	}
+	if err := cfg.ValidateMCPRoutes(); err != nil {
+		return fmt.Errorf("invalid MCP route configuration on reload: %w", err)
+	}
 
 	cfg.applyLoadAdjustments(s.insideWorktree)
 
