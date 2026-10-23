@@ -105,8 +105,9 @@ directly, because chat items are built in `UI` (`ExtractMessageItems`):
 - `UI.Update` tells `drillInFeature`s which drill-in is on top after
   every message (`features.drillInTop`).
 - `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
-- `selectedItemBindings` adds the help entries of a diagram node or a
-  tool image (`chat.ShowsToolImage`).
+- `selectedItemBindings` adds the help entries of a diagram node, a
+  tool image (`chat.ShowsToolImage`), and a tool drill-in item whose call
+  names a file (`chat.OpensFile`); on a tool image, `o` stays the image's.
 - `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
   message's `<id>#<n>` nodes, `Chat.HandleDelayedClick` opens drill-ins
   through `chat.ClickDrillInHandler`, and `sourceSelection` copies a
