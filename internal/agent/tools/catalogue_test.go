@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -488,4 +489,56 @@ func TestAWaiterDoesNotReconnectAfterAnotherCallersConnectFails(t *testing.T) {
 	require.Contains(t, resp.Content, "MCP 'cat-failed-wait' failed to connect; retry later")
 	info, _ := mcp.GetState("cat-failed-wait")
 	require.Equal(t, mcp.StateDeferred, info.State, "the waiter must not start its own connect")
+}
+
+func manyTools(prefix string, n int) []catalogueServerTool {
+	var out []catalogueServerTool
+	for i := range n {
+		out = append(out, catalogueServerTool{name: fmt.Sprintf("%s_%02d", prefix, i), description: "Widget.", schema: objectSchema(nil, map[string]any{})})
+	}
+	return out
+}
+
+func TestSearchReturnsAtMostTwentyRows(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-rows", "", false, manyTools("widget", 21)...)
+
+	text := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-rows", "query": "widget"}).Content
+
+	require.Equal(t, 20, strings.Count(text, "- widget_"))
+	require.Contains(t, text, "- widget_19")
+	require.NotContains(t, text, "- widget_20")
+}
+
+func TestUnknownToolErrorNamesAtMostFiveMatches(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-close", "", false, manyTools("widget", 6)...)
+
+	resp := f.run(t, CallMCPToolToolName, map[string]any{"server": "cat-close", "tool": "widget", "arguments": map[string]any{}})
+
+	require.True(t, strings.HasSuffix(resp.Content, "Closest matches: widget_00, widget_01, widget_02, widget_03, widget_04"), resp.Content)
+	require.NotContains(t, resp.Content, "widget_05")
+}
+
+func TestSearchDropsPluralsOnlyFromWordsLongerThanThreeLetters(t *testing.T) {
+	ga := catalogueServerTool{name: "ga_meter", description: "Reads.", schema: objectSchema(nil, map[string]any{})}
+	f := newCatalogueFixture(t, "cat-plural", "", false, ga, logSearchTool)
+
+	require.NotContains(t, f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-plural", "query": "gas"}).Content, "- ga_meter", "a 3-letter word keeps its s")
+	require.Contains(t, f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-plural", "query": "logs"}).Content, "- search_logs", "a 4-letter plural matches")
+}
+
+func TestInstructionSchemasMayFillExactlyFourKilobytes(t *testing.T) {
+	exact := func(name string, size int) catalogueServerTool {
+		pad := map[string]any{"x": map[string]any{"type": "string", "description": ""}}
+		tool := catalogueServerTool{name: name, description: "Fits.", schema: objectSchema([]string{"x"}, pad)}
+		raw, err := json.Marshal(tool.schema)
+		require.NoError(t, err)
+		pad["x"].(map[string]any)["description"] = strings.Repeat("y", size-len(raw))
+		return tool
+	}
+	f := newCatalogueFixture(t, "cat-exact", "Use first_tool and second_tool.", false, exact("first_tool", 2048), exact("second_tool", 2048))
+
+	text := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-exact", "query": "tool"}).Content
+
+	require.Contains(t, text, "Input schema for first_tool")
+	require.Contains(t, text, "Input schema for second_tool", "4096 bytes in total fits")
 }
