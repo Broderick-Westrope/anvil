@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -281,9 +282,9 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 	slog.Info("Initializing MCP clients")
 	start := time.Now()
 	var wg sync.WaitGroup
-	// Initialize states for all configured MCPs. The same map feeds the
-	// startup snapshot, so a config write mid-init can't skew it.
-	mcps := cfg.Config().MCP
+	// Initialize states for all configured MCPs. A copy of the map feeds
+	// the startup snapshot, so a config write mid-init can't skew it.
+	mcps := maps.Clone(cfg.Config().MCP)
 	for name, m := range mcps {
 		if m.Disabled {
 			updateState(name, StateDisabled, nil, nil, Counts{})
@@ -383,7 +384,7 @@ var ErrAlreadyConnecting = errors.New("connection already in progress")
 
 // ConnectDeferred connects a deferred (lazy, never-connected) MCP server.
 // The connection runs under the package's long-lived session parent
-// context (see sessionParentCtx) with the handshake bounded by mcpTimeout
+// context (see sessionParentCtx) with the handshake bounded by ConnectTimeout
 // inside createSession; the caller's ctx only gates starting the attempt.
 // One automatic retry is performed for transient failures (timeout,
 // connection refused). Auth failures are not retried.
@@ -439,7 +440,7 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 		// subprocess's process group) from this context, so a
 		// request-scoped or timeout-wrapped context would kill the server
 		// as soon as the enable call returns. The handshake itself is
-		// already bounded inside createSession by mcpTimeout.
+		// already bounded inside createSession by ConnectTimeout.
 		return InitializeSingle(sessionParent(), name, cfg, nil)
 	}
 
@@ -555,7 +556,7 @@ func DisableSingle(cfg *config.ConfigStore, name string) error {
 
 func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string) (*ClientSession, error) {
 	m := cfg.Config().MCP[name]
-	timeout := mcpTimeout(m)
+	timeout := ConnectTimeout(m)
 
 	// Fast path: reuse a healthy session without taking the renewal lock.
 	// NOTE: A concurrent locked renewal may close this session between the
@@ -789,7 +790,7 @@ func shouldNotifyAuth(name string) bool {
 }
 
 func createSession(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) (*ClientSession, error) {
-	timeout := mcpTimeout(m)
+	timeout := ConnectTimeout(m)
 	mcpCtx, cancel := context.WithCancel(ctx)
 	cancelTimer := time.AfterFunc(timeout, cancel)
 
@@ -980,10 +981,6 @@ func (rt headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 // ConnectTimeout is how long a connection to the server may take: its
 // configured timeout, or the default for its transport.
 func ConnectTimeout(m config.MCPConfig) time.Duration {
-	return mcpTimeout(m)
-}
-
-func mcpTimeout(m config.MCPConfig) time.Duration {
 	if m.Timeout > 0 {
 		return time.Duration(m.Timeout) * time.Second
 	}
