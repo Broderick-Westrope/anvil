@@ -973,6 +973,12 @@ func (rt headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	return http.DefaultTransport.RoundTrip(req)
 }
 
+// ConnectTimeout is how long a connection to the server may take: its
+// configured timeout, or the default for its transport.
+func ConnectTimeout(m config.MCPConfig) time.Duration {
+	return mcpTimeout(m)
+}
+
 func mcpTimeout(m config.MCPConfig) time.Duration {
 	if m.Timeout > 0 {
 		return time.Duration(m.Timeout) * time.Second

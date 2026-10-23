@@ -29,7 +29,12 @@ func WaitSettled(ctx context.Context, name string) (ClientInfo, error) {
 		select {
 		case <-ctx.Done():
 			return info, ctx.Err()
-		case <-events:
+		case _, open := <-events:
+			if !open {
+				// A shut-down broker closes the channel; fall back
+				// to the timer rather than spin.
+				events = nil
+			}
 		case <-ticker.C:
 		}
 	}
