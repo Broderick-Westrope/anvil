@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -524,13 +526,18 @@ func TestBranchSummarizers_ListsMarkedAgentsBuiltinFirst(t *testing.T) {
 	t.Parallel()
 	f := newBranchFixture(t)
 	f.c.orchestratorMu.Lock()
-	md := f.c.agentMDs[BuiltinBranchSummarizer]
-	md.Name = "a-summarizer"
-	f.c.agentMDs["a-summarizer"] = md
-	f.c.agentConfigs["a-summarizer"] = f.c.agentConfigs[BuiltinBranchSummarizer]
+	for _, name := range []string{"a-summarizer", "b-unresolvable", "c-summarizer"} {
+		md := f.c.agentMDs[BuiltinBranchSummarizer]
+		md.Name = name
+		f.c.agentMDs[name] = md
+		f.c.agentConfigs[name] = f.c.agentConfigs[BuiltinBranchSummarizer]
+	}
+	unresolvable := f.c.agentConfigs["b-unresolvable"]
+	unresolvable.Model = "missing/model"
+	f.c.agentConfigs["b-unresolvable"] = unresolvable
 	f.c.orchestratorMu.Unlock()
 
-	require.Equal(t, []string{BuiltinBranchSummarizer, "a-summarizer"}, f.c.BranchSummarizers())
+	require.Equal(t, []string{BuiltinBranchSummarizer, "a-summarizer", "c-summarizer"}, f.c.BranchSummarizers())
 }
 
 func TestDiscardBranchSummary_AfterReturningToTheOldBranch(t *testing.T) {
@@ -651,4 +658,113 @@ func TestBranchWorthSummarizing(t *testing.T) {
 	worth, err = f.c.BranchWorthSummarizing(t.Context(), f.a1, f.a1)
 	require.NoError(t, err)
 	require.False(t, worth)
+}
+
+func TestSummarizeBranch_KeepsNoToolLoopRoomForAnAgentWithoutTools(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.addSummarizer("toolless", []string{"bash"})
+	// A 5,000-token window less 1,000 for output leaves exactly the least
+	// worth sending, so any room kept for a tool loop would refuse it.
+	summarizer := newMockAgent(reloadTestProvider, 1_000, reply("summary"))
+	summarizer.model.CatwalkCfg.ContextWindow = 5_000
+	f.c.agents.Set(summarizerCacheKey("toolless", []string{}), summarizer)
+	req := f.request()
+	req.Agent = "toolless"
+
+	_, err := f.c.SummarizeBranch(t.Context(), req)
+
+	require.NoError(t, err)
+}
+
+func TestSummarizerBudget(t *testing.T) {
+	t.Parallel()
+	model := Model{CatwalkCfg: catwalk.Model{ID: "m", ContextWindow: 5_000, DefaultMaxTokens: 1_000}}
+
+	budget, err := summarizerBudget(model, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, minSummarizerInputTokens, budget)
+
+	_, err = summarizerBudget(model, 1, false)
+	require.ErrorContains(t, err, "leave only 3999 of the 5000-token window")
+}
+
+func TestDiscardBranchSummary_RefusesOtherMessages(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.setSummarizer(reply("summary"))
+	summary, err := f.c.SummarizeBranch(t.Context(), f.request())
+	require.NoError(t, err)
+	other, err := f.env.sessions.Create(t.Context(), "Other", t.TempDir())
+	require.NoError(t, err)
+
+	tests := map[string]struct{ sessionID, messageID string }{
+		"not a summary":     {f.sessionID, f.a2},
+		"another's summary": {other.ID, summary.ID},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := f.c.DiscardBranchSummary(t.Context(), tc.sessionID, tc.messageID)
+
+			require.ErrorContains(t, err, "is not a branch summary")
+			_, err = f.env.messages.Get(t.Context(), tc.messageID)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestDelegatedMessages_LoadsOnlyDelegatingCalls(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	for _, call := range []string{"task", "fetch", "other"} {
+		child, err := f.env.sessions.CreateTaskSession(t.Context(), session.AgentToolSessionID(f.a2, call), f.sessionID, call)
+		require.NoError(t, err)
+		_, err = f.env.messages.Create(t.Context(), child.ID, message.CreateMessageParams{
+			Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "from " + call}},
+		})
+		require.NoError(t, err)
+	}
+
+	tests := map[string]struct {
+		call message.ToolCall
+		want string
+	}{
+		"task":          {message.ToolCall{ID: "task", Name: TaskToolName}, "from task"},
+		"agentic fetch": {message.ToolCall{ID: "fetch", Name: tools.AgenticFetchToolName}, "from fetch"},
+		"other tool":    {message.ToolCall{ID: "other", Name: "mcp_other_run"}, ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := f.c.delegatedMessages(t.Context(), f.a2, tc.call)
+
+			if tc.want == "" {
+				require.Nil(t, got)
+				return
+			}
+			require.Len(t, got, 1)
+			require.Equal(t, tc.want, got[0].Content().Text)
+		})
+	}
+}
+
+// Failing to publish or delete only logs, so the warning is all there is
+// to see. Not parallel: it captures the default logger.
+func TestBranchSummaryHousekeepingWarnsOnlyOnFailure(t *testing.T) {
+	f := newBranchFixture(t)
+	child, err := f.env.sessions.CreateTaskSession(t.Context(), "child", f.sessionID, "child")
+	require.NoError(t, err)
+	logs := captureLogs(t)
+
+	f.c.refreshSession(f.sessionID)
+	f.c.deleteChildSession(child.ID)
+	require.Empty(t, logs.String())
+	_, err = f.env.sessions.Get(t.Context(), child.ID)
+	require.Error(t, err, "the child session is deleted")
+
+	f.c.refreshSession("missing")
+	f.c.deleteChildSession("missing")
+	require.Contains(t, logs.String(), "Failed to publish session after a branch summary change")
+	require.Contains(t, logs.String(), "Failed to delete branch summary session")
 }

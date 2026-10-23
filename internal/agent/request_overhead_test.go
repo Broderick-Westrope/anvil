@@ -31,3 +31,21 @@ func TestRequestOverhead(t *testing.T) {
 	lazy.SetLazyMCPToolMap(map[string]string{"mcp_linear_list": "linear"})
 	require.Equal(t, bare, lazy.RequestOverhead(), "lazy MCP tools stay hidden until enabled")
 }
+
+func TestRequestOverhead_CountsAnUnencodableToolByNameAndDescription(t *testing.T) {
+	t.Parallel()
+
+	prompt := strings.Repeat("s", 1_000)
+	good := overheadTool(t, "view")
+	bare := NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt}).RequestOverhead()
+	goodSize := NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt, Tools: []fantasy.AgentTool{good}}).RequestOverhead() - bare
+	bad, err := newSubmitResultTool(json.RawMessage(`{"type":"object"}`), nil)
+	require.NoError(t, err)
+	bad.info.Name = strings.Repeat("n", 10)
+	bad.info.Description = strings.Repeat("d", 100)
+	bad.info.Parameters = map[string]any{"unencodable": make(chan int)}
+
+	got := NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt, Tools: []fantasy.AgentTool{bad, good}}).RequestOverhead()
+
+	require.Equal(t, bare+110+goodSize, got, "the unencodable tool counts 110 and later tools still count")
+}

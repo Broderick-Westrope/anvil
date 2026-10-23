@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 
@@ -73,20 +74,20 @@ func (c *coordinator) BranchSummarizers() []string {
 	c.orchestratorMu.RLock()
 	defer c.orchestratorMu.RUnlock()
 	var names []string
-	for name, md := range c.agentMDs {
+	for _, name := range slices.Sorted(maps.Keys(c.agentMDs)) {
 		agentCfg, ok := c.agentConfigs[name]
-		if !md.BranchSummarizer || !ok {
+		if !c.agentMDs[name].BranchSummarizer || !ok {
 			continue
 		}
 		_, err := config.ResolveAgentModel(agentCfg, c.cfg.Config())
 		if err != nil {
 			continue
 		}
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	if i := slices.Index(names, BuiltinBranchSummarizer); i > 0 {
-		names = slices.Insert(slices.Delete(names, i, i+1), 0, BuiltinBranchSummarizer)
+		if name == BuiltinBranchSummarizer {
+			names = slices.Insert(names, 0, name)
+		} else {
+			names = append(names, name)
+		}
 	}
 	return names
 }

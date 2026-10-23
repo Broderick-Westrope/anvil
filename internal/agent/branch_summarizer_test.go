@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent/prompt"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/stretchr/testify/require"
 )
@@ -27,6 +28,21 @@ func TestOrchestratorPromptOmitsBranchSummarizers(t *testing.T) {
 	require.Contains(t, built, "@helper")
 	require.NotContains(t, built, "plugsum")
 	require.NotContains(t, built, BuiltinBranchSummarizer)
+}
+
+func TestOrchestratorBlocksListOnlyDelegableAgents(t *testing.T) {
+	t.Parallel()
+	mds := map[string]prompt.AgentMD{
+		"helper":                 {Name: "helper"},
+		"unconfigured":           {Name: "unconfigured"},
+		"summarizer":             {Name: "summarizer", BranchSummarizer: true},
+		config.AgentOrchestrator: {Name: config.AgentOrchestrator},
+	}
+	cfgs := map[string]config.Agent{"helper": {}, "summarizer": {}, config.AgentOrchestrator: {}}
+
+	block, _ := buildOrchestratorBlocksFromState(mds, cfgs)
+
+	require.Equal(t, prompt.BuildAgentsBlock([]prompt.AgentMD{mds["helper"]}), block)
 }
 
 func TestBuiltinBranchSummarizer(t *testing.T) {
