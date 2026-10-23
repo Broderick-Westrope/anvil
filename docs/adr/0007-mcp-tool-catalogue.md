@@ -55,4 +55,7 @@ results instead of the system prompt.
   governs. The catalogue persists nothing.
 - A route can differ between processes: a small server in error at
   startup goes to the catalogue for that process. A direct-name call to a
-  catalogue tool is forwarded to `call_mcp_tool`.
+  catalogue tool is forwarded to `call_mcp_tool` and recorded under that
+  name. The search description still says these tools are never callable
+  by name, on purpose: in the spike that wording kept every call routed
+  correctly, and forwarding is only the fallback.
