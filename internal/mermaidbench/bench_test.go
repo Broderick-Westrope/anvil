@@ -4,10 +4,10 @@
 // benchmark lines for benchstat. Every test skips unless PELE_CORPUS names
 // pele-go's oracle corpus (internal/oracle/testdata/corpus).
 //
-// Compare two builds with compare.sh, which runs them interleaved on one
-// machine. TestMemory also needs MERMAIDBENCH_CACHE, a compilation cache an
-// earlier process filled, and must run in a process of its own. rssBytes
-// reads ps, so neither runs on Windows.
+// Compare two builds with scripts/mermaidbench-compare.sh, which runs them
+// interleaved on one machine. TestMemory also needs MERMAIDBENCH_CACHE, a
+// compilation cache an earlier process filled, and must run in a process of
+// its own. It reads RSS with ps, so it doesn't run on Windows.
 package mermaidbench_test
 
 import (
@@ -256,10 +256,11 @@ func settle() runtime.MemStats {
 // settled process against its start. Nothing loads before the baseline, so
 // the cache must have been warmed by another process.
 func TestMemory(t *testing.T) {
+	// It needs no corpus, but skips with the rest of the harness.
 	corpusDir(t)
 	cache := os.Getenv("MERMAIDBENCH_CACHE")
 	if cache == "" {
-		t.Skip("MERMAIDBENCH_CACHE is unset; run TestMemory through compare.sh, which warms a cache in another process first")
+		t.Skip("MERMAIDBENCH_CACHE is unset; run TestMemory through scripts/mermaidbench-compare.sh, which warms a cache in another process first")
 	}
 	base, baseRSS := settle(), rssBytes(t)
 

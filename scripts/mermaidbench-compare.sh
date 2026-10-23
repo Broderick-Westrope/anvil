@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Compares two builds of this package's tests, A (before a change) and B
-# (after), run interleaved on one machine so drift doesn't line up with the
-# split. Build each with `go test -c -o <file> ./internal/mermaidbench`.
+# Compares two builds of internal/mermaidbench's tests, A (before a change
+# to the Mermaid pipeline) and B (after), run interleaved on one machine so
+# drift doesn't line up with the split. Build each with
+# `go test -c -o <file> ./internal/mermaidbench`, A at the commit before the
+# change but with the harness as it is at B, so the two differ only in
+# what they measure.
 #
-# Usage: compare.sh <A test binary> <B test binary> <pele-go corpus dir> [runs]
+# Usage: scripts/mermaidbench-compare.sh <A test binary> <B test binary> <pele-go corpus dir> [runs]
 #
 # It prints benchstat's comparison and fails if the two builds fail
-# different corpus sources, or if B compiled resvg again instead of loading
-# A's compiled code from the shared cache. It doesn't apply the latency or
-# memory pass bars; read those off benchstat's output.
+# different corpus sources, or if B wrote new entries to the shared
+# compilation cache. A load that fails and falls back to compiling writes
+# nothing, so also check NewRasterizer's time matches. It doesn't apply
+# the latency or memory pass bars; read those off benchstat's output.
 set -euo pipefail
 
 if (($# < 3)); then
-	echo "usage: compare.sh <A test binary> <B test binary> <corpus dir> [runs]" >&2
+	echo "usage: mermaidbench-compare.sh <A test binary> <B test binary> <corpus dir> [runs]" >&2
 	exit 2
 fi
 a="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
@@ -24,7 +28,7 @@ benchstat=(go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb
 out="$(mktemp -d)"
 MERMAIDBENCH_CACHE="$(mktemp -d)"
 export MERMAIDBENCH_CACHE
-trap 'rm -rf "$MERMAIDBENCH_CACHE"' EXIT
+trap 'rm -rf "$MERMAIDBENCH_CACHE"; echo "raw results: $out" >&2' EXIT
 
 entries() { find "$MERMAIDBENCH_CACHE" -type f | sort; }
 
@@ -60,5 +64,4 @@ if [[ "$fa" != "$fb" ]]; then
 	status=1
 fi
 "${benchstat[@]}" "$out/a.txt" "$out/b.txt"
-echo "raw results: $out" >&2
 exit "$status"
