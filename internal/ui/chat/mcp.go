@@ -32,6 +32,11 @@ type MCPToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
+	if opts.ToolCall.Name == tools.CallMCPToolToolName {
+		// A direct-name call to a catalogue tool streams under its own
+		// name, then is renamed once it is forwarded to call_mcp_tool.
+		return (&CatalogueCallRenderContext{}).RenderTool(sty, width, opts)
+	}
 	toolNameParts := strings.SplitN(opts.ToolCall.Name, "_", 3)
 	if len(toolNameParts) != 3 {
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid tool name"}, width)

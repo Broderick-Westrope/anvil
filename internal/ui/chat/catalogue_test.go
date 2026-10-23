@@ -38,3 +38,15 @@ func TestCallMCPToolMatchesExpandedPatternsByTheInnerName(t *testing.T) {
 	require.Contains(t, ansi.Strip(expanded.Render(80)), "line two")
 	require.NotContains(t, ansi.Strip(compact.Render(80)), "line two")
 }
+
+func TestAForwardedDirectCallRendersAsTheInnerToolOnceRenamed(t *testing.T) {
+	t.Parallel()
+	result := &message.ToolResult{Content: "3 events"}
+	item := helperToolItem(t, "mcp_datadog_search_logs", ``, nil, ToolStatusRunning)
+	item.SetToolCall(message.ToolCall{ID: "tc-test", Name: "call_mcp_tool", Input: `{"server":"datadog","tool":"search_logs","arguments":{"query":"errors"}}`, Finished: true})
+	item.SetResult(result)
+	item.SetStatus(ToolStatusSuccess)
+	direct := helperToolItem(t, "mcp_datadog_search_logs", `{"query":"errors"}`, result, ToolStatusSuccess)
+
+	require.Equal(t, ansi.Strip(direct.Render(80)), ansi.Strip(item.Render(80)))
+}
