@@ -46,7 +46,8 @@ internal/
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
-  mermaid/                         Mermaid to pixels: pele-go (Go port of Pele), resvg in wazero (vendored)
+  mermaid/                         Exports diagrams as HTML pages; layout and pixels come from pele-go's raster module
+  mermaidbench/                    Test-only latency and memory harness comparing two builds of the pipeline
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -216,8 +217,8 @@ Terms with a specific meaning in this codebase are defined in
   `Chat.SyncAssistantSegments`); the head keeps the message ID and the
   rest are `<id>#<n>`. `graphicsFeature` (`internal/ui/model/graphics.go`
   for its cache and messages, `mermaid_render.go` for the worker) renders
-  them on one goroutine with `internal/mermaid` (pele-go, a Go port of
-  Pele, for SVG, the vendored resvg in wazero for pixels; see
+  them on one goroutine with `github.com/Broderick-Westrope/pele-go/raster`
+  (pele-go, a Go port of Pele, for SVG, resvg in wazero for pixels; see
   `docs/adr/0004-mermaid-rendering.md` and `docs/adr/0006-pele-go.md`)
   and sends Kitty graphics with Unicode placeholders. Items get the renderer through their constructors
   as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
@@ -236,7 +237,7 @@ Terms with a specific meaning in this codebase are defined in
   an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).
   `Y` copies a diagram as a PNG: since Anvil keeps no pixels, the worker
   renders it again (`diagramJobCopy`) at twice its layout size (within
-  `mermaid.MaxPixels`) on an opaque background, then writes it to the
+  `raster.MaxPixels`) on an opaque background, then writes it to the
   clipboard itself, so copies land in order. `writeClipboardImage`
   writes natively on macOS and Windows and through `wl-copy` or `xclip`
   on other Unix desktops (the native X11 clipboard can't do large

@@ -1,7 +1,8 @@
 # 0004: Render Mermaid in-process with vendored Pele and resvg
 
 **Status:** Accepted; running Pele in goja is superseded by
-[ADR 0006](0006-pele-go.md)
+[ADR 0006](0006-pele-go.md). The resvg wrapper, the fonts and their
+licences moved to pele-go's `raster` module, as described in ADR 0006.
 **Date:** 2026-10-20
 
 ## Context
@@ -44,12 +45,10 @@ The spike (`plans/completed/spike-2026-10-20-mermaid-rendering.md`) found:
   version here. Run
   `go test ./internal/mermaid/...` (the sample diagrams cover every type we
   render) and look at the output with `MERMAID_TEST_OUT=<dir>`.
-- **resvg or its fonts:** rebuild `resvg.wasm` from the Rust crate in the
-  go-resvg repository for the `wasm32-wasip1` target. The Go side depends
-  only on its exports (`wasm_alloc`, `wasm_free`, `render`) and the 20-byte
-  result header described in `resvg.go`. Change `../fonts` in the same
-  commit, or Pele measures labels with a different font from the one
-  drawn.
+- **resvg or its fonts:** they live in pele-go's `raster` module now.
+  Follow "Upgrading resvg or the fonts" and its release order in
+  `raster/README.md` there, then bump
+  `github.com/Broderick-Westrope/pele-go/raster` in `go.mod`.
 
 ## Alternatives
 

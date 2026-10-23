@@ -35,15 +35,24 @@ is Anvil's old `measure.go` generalised.
 - The idle teardown stays, for resvg. The renderer now holds only the
   parsed fonts, whose data stays in the binary.
 - `go.mod` requires pele-go `v0.1.0`, its first tagged release.
+- Later, the pipeline (`Renderer`, `Rasterizer`, `Theme`, the fonts and
+  the resvg wrapper) moved out of `internal/mermaid` into pele-go's nested
+  module `github.com/Broderick-Westrope/pele-go/raster`, so other programs
+  can import it. Its API is the one Anvil used, unchanged: layout and
+  rasterizing stay separate, and Anvil still owns the `Rasterizer`'s
+  lifecycle. `internal/mermaid` keeps only `HTMLDocument`, whose page
+  names the font family `Anvil DejaVu Sans`.
 
 ### Upgrading
 
-- **Pele:** bump pele-go to the release that ports the new Pele version.
-  Run `go test ./internal/mermaid/...` and compare the output from
-  `MERMAID_TEST_OUT=<dir>` before and after. Gantt marks the current
-  time, so make the two runs back to back.
-- **resvg or its fonts:** as in ADR 0004. pele-go measures with the same
-  `fonts/` files, so change them together.
+- **Pele:** bump `github.com/Broderick-Westrope/pele-go/raster` to the
+  release that requires the pele-go release porting the new Pele version.
+  Run `go test ./internal/mermaid/...` here and in pele-go's `raster/`,
+  and compare the output from `MERMAID_TEST_OUT=<dir>` before and after.
+  Gantt marks the current time, so make the two runs back to back.
+  `internal/mermaidbench/compare.sh` compares latency and memory between
+  the two builds.
+- **resvg or its fonts:** see `raster/README.md` in pele-go.
 
 ## Alternatives
 
@@ -66,7 +75,8 @@ switch, in separate processes:
 | Source to SVG, median (3 runs) | 529–569 µs | 34–39 µs |
 | Source to SVG, p99 (3 runs) | 7.5–20.6 ms | 0.58–0.71 ms |
 
-- Memory follows pele-go's `scripts/anvil-memory` method: render and
+- Memory follows pele-go's `scripts/anvil-memory` method, which
+  `internal/mermaidbench` now reimplements: render and
   rasterize `info` 20 times with resvg loaded from a warm compilation
   cache, keep the last image, and compare the settled process against its
   start. What's left is resvg and the image.
