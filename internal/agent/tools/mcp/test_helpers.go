@@ -24,3 +24,18 @@ func SetStateWithErrorForTest(name string, state State, err error) {
 func DeleteStateForTest(name string) {
 	states.Del(name)
 }
+
+// SetToolsForTest registers tools for a server as a connect would, without
+// connecting anything. Pair with t.Cleanup(DeleteToolsForTest).
+func SetToolsForTest(name string, tools ...*Tool) {
+	registered := make([]*RegisteredTool, 0, len(tools))
+	for _, tool := range tools {
+		registered = append(registered, newRegisteredTool(tool))
+	}
+	allTools.Set(name, registered)
+}
+
+// DeleteToolsForTest removes a server's tools from the registry.
+func DeleteToolsForTest(name string) {
+	allTools.Del(name)
+}

@@ -121,13 +121,7 @@ func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.A
 			}
 
 			// Count tools for this server.
-			toolCount := 0
-			for mcpName, tools := range mcp.Tools() {
-				if mcpName == params.ServerName {
-					toolCount = len(tools)
-					break
-				}
-			}
+			toolCount := len(mcp.ServerTools(params.ServerName))
 
 			return fantasy.NewTextResponse(
 				fmt.Sprintf("Enabled %s MCP (%d tools available)", params.ServerName, toolCount),

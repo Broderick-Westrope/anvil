@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"charm.land/fantasy/schema"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,11 +26,107 @@ type ToolResult struct {
 	MediaType string
 }
 
-var allTools = csync.NewMap[string, []*Tool]()
+// RegisteredTool is a server's tool as held in the registry: the tool the
+// server listed, untouched, and the parameters sent to the model.
+//
+// Parameters and Required are a private deep copy of the input schema's
+// properties and required list, already normalised the way fantasy
+// normalises every tool it sends. fantasy normalises the map it is given
+// in place, so normalising it here first leaves fantasy nothing to write:
+// the map is shared by every agent's wrapper and stays read-only.
+type RegisteredTool struct {
+	*Tool
+	Parameters map[string]any
+	Required   []string
+}
+
+var allTools = csync.NewMap[string, []*RegisteredTool]()
 
 // Tools returns all available MCP tools.
-func Tools() iter.Seq2[string, []*Tool] {
+func Tools() iter.Seq2[string, []*RegisteredTool] {
 	return allTools.Seq2()
+}
+
+// ServerTools returns the registered tools of the named server, or nil.
+func ServerTools(name string) []*RegisteredTool {
+	tools, _ := allTools.Get(name)
+	return tools
+}
+
+// ToolName is the name the model sees for a server's tool:
+// mcp_<server>_<tool>, with the server capitalised under the Anthropic
+// OAuth rename.
+func ToolName(server, tool string) string {
+	if OAuthRenameEnabled() {
+		return OAuthToolName(server, tool)
+	}
+	return fmt.Sprintf("mcp_%s_%s", server, tool)
+}
+
+// SentToolBytes is the size of the named server's registered tools as the
+// model receives them: the compact JSON of each tool's name, description,
+// parameters and required list. Fields the model never sees (_meta,
+// annotations, outputSchema, title) don't count. It is 0 for a server with
+// no registered tools.
+func SentToolBytes(name string) int {
+	total := 0
+	for _, tool := range ServerTools(name) {
+		sent, err := json.Marshal(struct {
+			Name        string         `json:"name"`
+			Description string         `json:"description"`
+			Parameters  map[string]any `json:"parameters"`
+			Required    []string       `json:"required"`
+		}{fmt.Sprintf("mcp_%s_%s", name, tool.Name), tool.Description, tool.Parameters, tool.Required})
+		if err != nil {
+			slog.Debug("Failed to measure MCP tool", "name", name, "tool", tool.Name, "error", err)
+			continue
+		}
+		total += len(sent)
+	}
+	return total
+}
+
+// newRegisteredTool extracts the parameters fantasy sends for tool and
+// normalises a deep copy of them.
+func newRegisteredTool(tool *Tool) *RegisteredTool {
+	registered := &RegisteredTool{Tool: tool, Parameters: map[string]any{}, Required: []string{}}
+	input, ok := tool.InputSchema.(map[string]any)
+	if !ok {
+		return registered
+	}
+	if props, ok := input["properties"].(map[string]any); ok {
+		registered.Parameters = deepCopy(props)
+	}
+	switch req := input["required"].(type) {
+	case []any:
+		for _, v := range req {
+			if s, ok := v.(string); ok {
+				registered.Required = append(registered.Required, s)
+			}
+		}
+	case []string:
+		registered.Required = slices.Clone(req)
+	}
+	schema.Normalize(map[string]any{
+		"type":       "object",
+		"properties": registered.Parameters,
+		"required":   registered.Required,
+	})
+	return registered
+}
+
+// deepCopy copies a decoded JSON object through a JSON round trip, so the
+// copy shares no maps or slices with the original.
+func deepCopy(props map[string]any) map[string]any {
+	raw, err := json.Marshal(props)
+	if err != nil {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return map[string]any{}
+	}
+	return out
 }
 
 // RunTool runs an MCP tool with the given input parameters.
@@ -171,7 +268,11 @@ func updateTools(cfg *config.ConfigStore, name string, tools []*Tool) int {
 		allTools.Del(name)
 		return 0
 	}
-	allTools.Set(name, tools)
+	registered := make([]*RegisteredTool, 0, len(tools))
+	for _, tool := range tools {
+		registered = append(registered, newRegisteredTool(tool))
+	}
+	allTools.Set(name, registered)
 	return len(tools)
 }
 

@@ -1410,16 +1410,7 @@ func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, er
 	orch.SetTools(agentTools)
 	orch.SetLazyMCPToolMap(lazyMap)
 
-	// Count tools for the just-connected server.
-	toolCount := 0
-	for mcpName, mcpTools := range toolsmcp.Tools() {
-		if mcpName == name {
-			toolCount = len(mcpTools)
-			break
-		}
-	}
-
-	return toolCount, nil
+	return len(toolsmcp.ServerTools(name)), nil
 }
 
 // RefreshMCPTools rebuilds the orchestrator's tool list after an MCP
