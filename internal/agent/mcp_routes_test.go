@@ -34,9 +34,9 @@ func TestDeriveMCPRoutes(t *testing.T) {
 	routes := deriveMCPRoutes(snap)
 
 	want := map[string]mcpRoute{
-		"small":     {auto: true, catalogue: false, reason: "auto: 10,190 bytes, under 12,000", short: "10,190 B", description: "small"},
-		"under":     {auto: true, catalogue: false, reason: "auto: 11,999 bytes, under 12,000", short: "11,999 B", description: "under"},
-		"at":        {auto: true, catalogue: true, reason: "auto: 12,000 bytes, not under 12,000", short: "12,000 B", description: "at"},
+		"small":     {auto: true, catalogue: false, reason: "auto: 10,190 bytes, under 12,000", short: "10 kB", description: "small"},
+		"under":     {auto: true, catalogue: false, reason: "auto: 11,999 bytes, under 12,000", short: "12 kB", description: "under"},
+		"at":        {auto: true, catalogue: true, reason: "auto: 12,000 bytes, not under 12,000", short: "12 kB", description: "at"},
 		"broken":    {auto: true, catalogue: true, reason: "auto: error at startup", short: "error at startup", description: "broken"},
 		"lazy":      {auto: true, catalogue: true, reason: "auto: lazy", short: "lazy", description: "Logs."},
 		"pinned":    {catalogue: false, reason: "route: direct", short: "set in config", description: "pinned"},
@@ -84,7 +84,7 @@ func TestCoordinatorMCPRoutesFlagsADirectServerThatGrew(t *testing.T) {
 	after, _ := c.MCPRoutes()
 	require.False(t, after[0].Catalogue, "the route never changes within a process")
 	require.Equal(t, "auto: 84 bytes, under 12,000; now 12,083 bytes, past 12,000, so it moves to the catalogue at the next restart", after[0].Reason)
-	require.Equal(t, "84 B, now 12,083 B", after[0].Short)
+	require.Equal(t, "84 B, now 12 kB", after[0].Short)
 	require.Equal(t, "route: direct", after[1].Reason)
 }
 

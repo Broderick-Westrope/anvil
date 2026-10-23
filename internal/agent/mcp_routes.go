@@ -74,7 +74,7 @@ func routeFor(server toolsmcp.ServerSnapshot) (catalogue bool, reason, short str
 		return true, fmt.Sprintf("auto: %s at startup", server.State), fmt.Sprintf("%s at startup", server.State)
 	}
 	size := humanize.Comma(int64(server.SentBytes))
-	short = size + " B"
+	short = humanize.Bytes(uint64(server.SentBytes))
 	if server.SentBytes < catalogueThresholdBytes {
 		return false, fmt.Sprintf("auto: %s bytes, under %s", size, humanize.Comma(catalogueThresholdBytes)), short
 	}
@@ -130,7 +130,7 @@ func (c *coordinator) MCPRoutes() ([]tools.MCPRoute, bool) {
 			now := humanize.Comma(int64(size))
 			reason += fmt.Sprintf("; now %s bytes, past %s, so it moves to the catalogue at the next restart",
 				now, humanize.Comma(catalogueThresholdBytes))
-			short += ", now " + now + " B"
+			short += ", now " + humanize.Bytes(uint64(size))
 		}
 		out = append(out, tools.MCPRoute{Server: name, Catalogue: route.catalogue, Reason: reason, Short: short})
 	}
