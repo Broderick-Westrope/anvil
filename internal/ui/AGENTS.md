@@ -90,7 +90,8 @@ to `UI` and cases to the dispatchers. That keeps upstream's cases in
 so cherry-picks still apply. See `docs/adr/0003-ui-complexity.md`. The
 workflow feature (`model/workflow.go`) is the worked example. The graphics
 feature (`model/graphics.go`), which draws Mermaid diagrams and tool images,
-is the other.
+is another. The smallest is `fileOpenFeature` (`model/file_open.go`), which
+only claims the open, edit and reveal messages a tool drill-in sends.
 
 Diagrams are the one exception that touches upstream-shaped code
 directly, because chat items are built in `UI` (`ExtractMessageItems`):
@@ -105,8 +106,9 @@ directly, because chat items are built in `UI` (`ExtractMessageItems`):
 - `UI.Update` tells `drillInFeature`s which drill-in is on top after
   every message (`features.drillInTop`).
 - `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
-- `selectedItemBindings` adds the help entries of a diagram node or a
-  tool image (`chat.ShowsToolImage`).
+- `selectedItemBindings` adds the help entries of a diagram node, a
+  tool image (`chat.ShowsToolImage`), and the file keys of a tool
+  drill-in item (`chat.FileKeys`).
 - `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
   message's `<id>#<n>` nodes, `Chat.HandleDelayedClick` opens drill-ins
   through `chat.ClickDrillInHandler`, and `sourceSelection` copies a

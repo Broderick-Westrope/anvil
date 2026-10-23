@@ -489,6 +489,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		ui.chat.SetDiagrams(graphics)
 	}
 	ui.features.register(newBranchSummaryFeature(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newFileOpenFeature(com.Workspace.WorkingDir))
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -4007,10 +4008,24 @@ func (m *UI) selectedItemBindings() []key.Binding {
 	if diagram, ok := selected.(*chat.DiagramItem); ok && !diagram.Failed() {
 		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyImage}
 	}
-	if chat.ShowsToolImage(selected) {
-		return []key.Binding{m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage}
+	var binds []key.Binding
+	image := chat.ShowsToolImage(selected)
+	if image {
+		binds = append(binds, m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage)
 	}
-	return nil
+	open, file := chat.FileKeys(selected)
+	switch {
+	case image:
+		// The image item already listed OpenImage.
+	case open == chat.OpensImage:
+		binds = append(binds, m.keyMap.Chat.OpenImage)
+	case open == chat.OpensFile:
+		binds = append(binds, m.keyMap.Chat.OpenFile)
+	}
+	if file {
+		binds = append(binds, m.keyMap.Chat.EditFile, m.keyMap.Chat.RevealFile)
+	}
+	return binds
 }
 
 // FullHelp implements [help.KeyMap].

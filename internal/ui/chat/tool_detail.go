@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -45,30 +46,33 @@ type detailRenderConfigurable interface {
 func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images ImageRenderer) []MessageItem {
 	tc := source.ToolCall()
 	status := source.Status()
+	file := &toolFile{source: source, images: images}
 
 	var items []MessageItem
 
 	// 1. Header.
 	items = append(items, &toolDetailHeaderItem{
 		Versioned: list.NewVersioned(),
+		toolFile:  file,
 		sty:       sty,
-		source:    source,
 	})
 
 	// 2. Input section divider.
 	items = append(items, &toolDetailSectionItem{
 		Versioned:  list.NewVersioned(),
+		toolFile:   file,
 		sty:        sty,
 		label:      "Input",
 		toolCallID: tc.ID,
 	})
 
 	// 3. Parameter items.
-	items = append(items, buildParamItems(sty, tc)...)
+	items = append(items, buildParamItems(sty, tc, file)...)
 
 	// 4. Output section divider.
 	items = append(items, &toolDetailSectionItem{
 		Versioned:  list.NewVersioned(),
+		toolFile:   file,
 		sty:        sty,
 		label:      "Output",
 		toolCallID: tc.ID,
@@ -78,6 +82,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images Ima
 	if status == ToolStatusAwaitingPermission {
 		items = append(items, &toolDetailStaticItem{
 			Versioned:  list.NewVersioned(),
+			toolFile:   file,
 			sty:        sty,
 			id:         "tool-detail-output:" + tc.ID,
 			content:    "Awaiting permission...",
@@ -87,9 +92,8 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images Ima
 	} else {
 		items = append(items, &toolDetailOutputItem{
 			Versioned: list.NewVersioned(),
+			toolFile:  file,
 			sty:       sty,
-			source:    source,
-			images:    images,
 		})
 	}
 
@@ -98,10 +102,11 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images Ima
 
 // buildParamItems parses the tool call input JSON and returns a
 // toolDetailParamItem for each parameter, sorted by key.
-func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
+func buildParamItems(sty *styles.Styles, tc message.ToolCall, file *toolFile) []MessageItem {
 	if tc.Input == "" {
 		return []MessageItem{&toolDetailStaticItem{
 			Versioned:  list.NewVersioned(),
+			toolFile:   file,
 			sty:        sty,
 			id:         "tool-detail-param:no-input:" + tc.ID,
 			content:    "  (no input)",
@@ -114,6 +119,7 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 	if err := json.Unmarshal([]byte(tc.Input), &params); err != nil {
 		return []MessageItem{&toolDetailStaticItem{
 			Versioned:  list.NewVersioned(),
+			toolFile:   file,
 			sty:        sty,
 			id:         "tool-detail-param:raw:" + tc.ID,
 			content:    "  " + tc.Input,
@@ -136,6 +142,7 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall) []MessageItem {
 		v := params[k]
 		items = append(items, &toolDetailParamItem{
 			Versioned:  list.NewVersioned(),
+			toolFile:   file,
 			sty:        sty,
 			key:        k,
 			value:      v,
@@ -163,12 +170,13 @@ func sectionHeader(sty *styles.Styles, label string, width int) string {
 // toolDetailHeaderItem renders the metadata header: icon + tool display name.
 type toolDetailHeaderItem struct {
 	*list.Versioned
+	*toolFile
 	sty          *styles.Styles
-	source       ToolMessageItem
 	focused      bool
 	cachedRender string
 	cachedWidth  int
 	cachedFocus  bool
+	cachedKeys   fileKeys
 	lastStatus   ToolStatus
 }
 
@@ -188,14 +196,10 @@ func (h *toolDetailHeaderItem) RawRender(width int) string {
 // Render implements list.Item.
 func (h *toolDetailHeaderItem) Render(width int) string {
 	status := h.source.Status()
-	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused {
+	keys := h.keys()
+	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused && h.cachedKeys == keys {
 		return h.cachedRender
 	}
-
-	tc := h.source.ToolCall()
-	icon := toolIcon(h.sty, status)
-	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
-	rendered := fmt.Sprintf("%s %s", icon, name)
 
 	var prefix string
 	if h.focused {
@@ -203,17 +207,43 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	} else {
 		prefix = h.sty.Messages.ToolCallBlurred.Render()
 	}
-	lines := strings.Split(rendered, "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
+	tc := h.source.ToolCall()
+	icon := toolIcon(h.sty, status)
+	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
+	rendered := fmt.Sprintf("%s %s", icon, name)
+	// Hints go from the right until the rest fit; the help bar still has
+	// the keys.
+	hints := h.fileHints(keys)
+	for len(hints) > 0 && lipgloss.Width(prefix+rendered+strings.Join(hints, "")) > width {
+		hints = hints[:len(hints)-1]
 	}
-	rendered = strings.Join(lines, "\n")
+	rendered += strings.Join(hints, "")
+	rendered = prefix + rendered
 
 	h.cachedRender = rendered
 	h.cachedWidth = width
 	h.cachedFocus = h.focused
+	h.cachedKeys = keys
 	h.lastStatus = status
 	return rendered
+}
+
+// fileHints are the header's hints for o, e and r, in that order.
+func (h *toolDetailHeaderItem) fileHints(keys fileKeys) []string {
+	key := func(k, tip string) string {
+		return "  " + h.sty.Header.Keystroke.Render(k) + " " + h.sty.Header.KeystrokeTip.Render(tip)
+	}
+	var hints []string
+	switch keys.open {
+	case OpensFile:
+		hints = append(hints, key("o", "open file"))
+	case OpensImage:
+		hints = append(hints, key("o", "open in viewer"))
+	}
+	if keys.file {
+		hints = append(hints, key("e", "open in $EDITOR"), key("r", RevealLabel(runtime.GOOS)))
+	}
+	return hints
 }
 
 // SetFocused implements list.Focusable.
@@ -230,6 +260,7 @@ func (h *toolDetailHeaderItem) SetFocused(v bool) {
 // toolDetailSectionItem renders a section divider line.
 type toolDetailSectionItem struct {
 	*list.Versioned
+	*toolFile
 	sty          *styles.Styles
 	label        string
 	toolCallID   string
@@ -291,6 +322,7 @@ func (s *toolDetailSectionItem) SetFocused(v bool) {
 // toolDetailStaticItem renders a static text line. Not expandable.
 type toolDetailStaticItem struct {
 	*list.Versioned
+	*toolFile
 	sty          *styles.Styles
 	id           string
 	content      string
@@ -355,6 +387,7 @@ func (s *toolDetailStaticItem) SetFocused(v bool) {
 // are always inline. Multi-line values are expandable/collapsible.
 type toolDetailParamItem struct {
 	*list.Versioned
+	*toolFile
 	sty        *styles.Styles
 	key        string
 	value      any
@@ -486,10 +519,9 @@ func (p *toolDetailParamItem) SetFocused(v bool) {
 // truncated output; expanded shows the full output.
 type toolDetailOutputItem struct {
 	*list.Versioned
-	sty    *styles.Styles
-	source ToolMessageItem
-	images ImageRenderer
-	// shownImage is the image result last rendered, which o opens, or nil
+	*toolFile
+	sty *styles.Styles
+	// shownImage is the image result last rendered, which Y copies, or nil
 	// when the output last rendered as text.
 	shownImage *message.ToolResult
 

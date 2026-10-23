@@ -48,7 +48,9 @@ Press `tab` to focus the chat first.
 | `h` (`left`) | Back out one level |
 | `c` or `y` | Copy the item (a diagram copies its source) |
 | `Y` | Copy a diagram, or the image in a tool's detail, as a PNG |
-| `o` | Open a diagram in the browser, or the image in a tool's detail in your image viewer |
+| `o` | Open a diagram in the browser, the image a tool returned in your image viewer, or otherwise the file a tool's detail names in its default app (text, source and images only) |
+| `e` | Open the file a tool's detail names in `$EDITOR`, at the line `view` read from |
+| `r` | Show the file a tool's detail names in Finder, Explorer or your file manager |
 | `B` | Branch from the selected message |
 | `J` / `K` | Scroll one line |
 | `d` / `u`, `f` / `b` | Half page, full page |

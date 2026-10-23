@@ -892,7 +892,10 @@ func TestHelpShowsTheViewerKeyOnAToolImage(t *testing.T) {
 	require.Contains(t, helpTexts(u.ShortHelp()), "Y copy image")
 
 	drill.SetSelected(0)
-	require.NotContains(t, helpTexts(u.ShortHelp()), "o open in viewer", "the header")
+	help := helpTexts(u.ShortHelp())
+	require.Contains(t, help, "o open in viewer", "o opens the image from the header too")
+	require.NotContains(t, help, "Y copy image", "only the image item copies it")
+	require.NotContains(t, help, "o open file")
 }
 
 func TestJPEGProgressiveSkipsASegmentLongerThanAByte(t *testing.T) {
