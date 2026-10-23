@@ -426,7 +426,11 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 	}
 
 	// Atomically mark as starting so concurrent callers see the
-	// transition and return ErrAlreadyConnecting.
+	// transition and return ErrAlreadyConnecting. connecting spans the
+	// retry too, so WaitSettled doesn't wake on the error a transient
+	// first failure publishes before the retry.
+	connecting.Set(name, struct{}{})
+	defer connecting.Del(name)
 	updateState(name, StateStarting, nil, nil, Counts{})
 
 	attempt := func() error {
