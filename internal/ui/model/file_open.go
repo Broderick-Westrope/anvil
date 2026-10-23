@@ -1,13 +1,17 @@
 package model
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/filepathext"
@@ -19,11 +23,15 @@ import (
 )
 
 // fileOpenFeature opens the file a tool drill-in's call names, in the OS
-// default app (chat.FileOpenMsg) or in $EDITOR (chat.FileEditMsg).
+// default app (chat.FileOpenMsg), in $EDITOR (chat.FileEditMsg), or in the
+// file manager (chat.FileRevealMsg).
 type fileOpenFeature struct {
 	workingDir func() string
 	openURL    func(string) error
 	editorCmd  func(path string, line int) (*exec.Cmd, error)
+	// goos picks the file manager, and run runs its command.
+	goos string
+	run  func(ctx context.Context, args []string) error
 }
 
 func newFileOpenFeature(workingDir func() string) *fileOpenFeature {
@@ -31,7 +39,14 @@ func newFileOpenFeature(workingDir func() string) *fileOpenFeature {
 		workingDir: workingDir,
 		openURL:    browser.OpenURL,
 		editorCmd:  editorCommand,
+		goos:       runtime.GOOS,
+		run:        runCommand,
 	}
+}
+
+// runCommand runs args and waits for it to exit.
+func runCommand(ctx context.Context, args []string) error {
+	return exec.CommandContext(ctx, args[0], args[1:]...).Run()
 }
 
 // editorCommand runs $EDITOR on path, at line when it's positive.
@@ -67,6 +82,12 @@ func (f *fileOpenFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 			return util.ReportError(fmt.Errorf("edit file: %w", err)), true
 		}
 		return f.edit(path, msg.Line), true
+	case chat.FileRevealMsg:
+		path, err := f.resolve(msg.Path)
+		if err != nil {
+			return util.ReportError(fmt.Errorf("reveal file: %w", err)), true
+		}
+		return f.reveal(path), true
 	}
 	return nil, false
 }
@@ -178,6 +199,65 @@ func editorExited(path string) tea.ExecCallback {
 			return util.NewErrorMsg(fmt.Errorf("edit file %s: %w", path, err))
 		}
 		return nil
+	}
+}
+
+// revealTimeout bounds how long a file manager may take to answer.
+const revealTimeout = 10 * time.Second
+
+// revealCommand is a command that shows a file selected in the file
+// manager.
+type revealCommand struct {
+	args []string
+	// anyExit counts any exit as shown: explorer /select exits 1 even
+	// when it worked.
+	anyExit bool
+}
+
+// revealCommands are the commands that show path in goos's file manager,
+// to try in order. Showing a file opens nothing, so unlike o it needs no
+// allowlist. Linux has no one command, so it asks the file manager over
+// D-Bus to select the file, then falls back to opening its directory.
+func revealCommands(goos, path string) []revealCommand {
+	switch goos {
+	case "darwin":
+		return []revealCommand{{args: []string{"open", "-R", path}}}
+	case "windows":
+		return []revealCommand{{args: []string{"explorer", "/select," + path}, anyExit: true}}
+	default:
+		// A comma separates a D-Bus array's items, so it's escaped.
+		uri := strings.ReplaceAll(fileURL(path), ",", "%2C")
+		return []revealCommand{
+			{args: []string{
+				"dbus-send", "--session", "--print-reply", "--dest=org.freedesktop.FileManager1",
+				"--type=method_call", "/org/freedesktop/FileManager1",
+				"org.freedesktop.FileManager1.ShowItems", "array:string:" + uri, "string:",
+			}},
+			{args: []string{"xdg-open", filepath.Dir(path)}},
+		}
+	}
+}
+
+// reveal shows path selected in the OS file manager, trying each of
+// revealCommands until one works.
+func (f *fileOpenFeature) reveal(path string) tea.Cmd {
+	return func() tea.Msg {
+		realPath, _, err := localFile(path)
+		if err != nil {
+			return util.NewErrorMsg(fmt.Errorf("reveal file: %w", err))
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), revealTimeout)
+		defer cancel()
+		var failed error
+		for _, c := range revealCommands(f.goos, realPath) {
+			err := f.run(ctx, c.args)
+			var exit *exec.ExitError
+			if err == nil || c.anyExit && errors.As(err, &exit) {
+				return util.NewInfoMsg("Showed " + filepath.Base(realPath))
+			}
+			failed = errors.Join(failed, fmt.Errorf("%s: %w", c.args[0], err))
+		}
+		return util.NewErrorMsg(fmt.Errorf("reveal file %s: %w", realPath, failed))
 	}
 }
 

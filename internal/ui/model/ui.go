@@ -4013,7 +4013,7 @@ func (m *UI) selectedItemBindings() []key.Binding {
 	if image {
 		binds = append(binds, m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage)
 	}
-	open, edit := chat.FileKeys(selected)
+	open, file := chat.FileKeys(selected)
 	switch {
 	case image:
 		// The image item already listed OpenImage.
@@ -4022,8 +4022,8 @@ func (m *UI) selectedItemBindings() []key.Binding {
 	case open == chat.OpensFile:
 		binds = append(binds, m.keyMap.Chat.OpenFile)
 	}
-	if edit {
-		binds = append(binds, m.keyMap.Chat.EditFile)
+	if file {
+		binds = append(binds, m.keyMap.Chat.EditFile, m.keyMap.Chat.RevealFile)
 	}
 	return binds
 }

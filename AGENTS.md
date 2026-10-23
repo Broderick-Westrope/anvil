@@ -281,8 +281,11 @@ Terms with a specific meaning in this codebase are defined in
   `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
 - **Opening a tool's file**: in a drill-in of a built-in tool whose call
   has a `file_path` (`fileTools` in `internal/ui/chat/tool_file.go`; an
-  MCP tool's may not be local), `o` opens the file in the OS default app
-  and `e` opens it in `$EDITOR` (at `view`'s offset), from any item. The
+  MCP tool's may not be local), `o` opens the file in the OS default app,
+  `e` opens it in `$EDITOR` (at `view`'s offset), and `r` shows it in the
+  file manager (`revealCommands`: `open -R`, `explorer /select,`, or the
+  FileManager1 D-Bus call falling back to `xdg-open` on its directory;
+  showing opens nothing, so it needs no allowlist), from any item. The
   drill-in's items share one `chat.toolFile`, which re-parses the input
   only when it changes, since it's asked on every render. When the call
   returned an image, `o` opens that image instead, from every item. That

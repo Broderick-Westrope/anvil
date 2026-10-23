@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -28,6 +29,10 @@ type fileOpenTest struct {
 	edited  []string
 	lines   []int
 	editErr error
+	// ran is every command reveal ran, and runErrs what each returns in
+	// turn (nil once they run out).
+	ran     [][]string
+	runErrs []error
 }
 
 func newFileOpenTest(t *testing.T) *fileOpenTest {
@@ -45,6 +50,16 @@ func newFileOpenTest(t *testing.T) *fileOpenTest {
 				return nil, ft.editErr
 			}
 			return exec.CommandContext(t.Context(), "true"), nil
+		},
+		goos: "darwin",
+		run: func(_ context.Context, args []string) error {
+			ft.ran = append(ft.ran, args)
+			if len(ft.runErrs) == 0 {
+				return nil
+			}
+			err := ft.runErrs[0]
+			ft.runErrs = ft.runErrs[1:]
+			return err
 		},
 	}
 	return ft
@@ -394,6 +409,7 @@ func TestToolDrillInRoutesFileKeysAndShowsThemInTheHelp(t *testing.T) {
 	help := helpTexts(u.ShortHelp())
 	require.Contains(t, help, "o open file")
 	require.Contains(t, help, "e open in $EDITOR")
+	require.Contains(t, help, "r "+chat.RevealLabel(runtime.GOOS))
 
 	_, cmd := u.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	msgs := runCmds(cmd)
@@ -441,4 +457,115 @@ func symlink(t *testing.T, oldname, newname string) {
 		}
 		require.NoError(t, err)
 	}
+}
+
+func TestFileOpenFeatureRevealsAFileInTheFileManager(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(path string) [][]string{
+		"darwin": func(path string) [][]string { return [][]string{{"open", "-R", path}} },
+		"windows": func(path string) [][]string {
+			return [][]string{{"explorer", "/select," + path}}
+		},
+		"linux": func(path string) [][]string {
+			return [][]string{{
+				"dbus-send", "--session", "--print-reply", "--dest=org.freedesktop.FileManager1",
+				"--type=method_call", "/org/freedesktop/FileManager1",
+				"org.freedesktop.FileManager1.ShowItems", "array:string:" + fileURL(path), "string:",
+			}}
+		},
+	}
+	for goos, want := range tests {
+		t.Run(goos, func(t *testing.T) {
+			t.Parallel()
+			ft := newFileOpenTest(t)
+			ft.goos = goos
+			target := ft.write(t, "notes.md", 0o755)
+			symlink(t, target, filepath.Join(ft.dir, "link"))
+
+			requireInfo(t, ft.run(t, chat.FileRevealMsg{Path: "link"}), util.InfoTypeInfo, "Showed notes.md")
+			require.Equal(t, want(target), ft.ran, "the file the link resolves to, executable or not")
+		})
+	}
+}
+
+func TestFileOpenFeatureRevealFallsBackToTheDirectoryOnLinux(t *testing.T) {
+	t.Parallel()
+
+	ft := newFileOpenTest(t)
+	ft.goos = "linux"
+	ft.write(t, "notes.md", 0o644)
+	ft.runErrs = []error{errors.New("no FileManager1")}
+
+	requireInfo(t, ft.run(t, chat.FileRevealMsg{Path: "notes.md"}), util.InfoTypeInfo, "Showed notes.md")
+	require.Len(t, ft.ran, 2)
+	require.Equal(t, []string{"xdg-open", ft.dir}, ft.ran[1])
+}
+
+func TestFileOpenFeatureReportsEveryRevealThatFailed(t *testing.T) {
+	t.Parallel()
+
+	ft := newFileOpenTest(t)
+	ft.goos = "linux"
+	path := ft.write(t, "notes.md", 0o644)
+	ft.runErrs = []error{errors.New("no bus"), errors.New("no opener")}
+
+	msg := ft.run(t, chat.FileRevealMsg{Path: "notes.md"})
+
+	requireInfo(t, msg, util.InfoTypeError, "reveal file "+path+": dbus-send: no bus\nxdg-open: no opener")
+}
+
+func TestFileOpenFeatureCountsExplorersExitAsShown(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		goos string
+		err  error
+		want util.InfoType
+	}{
+		"explorer exits 1 when it worked": {goos: "windows", err: &exec.ExitError{}, want: util.InfoTypeInfo},
+		"explorer missing":                {goos: "windows", err: exec.ErrNotFound, want: util.InfoTypeError},
+		"open -R failing":                 {goos: "darwin", err: &exec.ExitError{}, want: util.InfoTypeError},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ft := newFileOpenTest(t)
+			ft.goos = tc.goos
+			ft.write(t, "notes.md", 0o644)
+			ft.runErrs = []error{tc.err}
+
+			msg, ok := ft.run(t, chat.FileRevealMsg{Path: "notes.md"}).(util.InfoMsg)
+			require.True(t, ok)
+			require.Equal(t, tc.want, msg.Type, msg.Msg)
+		})
+	}
+}
+
+func TestFileOpenFeatureEscapesCommasForDBus(t *testing.T) {
+	t.Parallel()
+
+	ft := newFileOpenTest(t)
+	ft.goos = "linux"
+	ft.write(t, "a,b.md", 0o644)
+
+	ft.run(t, chat.FileRevealMsg{Path: "a,b.md"})
+
+	require.Contains(t, ft.ran[0], "array:string:"+fileURL(ft.dir)+"/a%2Cb.md")
+}
+
+func TestFileOpenFeatureReportsAFileItCantReveal(t *testing.T) {
+	t.Parallel()
+
+	ft := newFileOpenTest(t)
+	requireInfo(t, ft.run(t, chat.FileRevealMsg{Path: "gone.md"}), util.InfoTypeError, "reveal file: ")
+	requireInfo(t, ft.run(t, chat.FileRevealMsg{Path: "//host/share/a.txt"}), util.InfoTypeError, "reveal file: won't open network path")
+	require.Empty(t, ft.ran)
+}
+
+func TestRunCommandRunsTheCommand(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, runCommand(t.Context(), []string{os.Args[0], "-test.run=^$"}))
+	require.Error(t, runCommand(t.Context(), []string{filepath.Join(t.TempDir(), "missing")}))
 }

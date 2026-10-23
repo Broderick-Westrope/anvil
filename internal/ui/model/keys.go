@@ -1,6 +1,11 @@
 package model
 
-import "charm.land/bubbles/v2/key"
+import (
+	"runtime"
+
+	"charm.land/bubbles/v2/key"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+)
 
 type KeyMap struct {
 	Editor struct {
@@ -60,14 +65,15 @@ type KeyMap struct {
 		FocusChat      key.Binding
 		Branch         key.Binding
 
-		// OpenDiagram, CopyImage, OpenImage, OpenFile and EditFile are
-		// handled by the selected item itself; the bindings are only shown
-		// in the help.
+		// OpenDiagram, CopyImage, OpenImage, OpenFile, EditFile and
+		// RevealFile are handled by the selected item itself; the bindings
+		// are only shown in the help.
 		OpenDiagram key.Binding
 		CopyImage   key.Binding
 		OpenImage   key.Binding
 		OpenFile    key.Binding
 		EditFile    key.Binding
+		RevealFile  key.Binding
 	}
 
 	// Global key maps
@@ -337,6 +343,10 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.EditFile = key.NewBinding(
 		key.WithKeys("e"),
 		key.WithHelp("e", "open in $EDITOR"),
+	)
+	km.Chat.RevealFile = key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", chat.RevealLabel(runtime.GOOS)),
 	)
 	km.Chat.ClearHighlight = key.NewBinding(
 		key.WithKeys("esc", "alt+esc"),

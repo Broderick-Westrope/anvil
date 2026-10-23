@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"runtime"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -36,6 +37,9 @@ func TestToolDrillInOpensTheFileItsCallNamesFromEveryItem(t *testing.T) {
 		handled, msg = pressKey(item, "e")
 		require.True(t, handled, item.ID())
 		require.Equal(t, FileEditMsg{Path: "/tmp/a.go"}, msg, item.ID())
+		handled, msg = pressKey(item, "r")
+		require.True(t, handled, item.ID())
+		require.Equal(t, FileRevealMsg{Path: "/tmp/a.go"}, msg, item.ID())
 		handled, msg = pressKey(item, "x")
 		require.False(t, handled, item.ID())
 		require.Nil(t, msg, item.ID())
@@ -106,7 +110,7 @@ func TestToolDrillInWithoutAFileLeavesTheKeys(t *testing.T) {
 				open, edit := FileKeys(item)
 				require.Equal(t, OpensNothing, open, item.ID())
 				require.False(t, edit, item.ID())
-				for _, k := range []string{"o", "e"} {
+				for _, k := range []string{"o", "e", "r"} {
 					handled, msg := pressKey(item, k)
 					require.False(t, handled, item.ID())
 					require.Nil(t, msg, item.ID())
@@ -289,4 +293,27 @@ func TestToolDetailHeaderFollowsTheStatus(t *testing.T) {
 	source.SetStatus(ToolStatusError)
 
 	require.NotEqual(t, running, header.Render(80))
+}
+
+func TestRevealLabelNamesTheFileManager(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"darwin":  "reveal in Finder",
+		"windows": "show in Explorer",
+		"linux":   "show in file manager",
+		"freebsd": "show in file manager",
+	}
+	for goos, want := range tests {
+		require.Equal(t, want, RevealLabel(goos), goos)
+	}
+}
+
+func TestToolDetailHeaderHintsR(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/a"}`, &message.ToolResult{Content: "x"}, ToolStatusSuccess)
+	header := ansi.Strip(BuildToolDetailItems(&sty, source, nil)[0].Render(200))
+	require.Contains(t, header, "e open in $EDITOR  r "+RevealLabel(runtime.GOOS))
 }

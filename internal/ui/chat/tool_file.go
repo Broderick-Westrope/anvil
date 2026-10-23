@@ -23,6 +23,24 @@ type FileEditMsg struct {
 	Line int
 }
 
+// FileRevealMsg asks for a file a tool call named to be shown in the OS
+// file manager (Finder, Explorer).
+type FileRevealMsg struct {
+	Path string
+}
+
+// RevealLabel is what r is called on goos, after its file manager.
+func RevealLabel(goos string) string {
+	switch goos {
+	case "darwin":
+		return "reveal in Finder"
+	case "windows":
+		return "show in Explorer"
+	default:
+		return "show in file manager"
+	}
+}
+
 // fileTools are the built-in tools whose file_path is a local file. An MCP
 // tool's file_path may name a file elsewhere (a repository, a remote
 // host), which opening it here would mistake for a local one.
@@ -106,22 +124,24 @@ const (
 	OpensImage
 )
 
-// fileKeys is what o and e do on every item of a drill-in.
+// fileKeys is what o, e and r do on every item of a drill-in.
 type fileKeys struct {
 	open OpenTarget
-	edit bool
+	// file is whether the call names a local file, which e opens in
+	// $EDITOR and r shows in the file manager.
+	file bool
 }
 
-// keys is what o and e do. When the call returned an image, o opens that
-// image, as on the output item, so o means one thing throughout the
-// drill-in; e still opens the file.
+// keys is what o, e and r do. When the call returned an image, o opens
+// that image, as on the output item, so o means one thing throughout the
+// drill-in; e and r still act on the file.
 func (f *toolFile) keys() fileKeys {
 	path, _ := f.file()
-	keys := fileKeys{edit: path != ""}
+	keys := fileKeys{file: path != ""}
 	switch {
 	case f.image() != nil:
 		keys.open = OpensImage
-	case keys.edit:
+	case keys.file:
 		keys.open = OpensFile
 	}
 	return keys
@@ -137,21 +157,23 @@ func (f *toolFile) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 		msg = ImageOpenMsg{Data: f.image().Data}
 	case key.String() == "o" && keys.open == OpensFile:
 		msg = FileOpenMsg{Path: path}
-	case key.String() == "e" && keys.edit:
+	case key.String() == "e" && keys.file:
 		msg = FileEditMsg{Path: path, Line: line}
+	case key.String() == "r" && keys.file:
+		msg = FileRevealMsg{Path: path}
 	default:
 		return false, nil
 	}
 	return true, func() tea.Msg { return msg }
 }
 
-// FileKeys reports what o opens from a tool drill-in item, and whether e
-// opens the file its call names.
-func FileKeys(item list.Item) (open OpenTarget, edit bool) {
+// FileKeys reports what o opens from a tool drill-in item, and whether
+// its call names a local file, which e and r act on.
+func FileKeys(item list.Item) (open OpenTarget, file bool) {
 	f, ok := item.(interface{ keys() fileKeys })
 	if !ok {
 		return OpensNothing, false
 	}
 	keys := f.keys()
-	return keys.open, keys.edit
+	return keys.open, keys.file
 }

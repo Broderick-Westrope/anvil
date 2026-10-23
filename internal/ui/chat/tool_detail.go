@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -224,7 +225,7 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	return rendered
 }
 
-// fileHint is the header's hint for o and e.
+// fileHint is the header's hint for o, e and r.
 func (h *toolDetailHeaderItem) fileHint(keys fileKeys) string {
 	key := func(k, tip string) string {
 		return "  " + h.sty.Header.Keystroke.Render(k) + " " + h.sty.Header.KeystrokeTip.Render(tip)
@@ -236,8 +237,8 @@ func (h *toolDetailHeaderItem) fileHint(keys fileKeys) string {
 	case OpensImage:
 		hint = key("o", "open in viewer")
 	}
-	if keys.edit {
-		hint += key("e", "open in $EDITOR")
+	if keys.file {
+		hint += key("e", "open in $EDITOR") + key("r", RevealLabel(runtime.GOOS))
 	}
 	return hint
 }
