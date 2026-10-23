@@ -1,6 +1,6 @@
 # MCP Tool Catalogue Design Doc
 
-**TL;DR:** MCP tools reach the model through a catalogue by default. Three fixed tools, `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool`, find a tool, return its schema as a tool result and run it, so a server's schemas never enter the tool list. Anvil lists a server's tools directly only when they are small enough that listing them costs about as much as finding them. It decides once per connection from the schema size, so nobody has to maintain per-server modes. The spike behind this (`plans/spike-2026-10-23-mcp-catalogue-cost.md`) found that mixing direct and catalogue routes in one session causes no routing mistakes, and that the catalogue costs 41% to 45% less than today's lazy loading.
+**TL;DR:** MCP tools reach the model through a catalogue by default. Three fixed tools, `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool`, find a tool, return its schema as a tool result and run it, so a server's schemas never enter the tool list. Anvil lists a server's tools directly only when they are small, trading a little money for latency on servers like code search. It decides once per process from the schema size, so nobody has to maintain per-server modes. The spike behind this (`plans/spike-2026-10-23-mcp-catalogue-cost.md`) found no routing mistakes when direct and catalogue routes were mixed. The mixed setup closest to what ships cost 37% to 38% less than today's lazy loading.
 
 **Problem:** A server's tools cost tokens on every request once they're listed, and agents use very few of them.
 - **Production data:** `step_usage` and `messages` from 2026-10-10 to 2026-10-23 (46k rows, 1,458 sessions) show:
@@ -29,10 +29,11 @@
   - **Provider tool search** (Anthropic `defer_loading`, OpenAI `tool_search`). fantasy v0.45.2 has no support, and it only covers some models. The catalogue is the provider-agnostic base that native search could later sit under.
   - **Code mode** (running MCP tools from a script).
   - **Headless `tools/list_changed` refresh,** an existing gap.
-  - **The `tools_hash` change after the first step** that the spike found whenever MCP tools are listed (possibly an in-place mutation of shared schema maps). It needs its own issue.
+
+Also in scope, since direct listing stays the default for small servers: `Tool.Info()` returns a copy of the schema maps rather than aliasing the shared `InputSchema` (`mcp-tools.go`). The spike saw `tools_hash` change after the first step whenever MCP tools were listed, though the prefix was still read from cache. Aliasing the shared maps is the likely cause, and if a provider conversion writes to them it's also a cross-session data race.
 
 **Constraints:**
-- **Stable prefix.** Within a process, the tool list and the catalogue tools' descriptions depend only on config and on route decisions made when each server connected. Searching, calling, connecting a deferred catalogue server, or a runtime palette disable must never change the tool list or the system prompt.
+- **Stable prefix.** Within a process, the tool list and the catalogue tools' descriptions depend only on config and on the route map fixed when startup initialisation finishes. Searching, calling, connecting or reconnecting a server, renewing its auth, a `tools/list_changed`, or a palette toggle must never change which servers are direct, the catalogue description, or the system prompt.
 - **Layering** (`AGENTS.md`). The catalogue and the route rule live in the `agent` layer. `internal/agent/tools/mcp` reports schema sizes but knows nothing about routes. Argument validation uses `github.com/google/jsonschema-go`, already a direct dependency.
 - **One identity.** Every existing control applies to a proxied call exactly as it does to a directly listed MCP tool, under the same name `mcp_<server>_<tool>`:
   - permission globs,
@@ -45,7 +46,7 @@
 
 **Design:**
 
-**Choosing a route.** Each server resolves to `direct` or `catalogue` once per connection:
+**Choosing a route.** Each server resolves to `direct` or `catalogue` once per process, when `mcp.Initialize` finishes:
 
 ```mermaid
 flowchart TD
@@ -54,7 +55,7 @@ flowchart TD
     B -- catalogue --> C[catalogue]
     B -- auto or unset --> E{lazy_description set?}
     E -- yes --> C
-    E -- no --> F{estimated schema tokens<br/>under 5k at connect?}
+    E -- no --> F{connected when Initialize finished,<br/>and tools under 13,000 bytes?}
     F -- yes --> D
     F -- no --> C
     D --> G{lazy_description set?}
@@ -62,18 +63,28 @@ flowchart TD
     G -- no --> I[listed from the first step]
 ```
 
-- **The estimate** is the byte length of the server's `tools/list` JSON (names, descriptions, schemas) divided by 2.8. The spike measured 0.33 to 0.38 tokens per byte across Datadog, LaunchDarkly, Linear and Slack, so the estimate errs high.
-  - Among non-lazy servers, the 5k threshold would put muninn (~3.9k) and terminal (~2.3k) in `direct`, and every large server in the catalogue.
-  - It's a constant, not a setting: `route` is the override.
-- **Lazy servers go to the catalogue under `auto`.** They aren't connected at startup, so there's no size to measure, and marking a server lazy already says it's large or rarely used. That's a deliberate behaviour change for existing lazy servers.
+- **The size** is the length of the compact `json.Marshal` of the server's tools after `enabled_tools`/`disabled_tools` filtering (what `updateTools` registers), without its instructions. The threshold is 13,000 bytes, about 5k tokens.
+  - Measured on the spike fixtures, compact tool JSON runs 0.33 to 0.38 tokens per byte (Linear 0.33, LaunchDarkly 0.37, Slack 0.37, Datadog 0.38), so 13,000 bytes is about 4.3k to 4.9k tokens.
+  - Among non-lazy servers this would put muninn (10,812 bytes, ~3.9k tokens) and terminal (6,259 bytes) in `direct`, and every large server in the catalogue.
+  - It's a constant in bytes, so the boundary is exact. `route` is the override.
+- **Anything not measured goes to the catalogue under `auto`,** for the rest of the process:
+  - lazy servers, which aren't connected at startup, and marking one lazy already says it's large or rarely used (a deliberate behaviour change for existing lazy servers),
+  - non-lazy servers that were in error or still starting when `Initialize` finished (expired OAuth is the common case),
+  - servers that first connect later.
+
+  A server in error is still listed in the catalogue description, so the model reaches the "a human must renew it" path, and the server becomes usable through the catalogue once it's re-authenticated.
   - `route: "direct"` on a lazy server keeps today's `enable_mcp` flow, and ADR 0002 still governs it.
-- **The decision is recorded on the server's state** (route plus reason, for example "auto: ~3.9k tokens, under 5k") when it connects. It's kept until the server reconnects, which already rebuilds the tool list.
-  - A `tools/list_changed` that grows a direct server past the threshold doesn't flip it mid-process.
-  - `anvil_info` and the palette show the route and the reason.
-- **Why size alone is enough:** listing a server directly costs its schema tokens `T` on every step, and routing it through the catalogue costs about two extra steps in the sessions that use it, with probability `p`.
+- **The route map belongs to the agent layer,** keyed by server name, separate from `ClientInfo`.
+  - `updateState` rebuilds `ClientInfo` on every transition, so state there would be wiped by renewals, errors and palette toggles.
+  - Every tool-list build, resolver, renewal, re-authentication, `list_changed` refresh and subagent reads the map, and none of them writes it.
+  - `/reload-instance` rebuilds the agent, and the prompt with it, so it may re-decide.
+  - `anvil_info` and the palette show each server's route and reason (for example "auto: 10,812 bytes, under 13,000", or "auto: lazy"). A direct server that a later `list_changed` has grown past the threshold is flagged as such, but stays direct until restart.
+  - The catalogue description lists every catalogue-routed server from config, using `lazy_description`, else the server's name, never connect state.
+- **What the threshold trades:** listing a server directly costs its schema tokens `T` on every step, and routing it through the catalogue costs about two extra steps in the sessions that use it, with probability `p`.
   - At this user's averages (99 steps and 206k prompt tokens per session), direct listing is cheaper only when `T < p × ~4.2k` tokens.
-  - Large servers are 10 to 200 times past that line whatever their usage, and near the line either choice costs within about $0.10 a session.
-  - So usage history would refine a decision whose stake is small (see Decisions).
+  - Catalogue results that stay in history and are re-read on later steps push that line up somewhat, but 5k still sits above it even at `p = 1`.
+  - So the threshold deliberately spends a little money to save latency: a few seconds and two steps on each first use of a small server. The most it costs is a rarely used server just under the line, about $0.30 a session on Opus.
+  - Large servers are 10 to 200 times past the line whatever their usage, which is why usage history isn't needed (see Decisions).
 
 **Catalogue servers are never built into any agent's tool list.** Nothing has to filter them out afterwards, so no name snapshot can go stale. The catalogue tools build them instead: each call goes through a per-agent resolver that builds the agent's MCP tools for one server on demand.
 
@@ -111,7 +122,7 @@ call_mcp_tool(server, tool, arguments)  // Validates arguments, then runs the to
   - The catalogue tools' descriptions list the catalogue servers the agent's `allowed_mcp` permits, sorted by name, each with its `lazy_description`. A server without one falls back to its `serverInfo` title and name.
   - They state that these servers' tools "are never callable directly by name". With that wording, the spike's 96 catalogue and mixed runs produced no routing mistakes.
 - **The resolver.** The MCP half of `buildToolsWithState` (`coordinator.go`, the `GetMCPTools` loop with its `allowed_mcp` check, hook and error-result wrapping) becomes one helper. Building the tool list and the resolver both use it, so the rules can't drift apart.
-  - **Tool list mode:** the helper skips tools of catalogue-routed servers, judged by the server's recorded route via the unwrapped tool (`Tool.MCP()`). The one exception is inner tool names a workflow `agent()` passes in explicitly. `buildWorkflowAgent` still connects a deferred server through `lazyServersFor`.
+  - **Tool list mode:** the helper skips tools of catalogue-routed servers, judged by the route map via the unwrapped tool (`Tool.MCP()`). The one exception is inner tool names a workflow `agent()` passes in explicitly. `buildWorkflowAgent` still connects a deferred server through `lazyServersFor`.
   - **Resolver mode:** it returns the server's tools, and keys them by `Tool.MCP()`, never by parsing `mcp_<server>_` out of a name. Server names can contain `_`, and the OAuth rename changes case.
   - **Connecting:** the resolver connects a deferred server with `toolsmcp.ConnectDeferred` before building, so the search that connects a server already sees its tools. It skips `refreshMCPTools`, which would rebuild the orchestrator's list for tools that are never listed, and which fails in a session with no orchestrator. That also makes it work the same in subagents.
   - **Connection states:** it follows `enable_mcp`'s handling one state at a time (`enable_mcp.go`), except for a server that is still starting.
@@ -161,7 +172,10 @@ call_mcp_tool(server, tool, arguments)  // Validates arguments, then runs the to
 **Decisions:**
 
 ### Which servers go through the catalogue?
-**All of them, except servers whose schemas are under about 5k tokens, decided by Anvil from the schema size at connect time.** In the spike, routing every server through the catalogue was the cheapest arm on both models. The only thing direct listing bought was latency on small servers: muninn alone took 2 steps instead of 4, 7.7 s instead of 12.8 s, at the same cost.
+**All of them, except non-lazy servers whose tools are under 13,000 bytes (about 5k tokens) at startup, decided by Anvil.**
+- In the spike, routing every server through the catalogue was the cheapest arm on both models: Opus $0.30 against $0.32 mixed, Sonnet $0.14 against $0.16.
+- What direct listing bought was latency on small servers. A muninn-only task took 2 steps instead of 4, 7.7 s instead of 12.8 s.
+- The size rule spends that small difference on speed.
 
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
@@ -205,23 +219,33 @@ Declined:
 ### Why server instructions in search results, not the system prompt?
 **Putting them in the system prompt on connect would change the prefix mid-session.** Search is the entry point, so its result carries them, along with the schemas of the tools they name. A call made without searching first never sees them, but describe and validation errors still carry the schema.
 
+Only Datadog's case is evidenced: it names 2 tools and says to call them first, which caused 42 of the spike's 44 invalid-argument errors. Figma's instructions name 22 tools, so the appended schemas are limited:
+- They're taken in order of first appearance.
+- Only tools with required input fields count, since the others can't fail validation by omission.
+- At most 2 schemas and 4 KB per search are appended, and the same schemas repeat on each search that names the server.
+
 ### What does a restricted workflow agent reach through `call_mcp_tool`?
 **Every tool on the catalogue servers its `allowed_mcp` permits.** Naming `call_mcp_tool` in `agent({tools})` is an explicit grant, like naming `bash`. A workflow wanting a narrower surface names the inner tools directly, which keeps them listed.
 
 **Risks and Tradeoffs:**
 - **More steps.** On Opus, the catalogue took 6.8 steps per task against 3.9 for lazy loading, and 26.2 s mean (21.1 s median) against 19.3 s (18.1 s). That's the price of the cost saving, and the main thing to watch after release.
   - In real sessions the cost side improves further: enabling Datadog halfway through a 99-step session costs about $3.20 in re-read schemas, against about $0.30 for the catalogue's extra steps.
-- **A wrong threshold.** The 5k-token line comes from one user's session averages and one tokenizer. If a heavily used server lands just above it, latency suffers, and if a rarely used one lands below, its schemas ride on every step. Either way the loss is bounded by the server's size, and `route` overrides it. If it proves wrong in practice, a per-server usage counter can nudge the threshold.
+- **A wrong threshold.** The 13,000-byte line comes from one user's session averages and one tokenizer. If a heavily used server lands just above it, latency suffers, and if a rarely used one lands below, its schemas ride on every step (at most about $0.30 a session). `route` overrides it, and if it proves wrong in practice, a per-server usage counter can nudge the threshold.
+- **Thin mixing evidence.** Only 18 of the spike's runs crossed routes within a task (t4, t7 and t8 in the mixed arm, on both models). None used subagents or combined `enable_mcp` with the catalogue. The rerun criteria below cover those cases.
 - **Behaviour change for lazy servers.** Existing lazy servers move from `enable_mcp` to the catalogue under `auto`. Release notes and `docs/configuration.md` say how to keep the old flow (`route: "direct"`).
-- **Argument quality.** Schema-violation errors carry a fixed prefix and are counted from `messages`. If those not caused by instruction-named tools exceed about 1 in 10 `call_mcp_tool` calls, reading schemas from results isn't working.
+- **Argument quality.** Schema-violation errors carry a fixed prefix and are counted from `messages`, reported separately for instruction-named tools and for everything else. If the rest exceed about 1 in 10 `call_mcp_tool` calls, reading schemas from results isn't working. If the instruction-named ones come back, the appended schemas aren't doing their job.
 - **Discovery.** If search misses, the model may conclude a tool doesn't exist. Listing every name on a server is the fallback, and the `search_mcp_tools` description says to use it. The spike's tasks were easy, so discovery among many similar tools is untested.
 - **Indirection.** Logs, `step_usage` tool counts and `anvil_info` tool counts show the catalogue tools, not the inner ones. Permission records and hooks show the inner name.
 
 **Success Criteria:**
-- [ ] With today's config unchanged (muninn eager, every other server lazy), `anvil_info` shows muninn as `direct` with its estimated tokens under 5k, and every other server, terminal included, as `catalogue` (lazy). Setting `route` on a server overrides that.
-- [ ] A non-lazy server whose `tools/list` estimates at 5,000 tokens or more is routed to the catalogue, and one at 4,999 or less is listed directly.
-- [ ] A session that searches, describes and calls two Datadog tools has the same `tools_hash` and `tool_count` on every `step_usage` turn row, and no `tools_changed` miss.
-- [ ] `search_mcp_tools(server=datadog)` returns Datadog's instructions followed by the schemas of `load_datadog_skill` and `list_datadog_skills`. Rerunning the spike harness (`plans/spike-data/run.py` on branch `spike/mcp-catalogue-cost`, adapted to the built feature) produces no invalid-argument errors on those two tools.
+- [ ] With a fixture config of one non-lazy server at 10,812 bytes of tools, one non-lazy server at 13,000 bytes, one non-lazy server in error at startup, and one lazy server, `anvil_info` shows the first as `direct` and the other three as `catalogue`, each with its reason. Setting `route` on a server overrides that. An unknown `route` value fails config load.
+- [ ] A non-lazy server whose filtered tools marshal to 13,000 bytes is routed to the catalogue, and one at 12,999 bytes is listed directly.
+- [ ] Neither renewing a server's auth, a `tools/list_changed` on any server, a palette disable or enable, nor re-authenticating a server that was in error at startup changes the route map, the catalogue tools' descriptions or the set of direct tools within a process.
+- [ ] A session that searches, describes and calls two Datadog tools has the same `tool_count` on every `step_usage` turn row and no `tools_changed` miss. After the `Info()` copy fix, `tools_hash` is the same on every row too, including with a direct server listed.
+- [ ] `search_mcp_tools(server=datadog, query=...)` returns Datadog's instructions followed by the schemas of `load_datadog_skill` and `list_datadog_skills`. `search_mcp_tools(server=figma, ...)` appends at most 2 schemas and 4 KB.
+- [ ] Rerunning the spike harness (`plans/spike-data/run.py` on branch `spike/mcp-catalogue-cost`, adapted to the built feature) on Opus and Sonnet:
+  - invalid-argument errors on Datadog's two skill tools stay at or under 1 in 20 of their calls,
+  - added cases (a subagent using a catalogue server, and a task that crosses a lazy `route: "direct"` server, a direct server and a catalogue server) show no routing errors.
 - [ ] The first `search_mcp_tools(server=datadog)` in a session connects the deferred server and returns its matches in the same result, in both the orchestrator and a subagent. Two concurrent subagents whose first search hits the same deferred server both return matches.
 - [ ] An agent with `tools: [glob, grep, ls, view]` and `mcps: {datadog: []}` can search and call Datadog tools. An agent with `tools: ["!call_mcp_tool", "!search_mcp_tools", "!describe_mcp_tool"]` gets none of the three and keeps every other built-in.
 - [ ] Searching a server that is in error or disabled returns a message saying so, not an empty match list.
