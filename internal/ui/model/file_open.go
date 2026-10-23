@@ -56,17 +56,33 @@ func (*fileOpenFeature) HandleAction(dialog.Action) (tea.Cmd, bool) { return nil
 func (f *fileOpenFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case chat.FileOpenMsg:
-		return f.open(f.resolve(msg.Path)), true
+		path, err := f.resolve(msg.Path)
+		if err != nil {
+			return util.ReportError(fmt.Errorf("open file: %w", err)), true
+		}
+		return f.open(path), true
 	case chat.FileEditMsg:
-		return f.edit(f.resolve(msg.Path), msg.Line), true
+		path, err := f.resolve(msg.Path)
+		if err != nil {
+			return util.ReportError(fmt.Errorf("edit file: %w", err)), true
+		}
+		return f.edit(path, msg.Line), true
 	}
 	return nil, false
 }
 
 // resolve makes path absolute against the working directory, as the tools
-// do.
-func (f *fileOpenFeature) resolve(path string) string {
-	return filepathext.SmartJoin(f.workingDir(), path)
+// do. It refuses a network path the model wrote before anything touches
+// it: on Windows, reaching a model-chosen \\host\share sends the user's
+// credentials to that host. The path as written is checked, not the joined
+// one, so a working directory the user put on a share still works. A local
+// symlink to a share would still reach it while resolving; making one on
+// Windows needs admin rights or Developer Mode.
+func (f *fileOpenFeature) resolve(path string) (string, error) {
+	if isNetworkPath(path) {
+		return "", fmt.Errorf("won't open network path %s", path)
+	}
+	return filepathext.SmartJoin(f.workingDir(), path), nil
 }
 
 // openTypes are the file types o opens in the OS default app, by
@@ -75,9 +91,9 @@ func (f *fileOpenFeature) resolve(path string) string {
 // mounts or follows many types rather than showing them (scripts, HTML and
 // SVG in a browser, disk images, remote-session files), so like imageExts
 // this allows known passive types rather than refusing known active ones.
-// Some that look passive aren't: .jsx is ExtendScript to Adobe apps, and a
-// spreadsheet app evaluates formulas in .csv. PDF stays, since the default
-// viewers (Preview, browsers) run none of its scripts. The sniff catches a
+// Some that look passive aren't: .jsx is ExtendScript to Adobe apps, a
+// spreadsheet app evaluates formulas in .csv, and Acrobat, a common
+// default on Windows, runs a PDF's scripts. The sniff catches a
 // passive name on active content, since some openers (xdg-open) go by
 // content. Everything else, and anything executable, is left to e, which
 // opens it as text.
@@ -93,7 +109,7 @@ var openTypes = map[string]string{
 	".scss": "text/plain", ".sql": "text/plain", ".proto": "text/plain",
 	".diff": "text/plain", ".patch": "text/plain", ".tf": "text/plain",
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-	".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf",
+	".gif": "image/gif", ".webp": "image/webp",
 }
 
 // open opens path in the OS default app when it's a passive type (see
@@ -110,7 +126,7 @@ func (f *fileOpenFeature) open(path string) tea.Cmd {
 		// A colon names an alternate data stream on Windows, whose own
 		// name the extension check would see instead of the file's.
 		if !ok || strings.Contains(name, ":") || info.Mode().Perm()&0o111 != 0 {
-			return util.NewWarnMsg("Won't open " + name + " in its default app, since only text, source, images and PDFs open; press e to open it in $EDITOR")
+			return util.NewWarnMsg("Won't open " + name + " in its default app, since only text, source and images open; press e to open it in $EDITOR")
 		}
 		got, err := sniff(realPath)
 		if err != nil {
@@ -166,15 +182,8 @@ func editorExited(path string) tea.ExecCallback {
 }
 
 // localFile resolves path's symlinks and checks it ends at a regular
-// file, returning where it ends. It refuses network paths before touching
-// them: on Windows, reaching a model-chosen \\host\share sends the user's
-// credentials to that host. A local symlink to a share would still reach
-// it while resolving; making one on Windows needs admin rights or
-// Developer Mode.
+// file, returning where it ends.
 func localFile(path string) (string, os.FileInfo, error) {
-	if isNetworkPath(path) {
-		return "", nil, fmt.Errorf("won't open network path %s", path)
-	}
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", nil, err

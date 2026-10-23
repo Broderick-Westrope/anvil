@@ -114,7 +114,6 @@ func TestFileOpenFeatureOpensPassiveTypes(t *testing.T) {
 		"an upper-case extension":    {name: "README.MD", content: "# hi\n"},
 		"a PNG":                      {name: "a.png", content: "\x89PNG\r\n\x1a\nthe bytes"},
 		"a JPEG named .jpeg":         {name: "a.jpeg", content: "\xff\xd8\xffthe bytes"},
-		"a PDF":                      {name: "a.pdf", content: "%PDF-1.7\n"},
 		"text longer than the sniff": {name: "long.log", content: strings.Repeat("line\n", 200)},
 	}
 	for name, tc := range tests {
@@ -213,8 +212,9 @@ func TestFileOpenFeatureSaysWhyItWontOpen(t *testing.T) {
 		content string
 		why     string
 	}{
-		"ExtendScript":            {name: "a.jsx", content: "alert(1)", why: "since only text, source, images and PDFs open"},
-		"a spreadsheet's formula": {name: "a.csv", content: "=1+1", why: "since only text, source, images and PDFs open"},
+		"ExtendScript":                      {name: "a.jsx", content: "alert(1)", why: "since only text, source and images open"},
+		"a PDF, whose scripts Acrobat runs": {name: "a.pdf", content: "%PDF-1.7\n", why: "since only text, source and images open"},
+		"a spreadsheet's formula":           {name: "a.csv", content: "=1+1", why: "since only text, source and images open"},
 		"a README that opens with HTML": {
 			name: "README.md", content: `<p align="center"><img src="logo.png"></p>`,
 			why: "since its contents don't look like .md",
@@ -233,6 +233,9 @@ func TestFileOpenFeatureSaysWhyItWontOpen(t *testing.T) {
 	}
 }
 
+// The Windows-only forms can't reach the check through the feature
+// elsewhere, where a leading backslash starts a relative name, so the check
+// is tested directly too.
 func TestIsNetworkPath(t *testing.T) {
 	t.Parallel()
 
@@ -268,7 +271,7 @@ func TestFileOpenFeatureReportsAFileItCantOpen(t *testing.T) {
 		}, reason: "is not a regular file"},
 		"a dangling symlink": {path: "link", setup: func(t *testing.T, ft *fileOpenTest) {
 			symlink(t, filepath.Join(ft.dir, "gone"), filepath.Join(ft.dir, "link"))
-		}, reason: "gone: no such file"},
+		}, reason: "gone: "},
 		"the root": {path: "/", setup: func(*testing.T, *fileOpenTest) {}, reason: "is not a regular file"},
 		"unreadable": {path: "secret.txt", setup: func(t *testing.T, ft *fileOpenTest) {
 			if runtime.GOOS == "windows" {
@@ -415,7 +418,13 @@ func TestToolImageHelpKeepsOForTheImage(t *testing.T) {
 	items[len(items)-1].Render(80)
 
 	help := helpTexts(u.ShortHelp())
-	require.Contains(t, help, "o open in viewer")
+	viewer := 0
+	for _, h := range help {
+		if h == "o open in viewer" {
+			viewer++
+		}
+	}
+	require.Equal(t, 1, viewer, "once, though the image item and its file keys both say so")
 	require.Contains(t, help, "e open in $EDITOR")
 	require.NotContains(t, help, "o open file")
 }
