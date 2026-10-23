@@ -13,6 +13,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -154,6 +155,27 @@ func (b *branchSummaryFixture) event(state branchsummaries.State, summaryID stri
 	return b.run(cmd)
 }
 
+// liveItem is the one branch summary item the feature shows.
+func (b *branchSummaryFixture) liveItem(t *testing.T) *chat.BranchSummaryItem {
+	t.Helper()
+	require.Len(t, b.host.chatItems, 1)
+	item, ok := b.host.chatItems[0].(*chat.BranchSummaryItem)
+	require.True(t, ok)
+	return item
+}
+
+// storedSummaryEvent is an event for sess-1's stored summary-1, run in
+// childSessionID.
+func storedSummaryEvent(typ pubsub.EventType, childSessionID string) pubsub.Event[message.Message] {
+	return pubsub.Event[message.Message]{Type: typ, Payload: message.Message{
+		ID: "summary-1", SessionID: "sess-1", Role: message.User, MessageType: message.MessageTypeBranchSummary,
+		ParentMessageID: "a1",
+		Parts: []message.ContentPart{message.BranchSummaryContent{
+			Summary: "done", ChildSessionID: childSessionID, Agent: "pr-summarizer",
+		}},
+	}}
+}
+
 func (b *branchSummaryFixture) runPicked() {
 	b.pick("pr-summarizer", "")
 	b.event(branchsummaries.StateRunning, "", nil)
@@ -228,10 +250,63 @@ func TestBranchSummary_PickStartsTheSummarizer(t *testing.T) {
 	})
 
 	require.True(t, ok)
-	require.Equal(t, []agent.BranchSummaryRequest{{
+	require.Len(t, b.ws.starts, 1, "started synchronously, so the session is reserved before any send")
+	req := b.ws.starts[0]
+	req.ChildSessionID = ""
+	require.Equal(t, agent.BranchSummaryRequest{
 		SessionID: "sess-1", FromLeafID: "a2", TargetID: "a1", Agent: "pr-summarizer", Focus: "the PR",
-	}}, b.ws.starts, "started synchronously, so the session is reserved before any send")
+	}, req)
 	require.True(t, b.f.Busy("sess-1"))
+}
+
+func TestBranchSummary_TheSummarizerRunsInAnAgentToolSession(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		target, anchor string
+	}{
+		"under the target": {target: "a1", anchor: "a1"},
+		"at the root":      {target: "", anchor: "branch-summary"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+
+			b.f.HandleAction(dialog.ActionBranchSummaryPick{SessionID: "sess-1", FromLeafID: "a2", TargetID: tc.target, Agent: "pr-summarizer"})
+
+			require.Len(t, b.ws.starts, 1)
+			anchor, toolCallID, ok := session.ParseAgentToolSessionID(b.ws.starts[0].ChildSessionID)
+			require.True(t, ok)
+			require.Equal(t, tc.anchor, anchor)
+			require.NotEmpty(t, toolCallID)
+		})
+	}
+}
+
+func TestBranchSummary_StartShowsTheSummarizerAsALiveAgent(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+
+	b.pick("pr-summarizer", "")
+
+	_, toolCallID, _ := session.ParseAgentToolSessionID(b.ws.starts[0].ChildSessionID)
+	item := b.liveItem(t)
+	require.Equal(t, toolCallID, item.ID())
+	require.Equal(t, "a1", item.MessageID())
+	require.True(t, item.Spinning())
+	require.Contains(t, ansi.Strip(item.Render(120)), "Pr Summarizer")
+}
+
+func TestBranchSummary_NoLiveItemForASessionNotOnScreen(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.host.session = &session.Session{ID: "sess-2"}
+
+	b.pick("pr-summarizer", "")
+
+	require.Len(t, b.ws.starts, 1)
+	require.Empty(t, b.host.chatItems)
 }
 
 func TestBranchSummary_StartError(t *testing.T) {
@@ -246,17 +321,106 @@ func TestBranchSummary_StartError(t *testing.T) {
 	require.Equal(t, util.InfoTypeError, infos[0].Type)
 }
 
-func TestBranchSummary_RunningShowsAPanelUntilStored(t *testing.T) {
+func TestBranchSummary_RunningShowsNoPanel(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
 	b.runPicked()
 
-	panel := b.f.Panel()
-	require.NotNil(t, panel)
-	require.Contains(t, ansi.Strip(panel.Render(120)), "pr-summarizer")
+	require.Nil(t, b.f.Panel(), "the live agent item shows the run")
 
 	b.event(branchsummaries.StateStored, "summary-1", nil)
 	require.Nil(t, b.f.Panel())
+}
+
+func TestBranchSummary_EndsWithoutASummaryRemoveTheLiveItem(t *testing.T) {
+	t.Parallel()
+
+	for _, state := range []branchsummaries.State{
+		branchsummaries.StateCancelled, branchsummaries.StateStale, branchsummaries.StateNothing,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+			b.runPicked()
+
+			b.event(state, "", nil)
+
+			require.Empty(t, b.host.chatItems)
+		})
+	}
+}
+
+func TestBranchSummary_FailureMarksTheLiveItemFailed(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	b.event(branchsummaries.StateFailed, "", errors.New("provider exploded"))
+
+	require.Equal(t, chat.ToolStatusError, b.liveItem(t).Status())
+}
+
+func TestBranchSummary_DismissingAFailureRemovesItsItem(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+	b.event(branchsummaries.StateFailed, "", errors.New("provider exploded"))
+
+	cmd, ok := b.f.HandleAction(b.f.PaletteEntries()[0].Action())
+	require.True(t, ok)
+	b.run(cmd)
+
+	require.Empty(t, b.host.chatItems)
+}
+
+func TestBranchSummary_StoredKeepsTheLiveItemUntilItsMessageArrives(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+
+	b.event(branchsummaries.StateStored, "summary-1", nil)
+
+	require.True(t, b.liveItem(t).Spinning())
+}
+
+func TestBranchSummary_TheStoredSummaryReplacesTheLiveItem(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		child  func(started string) string
+		remove bool
+	}{
+		"its summary":     {child: func(started string) string { return started }, remove: true},
+		"another summary": {child: func(string) string { return session.AgentToolSessionID("a1", "other") }},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBranchSummaryFixture(t)
+			b.runPicked()
+
+			b.f.Observe(storedSummaryEvent(pubsub.CreatedEvent, tc.child(b.ws.starts[0].ChildSessionID)))
+
+			require.Equal(t, tc.remove, len(b.host.chatItems) == 0)
+		})
+	}
+}
+
+func TestBranchSummary_DeletingAStoredSummaryRemovesItsItem(t *testing.T) {
+	t.Parallel()
+	b := newBranchSummaryFixture(t)
+	b.runPicked()
+	child := b.ws.starts[0].ChildSessionID
+	b.f.Observe(storedSummaryEvent(pubsub.CreatedEvent, child))
+	sty := b.f.com.Styles
+	summary := "done"
+	_, toolCallID, _ := session.ParseAgentToolSessionID(child)
+	// UI appends the stored summary's item, keyed by its tool call.
+	b.host.chatItems = append(b.host.chatItems, chat.NewBranchSummaryItem(sty, "a1", toolCallID, "pr-summarizer", &summary))
+
+	b.f.Observe(storedSummaryEvent(pubsub.DeletedEvent, child))
+
+	require.Empty(t, b.host.chatItems)
 }
 
 func TestBranchSummary_RemembersTheLastSummarizer(t *testing.T) {
@@ -286,11 +450,10 @@ func TestBranchSummary_RunsAreKeptPerSession(t *testing.T) {
 	b.runPicked()
 
 	b.host.session = &session.Session{ID: "sess-2"}
-	require.Nil(t, b.f.Panel())
 	require.Empty(t, b.f.PaletteEntries())
 
 	b.host.session = &session.Session{ID: "sess-1"}
-	require.NotNil(t, b.f.Panel())
+	require.Len(t, b.f.PaletteEntries(), 1)
 }
 
 func TestBranchSummary_PaletteCancelsARunningSummary(t *testing.T) {
@@ -432,7 +595,7 @@ func TestBranchSummary_ALostEndEventDoesNotLeaveTheRunStuck(t *testing.T) {
 	b.runPicked()
 
 	b.ws.running["sess-1"] = false
-	require.NotNil(t, b.f.Panel(), "rendering never changes state")
+	require.Len(t, b.f.PaletteEntries(), 1, "reading never changes state")
 
 	b.f.Observe(spinner.TickMsg{})
 

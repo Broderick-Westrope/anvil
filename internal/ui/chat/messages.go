@@ -401,7 +401,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			return []MessageItem{NewJobEventMessageItem(sty, msg)}
 		}
 		if msg.MessageType == message.MessageTypeBranchSummary {
-			return []MessageItem{NewBranchSummaryMessageItem(sty, msg)}
+			return []MessageItem{newStoredBranchSummaryItem(sty, msg)}
 		}
 		if item, ok := NewWorkflowTurnMessageItem(sty, msg); ok {
 			return []MessageItem{item}

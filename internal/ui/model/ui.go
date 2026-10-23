@@ -1778,6 +1778,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
+		m.loadNestedToolCalls(items)
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() {

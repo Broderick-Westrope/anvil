@@ -6,18 +6,32 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
 )
 
 // runningSummaryWorkspace is the real workspace, except that it reports a
-// branch summary running in the sessions it lists and records cancels.
+// branch summary running in the sessions it lists, and records starts,
+// which run nothing, and cancels.
 type runningSummaryWorkspace struct {
 	branchSummaryWorkspace
 	running   map[string]bool
+	starts    []agent.BranchSummaryRequest
 	cancelled []string
+	fixture   *branchfixture.Fixture
+}
+
+func (w *runningSummaryWorkspace) AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error) {
+	w.starts = append(w.starts, req)
+	w.running[req.SessionID] = true
+	return "run-1", nil
 }
 
 func (w *runningSummaryWorkspace) AgentBranchSummaryRunning(sessionID string) bool {
@@ -48,7 +62,7 @@ func branchSummaryUI(t *testing.T) (*UI, *runningSummaryWorkspace) {
 	require.NoError(t, err)
 	require.NoError(t, f.Workspace.MoveLeaf(f.Context, m.session.ID, reply.ID))
 	m.session.LeafMessageID = reply.ID
-	ws := &runningSummaryWorkspace{branchSummaryWorkspace: m.com.Workspace, running: map[string]bool{}}
+	ws := &runningSummaryWorkspace{branchSummaryWorkspace: m.com.Workspace, running: map[string]bool{}, fixture: f}
 	m.features.register(newBranchSummaryFeature(uiHost{m}, m.com, ws))
 	return m, ws
 }
@@ -147,4 +161,80 @@ func TestEscOnTheSummaryPickerCancelsTheBranch(t *testing.T) {
 	require.False(t, m.dialog.ContainsDialog(dialog.BranchSummaryPickerID))
 	require.Equal(t, before, m.session.LeafMessageID)
 	require.Empty(t, m.textarea.Value(), "the prefilled message is put back as it was")
+}
+
+// startBranchSummary rewinds past the reply and picks the first
+// summarizer, returning the request it started.
+func startBranchSummary(t *testing.T, m *UI, ws *runningSummaryWorkspace) agent.BranchSummaryRequest {
+	t.Helper()
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
+	done, ok := findMsg[navigateTreeDoneMsg](collectMsgs(cmd))
+	require.True(t, ok)
+	_, cmd = m.Update(done)
+	offer, ok := findMsg[branchSummaryOfferMsg](collectMsgs(cmd))
+	require.True(t, ok)
+	m.Update(offer)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Len(t, ws.starts, 1)
+	return ws.starts[0]
+}
+
+func TestBranchSummarizerMessagesReachItsLiveItem(t *testing.T) {
+	m, ws := branchSummaryUI(t)
+	req := startBranchSummary(t, m, ws)
+	_, toolCallID, ok := session.ParseAgentToolSessionID(req.ChildSessionID)
+	require.True(t, ok)
+	item, ok := m.chat.MessageItem(toolCallID).(*chat.BranchSummaryItem)
+	require.True(t, ok, "the summarizer shows as it runs")
+
+	m.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "child-msg", SessionID: req.ChildSessionID, Role: message.Assistant,
+		Parts: []message.ContentPart{message.ToolCall{ID: "grep-1", Name: "grep", Input: `{"pattern":"TODO"}`, Finished: true}},
+	}})
+
+	require.Len(t, item.NestedTools(), 1)
+	require.Equal(t, "grep-1", item.NestedTools()[0].ID())
+	require.Equal(t, req.ChildSessionID, item.AgentDrillIn())
+	turns, tools := item.Stats()
+	require.Equal(t, 1, turns)
+	require.Equal(t, 1, tools)
+}
+
+func TestStoredBranchSummaryReplacesItsLiveItemWithItsTools(t *testing.T) {
+	m, ws := branchSummaryUI(t)
+	f := ws.fixture
+	req := startBranchSummary(t, m, ws)
+	_, toolCallID, _ := session.ParseAgentToolSessionID(req.ChildSessionID)
+	_, err := f.Sessions.CreateTaskSession(f.Context, req.ChildSessionID, req.SessionID, "Branch summary")
+	require.NoError(t, err)
+	_, err = f.Messages.Create(f.Context, req.ChildSessionID, message.CreateMessageParams{
+		Role:  message.Assistant,
+		Parts: []message.ContentPart{message.ToolCall{ID: "grep-1", Name: "grep", Input: `{"pattern":"TODO"}`, Finished: true}},
+	})
+	require.NoError(t, err)
+	live := m.chat.MessageItem(toolCallID)
+	before := m.chat.Len()
+
+	m.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "summary-1", SessionID: req.SessionID, Role: message.User, MessageType: message.MessageTypeBranchSummary,
+		ParentMessageID: req.TargetID,
+		Parts: []message.ContentPart{message.BranchSummaryContent{
+			Summary: "## Outcome\nDone.", ChildSessionID: req.ChildSessionID, Agent: req.Agent,
+		}},
+	}})
+
+	stored, ok := m.chat.MessageItem(toolCallID).(*chat.BranchSummaryItem)
+	require.True(t, ok)
+	require.NotSame(t, live, stored)
+	require.Equal(t, before, m.chat.Len(), "the stored item takes the live one's place")
+	require.Equal(t, chat.ToolStatusSuccess, stored.Status())
+	require.Len(t, stored.NestedTools(), 1, "its tools load as a loaded session's would")
+	require.Equal(t, req.ChildSessionID, stored.AgentDrillIn())
+
+	m.Update(pubsub.Event[message.Message]{Type: pubsub.DeletedEvent, Payload: message.Message{
+		ID: "summary-1", SessionID: req.SessionID, Role: message.User, MessageType: message.MessageTypeBranchSummary,
+		Parts: []message.ContentPart{message.BranchSummaryContent{ChildSessionID: req.ChildSessionID}},
+	}})
+
+	require.Nil(t, m.chat.MessageItem(toolCallID), "discarding removes it")
 }

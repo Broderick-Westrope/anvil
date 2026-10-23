@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -8,12 +9,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/google/uuid"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/app/branchsummaries"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
@@ -50,7 +54,16 @@ type branchSummaryRun struct {
 	// running. Sends queue behind the summary, so that message follows
 	// it, even when its event arrives before the summary's.
 	used bool
+	// toolCallID and childID name the summarizer's chat item and the
+	// agent tool session it runs in. They are empty for a run this UI
+	// didn't start.
+	toolCallID string
+	childID    string
 }
+
+// branchSummaryRootAnchor anchors the child session of a summary stored
+// at the root of the conversation, which has no message to anchor to.
+const branchSummaryRootAnchor = "branch-summary"
 
 // branchSummaryOfferMsg says a rewind left something worth summarizing.
 type branchSummaryOfferMsg struct{ offer dialog.RewindOffer }
@@ -89,10 +102,16 @@ type branchSummaryFeature struct {
 	// pending is the latest rewind waiting for its offer. An offer for any
 	// other rewind is stale and dropped.
 	pending dialog.RewindOffer
+	// live holds the running summarizers' chat items by child session,
+	// until their stored summary's own item replaces them.
+	live map[string]*chat.BranchSummaryItem
 }
 
 func newBranchSummaryFeature(host featureHost, com *common.Common, ws branchSummaryWorkspace) *branchSummaryFeature {
-	return &branchSummaryFeature{host: host, com: com, ws: ws, runs: map[string]*branchSummaryRun{}}
+	return &branchSummaryFeature{
+		host: host, com: com, ws: ws,
+		runs: map[string]*branchSummaryRun{}, live: map[string]*chat.BranchSummaryItem{},
+	}
 }
 
 // Busy reports whether a summary is running for sessionID.
@@ -132,14 +151,17 @@ func (b *branchSummaryFeature) cancelSession(sessionID string) tea.Cmd {
 
 // Observe implements feature. After a rewind it offers a summary; on a
 // return to the pre-branch conversation it drops the summary; once a
-// message follows a stored summary, the summary can't be discarded. On
-// every message it marks runs the service has finished as lost.
+// message follows a stored summary, the summary can't be discarded. A
+// stored summary's message replaces its live item, and deleting it
+// removes its item. On every message it marks runs the service has
+// finished as lost.
 func (b *branchSummaryFeature) Observe(msg tea.Msg) tea.Cmd {
 	b.markLost()
 	switch msg := msg.(type) {
 	case navigateTreeDoneMsg:
 		return b.observeRewind(msg)
 	case pubsub.Event[message.Message]:
+		b.observeSummaryItem(msg)
 		if msg.Type != pubsub.CreatedEvent {
 			return nil
 		}
@@ -156,6 +178,38 @@ func (b *branchSummaryFeature) Observe(msg tea.Msg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// observeSummaryItem keeps a stored summary's item in step with its
+// message. It runs before UI appends the message's own item, which has
+// the live item's ID. UI removes a deleted message's item by message ID,
+// which misses a summary's item: it is keyed by its tool call.
+func (b *branchSummaryFeature) observeSummaryItem(ev pubsub.Event[message.Message]) {
+	if ev.Payload.MessageType != message.MessageTypeBranchSummary {
+		return
+	}
+	var childID string
+	for _, p := range ev.Payload.Parts {
+		if s, ok := p.(message.BranchSummaryContent); ok {
+			childID = s.ChildSessionID
+		}
+	}
+	switch ev.Type {
+	case pubsub.CreatedEvent:
+		b.removeLive(childID)
+	case pubsub.DeletedEvent:
+		if _, toolCallID, ok := session.ParseAgentToolSessionID(childID); ok {
+			b.host.RemoveChatItem(toolCallID)
+		}
+	}
+}
+
+// removeLive removes the live item of the summarizer running in childID.
+func (b *branchSummaryFeature) removeLive(childID string) {
+	if item := b.live[childID]; item != nil {
+		delete(b.live, childID)
+		b.host.RemoveChatItem(item.ID())
+	}
 }
 
 func (b *branchSummaryFeature) observeRewind(done navigateTreeDoneMsg) tea.Cmd {
@@ -286,17 +340,22 @@ func (b *branchSummaryFeature) markLost() {
 
 func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 	defer b.host.Relayout()
+	r := b.runs[ev.SessionID]
 	if ev.State == branchsummaries.StateRunning {
-		b.runs[ev.SessionID] = &branchSummaryRun{runID: ev.RunID, agent: ev.Agent, state: ev.State}
+		if r == nil || r.runID != ev.RunID {
+			b.runs[ev.SessionID] = &branchSummaryRun{runID: ev.RunID, agent: ev.Agent, state: ev.State}
+		} else {
+			r.lost = false
+		}
 		return nil
 	}
-	r := b.runs[ev.SessionID]
 	if r == nil || r.runID != ev.RunID {
 		return nil
 	}
 	r.lost = false
 	switch ev.State {
 	case branchsummaries.StateStored:
+		// The live item stays until the summary's message replaces it.
 		if r.used {
 			delete(b.runs, ev.SessionID)
 			return nil
@@ -304,17 +363,27 @@ func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 		r.state, r.summaryID = ev.State, ev.SummaryID
 	case branchsummaries.StateFailed:
 		r.state, r.err = ev.State, ev.Err
+		if item := b.live[r.childID]; item != nil {
+			delete(b.live, r.childID)
+			item.SetFailed(firstLine(ev.Err.Error()))
+		}
 	case branchsummaries.StateCancelled:
-		delete(b.runs, ev.SessionID)
+		b.end(ev.SessionID, r)
 		return util.ReportInfo("Branch summary cancelled.")
 	case branchsummaries.StateNothing:
-		delete(b.runs, ev.SessionID)
+		b.end(ev.SessionID, r)
 		return util.ReportInfo("Branch summary skipped: there was nothing to summarize.")
 	default:
-		delete(b.runs, ev.SessionID)
+		b.end(ev.SessionID, r)
 		return util.ReportInfo("Branch summary not kept: the conversation moved on before it finished.")
 	}
 	return nil
+}
+
+// end forgets sessionID's run r, which stored nothing, and its live item.
+func (b *branchSummaryFeature) end(sessionID string, r *branchSummaryRun) {
+	delete(b.runs, sessionID)
+	b.removeLive(r.childID)
 }
 
 // HandleAction implements feature.
@@ -339,16 +408,32 @@ func (b *branchSummaryFeature) HandleAction(action dialog.Action) (tea.Cmd, bool
 // start starts the summary here rather than in a command: starting
 // reserves the session, and it must do so before any message the user
 // sends next, whose send runs in a command.
+//
+// The summarizer runs in an agent tool session of the target and a new
+// tool call, so the live item, keyed by that call, gets its child
+// session's messages and stats as a task agent's item does.
 func (b *branchSummaryFeature) start(pick dialog.ActionBranchSummaryPick) tea.Cmd {
 	b.lastAgent = pick.Agent
-	_, err := b.ws.AgentStartBranchSummary(agent.BranchSummaryRequest{
+	anchor := cmp.Or(pick.TargetID, branchSummaryRootAnchor)
+	toolCallID := uuid.NewString()
+	childID := session.AgentToolSessionID(anchor, toolCallID)
+	runID, err := b.ws.AgentStartBranchSummary(agent.BranchSummaryRequest{
 		SessionID: pick.SessionID, FromLeafID: pick.FromLeafID, TargetID: pick.TargetID,
-		Agent: pick.Agent, Focus: pick.Focus,
+		Agent: pick.Agent, Focus: pick.Focus, ChildSessionID: childID,
 	})
 	if err != nil {
 		return util.ReportError(err)
 	}
-	return nil
+	b.runs[pick.SessionID] = &branchSummaryRun{
+		runID: runID, agent: pick.Agent, state: branchsummaries.StateRunning,
+		toolCallID: toolCallID, childID: childID,
+	}
+	if b.host.SessionID() != pick.SessionID {
+		return nil
+	}
+	item := chat.NewBranchSummaryItem(b.com.Styles, anchor, toolCallID, pick.Agent, nil)
+	b.live[childID] = item
+	return b.host.ShowChatItem(item)
 }
 
 // dismiss discards sessionID's stored summary, or forgets a failed one.
@@ -360,6 +445,7 @@ func (b *branchSummaryFeature) dismiss(sessionID string) tea.Cmd {
 	delete(b.runs, sessionID)
 	b.host.Relayout()
 	if r.summaryID == "" {
+		b.host.RemoveChatItem(r.toolCallID)
 		return nil
 	}
 	return func() tea.Msg {
@@ -386,11 +472,11 @@ func (b *branchSummaryFeature) PaletteEntries() []*dialog.CommandItem {
 	return []*dialog.CommandItem{dialog.NewCommandItem(b.com.Styles, id, title, "", action)}
 }
 
-// Panel implements panelFeature: one line while the summary runs or after
-// it failed.
+// Panel implements panelFeature: one line after the summary failed. A
+// running summary shows as its chat item instead.
 func (b *branchSummaryFeature) Panel() panelView {
 	r := b.run(b.host.SessionID())
-	if r == nil || r.state == branchsummaries.StateStored {
+	if r == nil || r.state != branchsummaries.StateFailed {
 		return nil
 	}
 	return branchSummaryPanel{styles: b.com.Styles, agent: r.agent, err: r.err}
@@ -407,14 +493,9 @@ func (branchSummaryPanel) Lines() int { return 1 }
 func (p branchSummaryPanel) Render(width int) string {
 	t := p.styles
 	sep := t.Pills.HelpText.Render(" · ")
-	line := t.Pills.TodoLabel.Render("Branch summary") + sep + t.Pills.TodoProgress.Render(p.agent) + sep
-	hint := t.Pills.HelpKey.Render("esc") + " " + t.Pills.HelpText.Render("cancel")
-	if p.err != nil {
-		line += t.Pills.QueueLabel.Render("failed: " + firstLine(p.err.Error()))
-		hint = t.Pills.HelpKey.Render("ctrl+p") + " " + t.Pills.HelpText.Render("dismiss")
-	} else {
-		line += t.Pills.HelpText.Render("summarizing the branch you left…")
-	}
+	line := t.Pills.TodoLabel.Render("Branch summary") + sep + t.Pills.TodoProgress.Render(p.agent) + sep +
+		t.Pills.QueueLabel.Render("failed: "+firstLine(p.err.Error()))
+	hint := t.Pills.HelpKey.Render("ctrl+p") + " " + t.Pills.HelpText.Render("dismiss")
 	available := width - lipgloss.Width(hint) - 2
 	line = ansi.Truncate(line, max(available, 0), "…")
 	return ansi.Truncate(line+"  "+hint, width, "…")

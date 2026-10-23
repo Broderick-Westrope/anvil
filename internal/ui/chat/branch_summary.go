@@ -1,118 +1,139 @@
 package chat
 
 import (
+	"encoding/json"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/ui/list"
-	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
-	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 )
 
 // branchSummaryCollapsedLines is how many lines of a summary show before
 // it is expanded.
 const branchSummaryCollapsedLines = 4
 
-// BranchSummaryMessageItem renders the summary of a branch the user
-// rewound from: a header naming the summarizer, then the summary, cut to
-// its first lines until expanded. Opening it drills into the summarizer's
-// session.
-type BranchSummaryMessageItem struct {
-	*list.Versioned
-	*highlightableMessageItem
-	*cachedMessageItem
-	*focusableMessageItem
+// branchSummaryDescription is the task the summarizer's header names.
+const branchSummaryDescription = "Summarize the branch you left"
 
-	message  *message.Message
-	summary  message.BranchSummaryContent
-	sty      *styles.Styles
+// BranchSummaryItem shows a branch summarizer as the agent call it runs
+// like: the agent's header, live stats and nested tools, and once stored,
+// the summary below it, cut to its first lines until expanded. Its ID is
+// the summarizer's tool call ID and its MessageID the message it is
+// anchored to, so the summarizer's child session (the agent tool session
+// of the two) streams into it as a task agent's does.
+type BranchSummaryItem struct {
+	*AgentToolMessageItem
+
+	summary  *string
 	expanded bool
 }
 
 var (
-	_ Expandable          = (*BranchSummaryMessageItem)(nil)
-	_ AgentDrillInHandler = (*BranchSummaryMessageItem)(nil)
-	_ KeyEventHandler     = (*BranchSummaryMessageItem)(nil)
+	_ ToolMessageItem     = (*BranchSummaryItem)(nil)
+	_ NestedToolContainer = (*BranchSummaryItem)(nil)
+	_ DrillableAgent      = (*BranchSummaryItem)(nil)
+	_ AgentDrillInHandler = (*BranchSummaryItem)(nil)
+	_ Animatable          = (*BranchSummaryItem)(nil)
+	_ Expandable          = (*BranchSummaryItem)(nil)
+	_ KeyEventHandler     = (*BranchSummaryItem)(nil)
 )
 
-// NewBranchSummaryMessageItem creates a BranchSummaryMessageItem.
-func NewBranchSummaryMessageItem(sty *styles.Styles, msg *message.Message) MessageItem {
-	v := list.NewVersioned()
-	item := &BranchSummaryMessageItem{
-		Versioned:                v,
-		highlightableMessageItem: defaultHighlighter(sty, v),
-		cachedMessageItem:        &cachedMessageItem{},
-		focusableMessageItem:     newFocusableMessageItem(v),
-		message:                  msg,
-		sty:                      sty,
+// NewBranchSummaryItem creates a BranchSummaryItem for agentName's summary,
+// running in the child session of anchorMessageID and toolCallID. A nil
+// summary shows it running.
+func NewBranchSummaryItem(sty *styles.Styles, anchorMessageID, toolCallID, agentName string, summary *string) *BranchSummaryItem {
+	input, _ := json.Marshal(agent.TaskParams{SubagentType: agentName, Description: branchSummaryDescription})
+	call := message.ToolCall{ID: toolCallID, Name: agent.TaskToolName, Input: string(input), Finished: true}
+	b := &BranchSummaryItem{AgentToolMessageItem: NewAgentToolMessageItem(sty, call, nil, false)}
+	b.SetMessageID(anchorMessageID)
+	if summary != nil {
+		b.SetSummary(*summary)
 	}
-	for _, p := range msg.Parts {
-		if s, ok := p.(message.BranchSummaryContent); ok {
-			item.summary = s
-		}
-	}
-	return item
+	return b
 }
 
-// ID implements MessageItem.
-func (b *BranchSummaryMessageItem) ID() string { return b.message.ID }
+// newStoredBranchSummaryItem builds the item for a stored summary. A
+// summary whose child session isn't an agent tool session predates them,
+// and is keyed by its message, with nothing to drill into.
+func newStoredBranchSummaryItem(sty *styles.Styles, msg *message.Message) *BranchSummaryItem {
+	var content message.BranchSummaryContent
+	for _, p := range msg.Parts {
+		if s, ok := p.(message.BranchSummaryContent); ok {
+			content = s
+		}
+	}
+	anchor, toolCallID, ok := session.ParseAgentToolSessionID(content.ChildSessionID)
+	if !ok {
+		anchor, toolCallID = msg.ID, msg.ID
+	}
+	return NewBranchSummaryItem(sty, anchor, toolCallID, content.Agent, &content.Summary)
+}
 
-// Finished implements list.Item. Summaries are immutable once stored.
-func (b *BranchSummaryMessageItem) Finished() bool { return true }
+// SetSummary finishes the item with summary.
+func (b *BranchSummaryItem) SetSummary(summary string) {
+	b.summary = &summary
+	b.SetResult(&message.ToolResult{ToolCallID: b.ID(), Name: agent.TaskToolName, Content: summary})
+}
 
-// ToggleExpanded implements Expandable.
-func (b *BranchSummaryMessageItem) ToggleExpanded() bool {
+// SetFailed finishes the item as failed with errText.
+func (b *BranchSummaryItem) SetFailed(errText string) {
+	b.SetResult(&message.ToolResult{ToolCallID: b.ID(), Name: agent.TaskToolName, Content: errText, IsError: true})
+}
+
+// ToggleExpanded implements Expandable: it shows the whole summary.
+func (b *BranchSummaryItem) ToggleExpanded() bool {
 	b.expanded = !b.expanded
 	b.clearCache()
 	b.Bump()
 	return b.expanded
 }
 
-// AgentDrillIn implements AgentDrillInHandler.
-func (b *BranchSummaryMessageItem) AgentDrillIn() string { return b.summary.ChildSessionID }
-
-// AgentDrillInLabel implements AgentDrillInHandler.
-func (b *BranchSummaryMessageItem) AgentDrillInLabel() string { return "Branch summary" }
-
-// HandleKeyEvent implements KeyEventHandler: →/l drill into the
-// summarizer's session, as for agent items.
-func (b *BranchSummaryMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	if k := key.String(); (k == "right" || k == "l") && b.summary.ChildSessionID != "" {
-		return true, func() tea.Msg {
-			return util.AgentDrillInMsg{SessionID: b.summary.ChildSessionID, Label: b.AgentDrillInLabel()}
-		}
+// HandleKeyEvent implements KeyEventHandler. →/l drill into the
+// summarizer's session once there is one; there is no tool detail to
+// open instead.
+func (b *BranchSummaryItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
+	if k := key.String(); (k == "right" || k == "l") && b.AgentDrillIn() == "" {
+		return false, nil
 	}
-	return false, nil
+	return b.AgentToolMessageItem.HandleKeyEvent(key)
 }
 
 // SelectionSource implements [list.SourceSelectable].
-func (b *BranchSummaryMessageItem) SelectionSource() string { return b.summary.Summary }
-
-// RawRender implements [MessageItem].
-func (b *BranchSummaryMessageItem) RawRender(width int) string {
-	itemWidth := width - MessageLeftPaddingTotal
-	content, height, ok := b.getCachedRender(itemWidth)
-	if !ok {
-		content = b.render(itemWidth)
-		height = lipgloss.Height(content)
-		b.setCachedRender(content, itemWidth, height)
+func (b *BranchSummaryItem) SelectionSource() string {
+	if b.summary == nil {
+		return ""
 	}
-	return b.renderHighlighted(content, itemWidth, height)
+	return *b.summary
 }
 
-func (b *BranchSummaryMessageItem) render(width int) string {
-	header := toolIcon(b.sty, ToolStatusSuccess) + " " + b.sty.Tool.NameNormal.Render("Branch summary")
-	if b.summary.Agent != "" {
-		header += b.sty.Tool.JobID.Render(" · " + b.summary.Agent)
+// Render implements MessageItem.
+func (b *BranchSummaryItem) Render(width int) string {
+	return b.renderPrefixed(width, b.RawRender)
+}
+
+// RawRender implements MessageItem: the agent, then the summary.
+func (b *BranchSummaryItem) RawRender(width int) string {
+	content, _, itemWidth := b.renderContent(width)
+	if body := b.renderBody(itemWidth); body != "" {
+		content += "\n" + body
 	}
-	out := []string{ansi.Truncate(header, width, "…")}
+	return b.renderHighlighted(content, itemWidth, lipgloss.Height(content))
+}
+
+func (b *BranchSummaryItem) renderBody(width int) string {
+	if b.summary == nil {
+		return ""
+	}
 	var body []string
 	// The summary is model output: strip any escape sequences before it
 	// reaches the terminal.
-	for line := range strings.SplitSeq(strings.TrimSpace(stripControls(ansi.Strip(b.summary.Summary))), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(stripControls(ansi.Strip(*b.summary))), "\n") {
 		if strings.TrimSpace(line) != "" {
 			body = append(body, line)
 		}
@@ -121,6 +142,7 @@ func (b *BranchSummaryMessageItem) render(width int) string {
 	if !b.expanded {
 		shown = body[:min(len(body), branchSummaryCollapsedLines)]
 	}
+	var out []string
 	for _, line := range shown {
 		if !b.expanded {
 			out = append(out, b.sty.Tool.JobID.Render(ansi.Truncate("  "+line, width, "…")))
@@ -135,33 +157,6 @@ func (b *BranchSummaryMessageItem) render(width int) string {
 		out = append(out, b.sty.Tool.JobID.Render(ansi.Truncate("  …", width, "…")))
 	}
 	return strings.Join(out, "\n")
-}
-
-// Render implements MessageItem.
-func (b *BranchSummaryMessageItem) Render(width int) string {
-	useCache := !b.isHighlighted()
-	var key uint64
-	if b.focused {
-		key = 1
-	}
-	if useCache {
-		if cached, ok := b.getCachedPrefixedRender(width, key); ok {
-			return cached
-		}
-	}
-	prefix := b.sty.Messages.ToolCallBlurred.Render()
-	if b.focused {
-		prefix = b.sty.Messages.ToolCallFocused.Render()
-	}
-	lines := strings.Split(b.RawRender(width), "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
-	}
-	out := strings.Join(lines, "\n")
-	if useCache {
-		b.setCachedPrefixedRender(out, width, key)
-	}
-	return out
 }
 
 // stripControls drops C0 control characters other than newline and tab,

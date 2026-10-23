@@ -4,6 +4,7 @@ import (
 	"image/color"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -54,6 +55,12 @@ type featureHost interface {
 	// top, focuses it and blurs the editor, as the tool and thinking
 	// drill-ins do.
 	PushDrillIn(c *Chat, label string)
+	// ShowChatItem appends item to the root chat, never a drill-in on top
+	// of it, and scrolls it into view when the chat follows its end. The
+	// command arms the animation clock if item spins.
+	ShowChatItem(item chat.MessageItem) tea.Cmd
+	// RemoveChatItem removes the root chat's item with id, if it has one.
+	RemoveChatItem(id string)
 }
 
 // uiHost is UI as a featureHost.
@@ -132,3 +139,13 @@ func (h uiHost) PushDrillIn(c *Chat, label string) {
 	// Sizing a new chat pins it to the bottom; start at the top.
 	c.ScrollToTop()
 }
+
+func (h uiHost) ShowChatItem(item chat.MessageItem) tea.Cmd {
+	h.m.chat.AppendMessages(item)
+	if h.m.chat.Follow() {
+		h.m.chat.ScrollToBottom()
+	}
+	return h.m.ensureAnimating()
+}
+
+func (h uiHost) RemoveChatItem(id string) { h.m.chat.RemoveMessage(id) }
