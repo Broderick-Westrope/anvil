@@ -24,7 +24,12 @@ func (o *toolDetailOutputItem) sourceImage() *message.ToolResult {
 	if o.images == nil {
 		return nil
 	}
-	r, ok := o.source.(interface{ Result() *message.ToolResult })
+	return resultImage(o.source)
+}
+
+// resultImage is source's result when it carries an image, or nil.
+func resultImage(source ToolMessageItem) *message.ToolResult {
+	r, ok := source.(interface{ Result() *message.ToolResult })
 	if !ok {
 		return nil
 	}

@@ -54,6 +54,7 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images Ima
 		Versioned: list.NewVersioned(),
 		toolFile:  file,
 		sty:       sty,
+		images:    images,
 	})
 
 	// 2. Input section divider.
@@ -172,11 +173,12 @@ type toolDetailHeaderItem struct {
 	*list.Versioned
 	*toolFile
 	sty          *styles.Styles
+	images       ImageRenderer
 	focused      bool
 	cachedRender string
 	cachedWidth  int
 	cachedFocus  bool
-	cachedOpens  bool
+	cachedHint   string
 	lastStatus   ToolStatus
 }
 
@@ -196,19 +198,9 @@ func (h *toolDetailHeaderItem) RawRender(width int) string {
 // Render implements list.Item.
 func (h *toolDetailHeaderItem) Render(width int) string {
 	status := h.source.Status()
-	path, _ := h.file()
-	opens := path != ""
-	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused && h.cachedOpens == opens {
+	hint := h.fileHint()
+	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused && h.cachedHint == hint {
 		return h.cachedRender
-	}
-
-	tc := h.source.ToolCall()
-	icon := toolIcon(h.sty, status)
-	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
-	rendered := fmt.Sprintf("%s %s", icon, name)
-	if opens {
-		rendered += "  " + h.sty.Header.Keystroke.Render("o") + " " + h.sty.Header.KeystrokeTip.Render("open file") +
-			"  " + h.sty.Header.Keystroke.Render("e") + " " + h.sty.Header.KeystrokeTip.Render("open in $EDITOR")
 	}
 
 	var prefix string
@@ -217,18 +209,39 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	} else {
 		prefix = h.sty.Messages.ToolCallBlurred.Render()
 	}
-	lines := strings.Split(rendered, "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
+	tc := h.source.ToolCall()
+	icon := toolIcon(h.sty, status)
+	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
+	rendered := fmt.Sprintf("%s %s", icon, name)
+	// The hint goes when it doesn't fit; the help bar still has the keys.
+	if hint != "" && lipgloss.Width(prefix+rendered+hint) <= width {
+		rendered += hint
 	}
-	rendered = strings.Join(lines, "\n")
+	rendered = prefix + rendered
 
 	h.cachedRender = rendered
 	h.cachedWidth = width
 	h.cachedFocus = h.focused
-	h.cachedOpens = opens
+	h.cachedHint = hint
 	h.lastStatus = status
 	return rendered
+}
+
+// fileHint is the header's hint for the keys that open the call's file,
+// or "" when it names none. On a drawn image o opens the image, so the
+// hint leaves o to the image's own.
+func (h *toolDetailHeaderItem) fileHint() string {
+	if path, _ := h.file(); path == "" {
+		return ""
+	}
+	key := func(k, tip string) string {
+		return "  " + h.sty.Header.Keystroke.Render(k) + " " + h.sty.Header.KeystrokeTip.Render(tip)
+	}
+	hint := key("e", "open in $EDITOR")
+	if h.images == nil || resultImage(h.source) == nil {
+		hint = key("o", "open file") + hint
+	}
+	return hint
 }
 
 // SetFocused implements list.Focusable.

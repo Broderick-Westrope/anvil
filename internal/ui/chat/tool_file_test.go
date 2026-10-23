@@ -184,3 +184,32 @@ func TestToolFileFollowsTheInputAsItChanges(t *testing.T) {
 	_, msg = pressKey(header, "o")
 	require.Equal(t, FileOpenMsg{Path: "/b"}, msg)
 }
+
+func TestToolDetailHeaderLeavesOToADrawnImage(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
+
+	header := ansi.Strip(BuildToolDetailItems(&sty, source, &fakeImages{})[0].Render(80))
+	require.Contains(t, header, "View  e open in $EDITOR")
+	require.NotContains(t, header, "open file")
+
+	header = ansi.Strip(BuildToolDetailItems(&sty, source, nil)[0].Render(80))
+	require.Contains(t, header, "o open file", "nothing draws the image, so o opens the file")
+}
+
+func TestToolDetailHeaderDropsTheHintWhenItDoesntFit(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/a"}`, &message.ToolResult{Content: "x"}, ToolStatusSuccess)
+	header := BuildToolDetailItems(&sty, source, nil)[0]
+
+	full := header.Render(200)
+	fits := ansi.StringWidth(full)
+	require.Contains(t, ansi.Strip(header.Render(fits)), "open in $EDITOR", "exactly as wide as the hint")
+	narrow := header.Render(fits - 1)
+	require.NotContains(t, ansi.Strip(narrow), "open")
+	require.Contains(t, ansi.Strip(narrow), "View")
+}
