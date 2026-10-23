@@ -30,13 +30,18 @@
   - **Code mode** (running MCP tools from a script).
   - **Headless `tools/list_changed` refresh,** an existing gap.
 
-Also in scope, since direct listing stays the default for small servers: an MCP tool's parameters are normalised once, at registration, on a private deep copy.
+Also in scope, since direct listing stays the default for small servers: an MCP tool's parameters are normalised once, when `mcp/tools.go:updateTools` registers the server's tools, on a private deep copy.
 - **The bug:** today `Tool.Info()` aliases the shared `InputSchema` (`mcp-tools.go`), and fantasy's `prepareTools` runs `schema.Normalize` on `info.Parameters` in place. `Normalize` recurses, turning type arrays into `anyOf` and adding missing `items`.
 - **Symptoms:** `tools_hash` changes after the first step whenever MCP tools are listed (the spike saw it in every direct and mixed run). Concurrent sessions normalising the same tool for the first time can hit Go's fatal "concurrent map writes".
-- **The fix:** once normalised, `Normalize` only reads, so later `Info()` calls are free and race-free. A `-race` test running two sessions on one `*Tool` pins it.
+- **The fix:**
+  - The `allTools` registry stores an entry holding the raw SDK tool (for `InputSchema()`, describe and validation) next to the normalised `properties` and `required`.
+  - `Info()`'s extraction moves into `mcp`, so the sent-bytes size and `Info()` use one function.
+  - Its three readers (`GetMCPTools`, `refreshMCPTools`, `enable_mcp`'s count) read the entry. `GetMCPTools` rebuilds wrappers on every build, so normalising there would not be "once".
+  - Once normalised, `Normalize` only reads, so later calls are free and race-free.
+  - A `-race` test covers both two sessions on one wrapper and two wrappers from separate `GetMCPTools` calls, since the orchestrator's and a subagent's wrappers share one registry entry.
 
 **Constraints:**
-- **Stable prefix for catalogue routing.** Within a process, the route map and the catalogue tools' descriptions are fixed when the route snapshot is taken (see Design). They don't change when a server is searched, called, connected, reconnected, renewed, re-listed (`tools/list_changed`) or toggled in the palette, or when config reloads.
+- **Stable prefix for catalogue routing.** Within a process, the route map and the catalogue tools' descriptions are fixed when the route snapshot is taken (see Design). They don't change when a server is searched, called, connected, reconnected, renewed, re-listed (`tools/list_changed`) or toggled in the palette, or when a config reload edits `route`, `lazy_description` or the server set. Edits to an agent's `mcps:` or `disabled_tools` still change that agent's tools on reload, as they do today.
   - Catalogue routing therefore never changes the tool list or the system prompt.
   - Direct servers keep today's behaviour: their tools and instructions come and go with their connection state, as they do now.
 - **Layering** (`AGENTS.md`). The catalogue and the route rule live in the `agent` layer. `internal/agent/tools/mcp` reports schema sizes but knows nothing about routes. Argument validation uses `github.com/google/jsonschema-go`, already a direct dependency.
@@ -69,7 +74,7 @@ flowchart TD
 ```
 
 - **The snapshot.** `mcp.Initialize` records, just before it closes `initDone`, each configured server's state and the size of its tools. It has already waited out every connect attempt, so no non-lazy server is still starting.
-  - The agent layer derives the route map from the snapshot once, on first need after `WaitForInit`, and also freezes the description inputs (server set, `route`, `lazy_description`).
+  - `Initialize` captures each server's `MCPConfig` from the same `cfg.Config()` it iterates and stores it in the snapshot, a data copy with no routing logic. The agent layer derives the route map from the snapshot alone, once, on first need after `WaitForInit`. A config write between init and the first build can't skew the server set, routes or descriptions.
   - Later state changes (a palette disable, a failed ping, a `list_changed`) and config reloads (`/reload`, the store's auto-reload after a config write) don't touch it. `/reload-instance` replaces the process, so it re-decides.
   - **Before the snapshot exists:** tool-list builds include no MCP or catalogue tools, as today's eager build includes none of the servers still connecting. Every run path already waits on `WaitForInit` before its first request, so a run whose agent was built before the snapshot rebuilds its tool list from the map first. The palette shows the route as "pending".
   - **Tests and coordinators that never call `ArmInit`:** `WaitForInit` returns at once, and the map is derived from whatever state exists at first build.
@@ -85,11 +90,16 @@ flowchart TD
   - `route: "direct"` on a lazy server keeps today's `enable_mcp` flow, and ADR 0002 still governs it.
 - **Excluded from the route map:**
   - Servers disabled in config are excluded from the map and the description, as they're invisible today.
-  - Servers added after the snapshot (Docker MCP through `EnableDockerMCP`, or a server added by a config reload) are also excluded and keep today's behaviour, listed directly once connected. That changes the prefix exactly as it does today.
+  - Servers missing from the snapshot are excluded from the map and keep today's behaviour: listed directly once connected, whatever their size, which changes the prefix exactly as it does today. These are:
+    - Docker MCP through `EnableDockerMCP`,
+    - a server added by a config reload,
+    - a server disabled in config at startup and enabled later from the palette.
+
+    A large server enabled that way stays direct until restart. That's rare, since the usual case is a server already configured.
 - **The route map belongs to the agent layer,** keyed by server name, separate from `ClientInfo`.
   - `updateState` rebuilds `ClientInfo` on every transition, so state there would be wiped by renewals, errors and palette toggles.
   - Every tool-list build, resolver, renewal, re-authentication, `list_changed` refresh and subagent reads the map, and none of them writes it.
-  - `anvil_info` (in `internal/agent/tools`, which can't import `internal/agent`) and the palette get the map through an injected function. They show each server's route and reason, for example "auto: 10,190 bytes, under 12,000", or "auto: lazy".
+  - `anvil_info` (in `internal/agent/tools`, which can't import `internal/agent`) and the palette get the map through an injected function. They show each server's route and reason, for example "auto: 10,190 bytes, under 12,000", "auto: lazy" or "auto: error at startup".
   - A direct server whose current registry size has grown past the threshold is flagged as such, but stays direct until restart.
   - The catalogue description lists every catalogue-routed server from the frozen inputs, using `lazy_description`, else the server's name, never connect state.
 - **What the threshold trades:** listing a server directly costs its schema tokens `T` on every step, and routing it through the catalogue costs about two extra steps in the sessions that use it, with probability `p`.
@@ -134,7 +144,9 @@ call_mcp_tool(server, tool, arguments)  // Validates arguments, then runs the to
   - The catalogue tools' descriptions list the catalogue servers the agent's `allowed_mcp` permits, sorted by name, each with its `lazy_description`, else its name (never connect state, so the text can't change when a server connects later).
   - They state that these servers' tools "are never callable directly by name". With that wording, the spike's 96 catalogue and mixed runs produced no routing mistakes.
 - **The resolver.** The MCP half of `buildToolsWithState` (`coordinator.go`, the `GetMCPTools` loop with its `allowed_mcp` check, hook and error-result wrapping) becomes one helper. Building the tool list and the resolver both use it, so the rules can't drift apart.
-  - **Tool list mode:** the helper skips tools of catalogue-routed servers, judged by the route map via the unwrapped tool (`Tool.MCP()`). The one exception is inner tool names a workflow `agent()` passes in explicitly. `buildWorkflowAgent` still connects a deferred server through `lazyServersFor`.
+  - **Tool list mode:** the helper skips tools of catalogue-routed servers, judged by the route map via the unwrapped tool (`Tool.MCP()`).
+    - The one exception is inner tool names a workflow `agent()` passes in explicitly, so the helper takes those names as an input. Today `buildTools` doesn't receive `call.Tools`, and `missingTools` would reject a named tool on a non-lazy catalogue server.
+    - `buildWorkflowAgent` still connects a deferred server through `lazyServersFor`.
   - **Resolver mode:** it returns the server's tools, and keys them by `Tool.MCP()`, never by parsing `mcp_<server>_` out of a name. Server names can contain `_`, and the OAuth rename changes case.
   - **Connecting:** the resolver connects a deferred server with `toolsmcp.ConnectDeferred` before building, so the search that connects a server already sees its tools. It skips `refreshMCPTools`, which would rebuild the orchestrator's list for tools that are never listed, and which fails in a session with no orchestrator. That also makes it work the same in subagents.
   - **Connection states:** it follows `enable_mcp`'s handling one state at a time (`enable_mcp.go`), except for a server that is still starting.
@@ -246,6 +258,7 @@ Only Datadog's case is evidenced: it names 2 tools and says to call them first, 
   - In real sessions the cost side improves further: enabling Datadog halfway through a 99-step session costs about $3.20 in re-read schemas, against about $0.30 for the catalogue's extra steps.
 - **A wrong threshold.** The 12,000-byte line comes from one user's session averages and one tokenizer. If a heavily used server lands just above it, latency suffers, and if a rarely used one lands below, its schemas ride on every step (at most about $0.30 a session per server). `route` overrides it, and if it proves wrong in practice, a per-server usage counter can nudge the threshold.
 - **Servers near the line can flip between releases.** Muninn sits at 85% of the threshold, so a few added tools silently move it to the catalogue at the next restart. The in-process flag doesn't cover that, but the route and reason are always visible in `anvil_info`, and `route` pins it.
+- **Routes can also flip between processes.** A small server that is in error at startup (expired OAuth, a slow `uv` start) goes to the catalogue for that whole process. A resumed session's history may then hold direct `mcp_<server>_*` calls for tools that are no longer listed, a case the spike didn't test. If the model calls one by its direct name, it gets an error pointing it at `call_mcp_tool` rather than fantasy's generic unknown-tool error, and `route: "direct"` pins the server.
 - **Thin mixing evidence.** Only 18 of the spike's runs crossed routes within a task (t4, t7 and t8 in the mixed arm, on both models). None used subagents or combined `enable_mcp` with the catalogue. The rerun criteria below cover those cases.
 - **Behaviour change for lazy servers.** Existing lazy servers move from `enable_mcp` to the catalogue under `auto`. Release notes and `docs/configuration.md` say how to keep the old flow (`route: "direct"`).
 - **Argument quality.** Schema-violation errors carry a fixed prefix and are counted from `messages`, reported separately for instruction-named tools and for everything else. If the rest exceed about 1 in 10 `call_mcp_tool` calls, reading schemas from results isn't working. If the instruction-named ones come back, the appended schemas aren't doing their job.
@@ -286,7 +299,9 @@ Only Datadog's case is evidenced: it names 2 tools and says to call them first, 
 - [ ] `search_mcp_tools` without `server` connects no deferred server.
 - [ ] A catalogue-routed server's tools never appear in the tool list, including after a mid-run connect, a `tools/list_changed` refresh, or a session that enabled the server through `enable_mcp` or the palette before the change. Its instructions never appear in the system prompt.
 - [ ] A lazy server with `route: "direct"` behaves exactly as lazy servers do today (`enable_mcp`, palette toggle, ADR 0002 state).
-- [ ] A workflow `agent()` naming `mcp_datadog_<tool>` gets that tool as a direct tool.
+- [ ] A workflow `agent()` naming `mcp_datadog_<tool>` gets that tool as a direct tool, including when Datadog is a non-lazy catalogue server.
+- [ ] Calling a catalogue-routed tool by its direct name (`mcp_datadog_<tool>`, for example from a resumed session's history) returns an error that names `call_mcp_tool` and the server.
+- [ ] The sent-bytes size used for routing and the parameters `Info()` returns come from the same function, measured after normalisation.
 - [ ] With every server routed `direct`, the tool list and system prompt are byte-identical to today's.
 - [ ] An MCP image result returned through `call_mcp_tool` draws in the tool drill-in.
 
