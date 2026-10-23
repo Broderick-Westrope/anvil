@@ -244,3 +244,32 @@ func TestHooksSeeAProxiedCallOnceUnderTheInnerName(t *testing.T) {
 	require.Equal(t, "search_mcp_tools\nmcp_cathook_ping\n", string(got), "search is hooked like any tool; the proxied call fires once")
 	require.Equal(t, int32(1), calls.Load())
 }
+
+// Do NOT add t.Parallel(): it arms the mcp package's global initialisation.
+func TestTheFirstPromptUsesTheRouteMapNotThePreSnapshotBuild(t *testing.T) {
+	const name = "catarmed"
+	var calls atomic.Int32
+	url := countingServer(t, &calls)
+	toolsmcp.ResetInitForTest()
+	t.Cleanup(toolsmcp.ResetInitForTest)
+	toolsmcp.ArmInit()
+	f := newRoutedFixture(t, nil)
+	f.Config.Config().MCP = config.MCPs{name: {Type: config.MCPHttp, URL: url, Route: config.MCPRouteCatalogue}}
+	t.Cleanup(func() {
+		_ = toolsmcp.DisableSingle(f.Config, name)
+		toolsmcp.DeleteStateForTest(name)
+		toolsmcp.DeleteToolsForTest(name)
+	})
+	session := newParent(t, f)
+	f.Provider.Enqueue(branchfixture.Response{Text: "done"})
+
+	// The coordinator's eager build happened before the snapshot; the run
+	// waits for initialisation and rebuilds from the route map.
+	go toolsmcp.Initialize(f.Context, nil, f.Config, nil)
+	_, err := f.Coordinator.Run(f.Context, session, "hi")
+	require.NoError(t, err)
+
+	names := toolNames(t, f.Provider.Requests()[0].Body)
+	require.Contains(t, names, "search_mcp_tools")
+	require.NotContains(t, names, "mcp_catarmed_ping")
+}
