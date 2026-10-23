@@ -7,16 +7,26 @@ type MCPRoute struct {
 	Catalogue bool
 	// Reason says why, e.g. "auto: lazy" or "route: direct".
 	Reason string
+	// Short is the reason in a few words, e.g. "lazy" or "10,190 B".
+	Short string
 }
 
 // String describes the route and its reason, e.g.
 // "catalogue (auto: lazy)".
 func (r MCPRoute) String() string {
-	kind := "direct"
+	return r.kind() + " (" + r.Reason + ")"
+}
+
+// ShortString is String with the short reason, e.g. "catalogue (lazy)".
+func (r MCPRoute) ShortString() string {
+	return r.kind() + " (" + r.Short + ")"
+}
+
+func (r MCPRoute) kind() string {
 	if r.Catalogue {
-		kind = "catalogue"
+		return "catalogue"
 	}
-	return kind + " (" + r.Reason + ")"
+	return "direct"
 }
 
 // MCPRoutesFunc returns every routed server's route in name order, and

@@ -11,8 +11,8 @@ import (
 func TestApplyMCPRoute(t *testing.T) {
 	t.Parallel()
 	routes := []agenttools.MCPRoute{
-		{Server: "datadog", Catalogue: true, Reason: "auto: lazy"},
-		{Server: "muninn", Reason: "auto: 10,190 bytes, under 12,000"},
+		{Server: "datadog", Catalogue: true, Reason: "auto: lazy", Short: "lazy"},
+		{Server: "muninn", Reason: "auto: 10,190 bytes, under 12,000", Short: "10,190 B"},
 	}
 	tests := map[string]struct {
 		entry dialog.MCPPaletteEntry
@@ -22,12 +22,12 @@ func TestApplyMCPRoute(t *testing.T) {
 		"catalogue server stops being lazy": {
 			entry: dialog.MCPPaletteEntry{Name: "datadog", IsLazy: true, Enabled: true},
 			ready: true,
-			want:  dialog.MCPPaletteEntry{Name: "datadog", Route: "catalogue (auto: lazy)", Catalogue: true},
+			want:  dialog.MCPPaletteEntry{Name: "datadog", Route: "catalogue (lazy)", Catalogue: true},
 		},
 		"direct server": {
 			entry: dialog.MCPPaletteEntry{Name: "muninn"},
 			ready: true,
-			want:  dialog.MCPPaletteEntry{Name: "muninn", Route: "direct (auto: 10,190 bytes, under 12,000)"},
+			want:  dialog.MCPPaletteEntry{Name: "muninn", Route: "direct (10,190 B)"},
 		},
 		"unrouted server": {
 			entry: dialog.MCPPaletteEntry{Name: "docker", IsLazy: true},

@@ -26,6 +26,8 @@ type mcpRoute struct {
 	// auto is set when the size rule chose the route.
 	auto   bool
 	reason string
+	// short is the reason in a few words, for the MCP palette.
+	short string
 	// description introduces the server in the catalogue tools: its
 	// lazy_description, else its name. Never connect state, so it can't
 	// change when the server connects later.
@@ -47,35 +49,36 @@ func deriveMCPRoutes(snap map[string]toolsmcp.ServerSnapshot) mcpRoutes {
 		if server.Config.Disabled {
 			continue
 		}
-		catalogue, reason := routeFor(server)
+		catalogue, reason, short := routeFor(server)
 		description := server.Config.LazyDescription
 		if description == "" {
 			description = name
 		}
 		auto := server.Config.Route != config.MCPRouteDirect && server.Config.Route != config.MCPRouteCatalogue
-		routes[name] = mcpRoute{catalogue: catalogue, auto: auto, reason: reason, description: description}
+		routes[name] = mcpRoute{catalogue: catalogue, auto: auto, reason: reason, short: short, description: description}
 	}
 	return routes
 }
 
-func routeFor(server toolsmcp.ServerSnapshot) (catalogue bool, reason string) {
+func routeFor(server toolsmcp.ServerSnapshot) (catalogue bool, reason, short string) {
 	switch server.Config.Route {
 	case config.MCPRouteDirect:
-		return false, "route: direct"
+		return false, "route: direct", "set in config"
 	case config.MCPRouteCatalogue:
-		return true, "route: catalogue"
+		return true, "route: catalogue", "set in config"
 	}
 	if server.Config.IsLazy() {
-		return true, "auto: lazy"
+		return true, "auto: lazy", "lazy"
 	}
 	if server.State != toolsmcp.StateConnected {
-		return true, fmt.Sprintf("auto: %s at startup", server.State)
+		return true, fmt.Sprintf("auto: %s at startup", server.State), fmt.Sprintf("%s at startup", server.State)
 	}
 	size := humanize.Comma(int64(server.SentBytes))
+	short = size + " B"
 	if server.SentBytes < catalogueThresholdBytes {
-		return false, fmt.Sprintf("auto: %s bytes, under %s", size, humanize.Comma(catalogueThresholdBytes))
+		return false, fmt.Sprintf("auto: %s bytes, under %s", size, humanize.Comma(catalogueThresholdBytes)), short
 	}
-	return true, fmt.Sprintf("auto: %s bytes, not under %s", size, humanize.Comma(catalogueThresholdBytes))
+	return true, fmt.Sprintf("auto: %s bytes, not under %s", size, humanize.Comma(catalogueThresholdBytes)), short
 }
 
 // isCatalogue reports whether the server's tools go through the
@@ -122,12 +125,14 @@ func (c *coordinator) MCPRoutes() ([]tools.MCPRoute, bool) {
 	var out []tools.MCPRoute
 	for _, name := range slices.Sorted(maps.Keys(routes)) {
 		route := routes[name]
-		reason := route.reason
+		reason, short := route.reason, route.short
 		if size := toolsmcp.SentToolBytes(name); route.auto && !route.catalogue && size >= catalogueThresholdBytes {
+			now := humanize.Comma(int64(size))
 			reason += fmt.Sprintf("; now %s bytes, past %s, so it moves to the catalogue at the next restart",
-				humanize.Comma(int64(size)), humanize.Comma(catalogueThresholdBytes))
+				now, humanize.Comma(catalogueThresholdBytes))
+			short += ", now " + now + " B"
 		}
-		out = append(out, tools.MCPRoute{Server: name, Catalogue: route.catalogue, Reason: reason})
+		out = append(out, tools.MCPRoute{Server: name, Catalogue: route.catalogue, Reason: reason, Short: short})
 	}
 	return out, true
 }

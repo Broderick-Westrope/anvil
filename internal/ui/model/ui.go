@@ -5280,7 +5280,7 @@ func applyMCPRoute(entry *dialog.MCPPaletteEntry, routes []agenttools.MCPRoute, 
 			entry.IsLazy = false
 			entry.Enabled = false
 		}
-		entry.Route = route.String()
+		entry.Route = route.ShortString()
 		return
 	}
 }
