@@ -516,7 +516,6 @@ func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
 	t.Bump()
 }
 
-
 // SetResult sets the tool result associated with this message item.
 func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.result = res
