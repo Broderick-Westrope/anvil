@@ -5,7 +5,6 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
-	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
 )
@@ -39,22 +38,6 @@ type agentMCPTools struct {
 func (c *coordinator) newAgentMCPTools(access toolAccess, hookRunner *hooks.Runner, isSubAgent bool) agentMCPTools {
 	routes, _ := c.mcpRoutes()
 	return agentMCPTools{c: c, access: access, hookRunner: hookRunner, isSubAgent: isSubAgent, routes: routes}
-}
-
-// mcpRoutes returns the route map, deriving it on the first call after
-// the startup snapshot exists. It reports false before then.
-func (c *coordinator) mcpRoutes() (mcpRoutes, bool) {
-	c.routesMu.Lock()
-	defer c.routesMu.Unlock()
-	if c.routes != nil {
-		return c.routes, true
-	}
-	snap, ready := toolsmcp.StartupSnapshot(c.cfg)
-	if !ready {
-		return nil, false
-	}
-	c.routes = deriveMCPRoutes(snap)
-	return c.routes, true
 }
 
 // allowed returns the agent's unwrapped MCP tools: every registered tool

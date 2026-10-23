@@ -95,6 +95,22 @@ func (r mcpRoutes) catalogueServers() []string {
 	return names
 }
 
+// mcpRoutes returns the route map, deriving it on the first call after
+// the startup snapshot exists. It reports false before then.
+func (c *coordinator) mcpRoutes() (mcpRoutes, bool) {
+	c.routesMu.Lock()
+	defer c.routesMu.Unlock()
+	if c.routes != nil {
+		return c.routes, true
+	}
+	snap, ready := toolsmcp.StartupSnapshot(c.cfg)
+	if !ready {
+		return nil, false
+	}
+	c.routes = deriveMCPRoutes(snap)
+	return c.routes, true
+}
+
 // MCPRoutes returns every routed server's route for display, flagging an
 // auto-direct server whose tools have since grown past the threshold: it
 // stays direct until restart, so the tool list can't change mid-process.
