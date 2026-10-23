@@ -181,3 +181,30 @@ func TestWorkflowAgentNamingACatalogueToolGetsItDirectly(t *testing.T) {
 	require.ElementsMatch(t, []string{"mcp_catwfnamed_ping", "view"}, toolNames(t, body))
 	require.Contains(t, body, "Say hello before calling ping.", "it never searches, so it gets the instructions")
 }
+
+func TestADirectCallToACatalogueToolGoesThroughCallMCPTool(t *testing.T) {
+	const name = "catdirect"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls), Route: config.MCPRouteCatalogue}})
+	session := newParent(t, f)
+	f.Permissions.AutoApproveSession(session)
+	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "mcp_catdirect_ping", ToolInput: `{"word":"hi"}`},
+		branchfixture.Response{Text: "done"},
+	)
+
+	_, err := f.Coordinator.Run(f.Context, session, "ping it")
+	require.NoError(t, err)
+
+	require.Equal(t, int32(1), calls.Load())
+	msgs, err := f.Messages.List(f.Context, session)
+	require.NoError(t, err)
+	var called []string
+	for _, msg := range msgs {
+		for _, call := range msg.ToolCalls() {
+			called = append(called, call.Name+" "+call.Input)
+		}
+	}
+	require.Equal(t, []string{`call_mcp_tool {"server":"catdirect","tool":"ping","arguments":{"word":"hi"}}`}, called)
+	require.Contains(t, toolResultTexts(t, f, session), "pong")
+}
