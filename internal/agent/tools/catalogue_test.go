@@ -421,3 +421,21 @@ func TestCatalogueToolsNeverSendANullRequiredList(t *testing.T) {
 		require.NotNil(t, tool.Info().Required, tool.Info().Name)
 	}
 }
+
+func TestServerNamesMatchInAnyCase(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-case", "", false, logSearchTool)
+
+	resp := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "Cat-Case", "query": "logs"})
+
+	require.False(t, resp.IsError, resp.Content)
+	require.Contains(t, resp.Content, "- search_logs")
+}
+
+func TestDescribeSaysWhichNamesItLeftOut(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-describe-many", "", false, logSearchTool)
+	names := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "search_logs", "k"}
+
+	text := f.run(t, DescribeMCPToolToolName, map[string]any{"server": "cat-describe-many", "tools": names}).Content
+
+	require.Contains(t, text, "Not described (limit 10): search_logs, k")
+}

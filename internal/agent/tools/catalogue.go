@@ -164,6 +164,18 @@ func (t *catalogueTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy
 	return t.run(ctx, call)
 }
 
+// canonicalServer returns the served server matching name in any case, or
+// name: models echo the case they last saw, and the OAuth rename
+// capitalises server names.
+func (c *catalogue) canonicalServer(name string) string {
+	for _, server := range c.opts.Servers {
+		if strings.EqualFold(server.Name, name) {
+			return server.Name
+		}
+	}
+	return name
+}
+
 // errUnusable carries a non-error explanation of why a server can't be
 // used right now: the call was well formed, so it isn't the model's
 // mistake to retry.
@@ -288,6 +300,7 @@ func (c *catalogue) search(ctx context.Context, call fantasy.ToolCall) (fantasy.
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return fantasy.NewTextErrorResponse("invalid input: " + err.Error()), nil
 	}
+	params.Server = c.canonicalServer(params.Server)
 	query := searchTerms(params.Query)
 	if params.Server == "" {
 		return fantasy.NewTextResponse(c.searchConnected(ctx, query)), nil
@@ -531,6 +544,7 @@ func (c *catalogue) describe(ctx context.Context, call fantasy.ToolCall) (fantas
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return fantasy.NewTextErrorResponse("invalid input: " + err.Error()), nil
 	}
+	params.Server = c.canonicalServer(params.Server)
 	if len(params.Tools) == 0 {
 		return fantasy.NewTextErrorResponse("tools is empty: name up to 10 tools, as search_mcp_tools returns them"), nil
 	}
@@ -547,6 +561,9 @@ func (c *catalogue) describe(ctx context.Context, call fantasy.ToolCall) (fantas
 		}
 		fmt.Fprintf(&out, "## %s\n%s\n\nInput schema:\n%s\n\n", tool.MCP.MCPToolName(), tool.MCP.tool.Description, compactSchema(tool.MCP))
 	}
+	if len(params.Tools) > maxDescribedTools {
+		fmt.Fprintf(&out, "Not described (limit %d): %s\n", maxDescribedTools, strings.Join(params.Tools[maxDescribedTools:], ", "))
+	}
 	return fantasy.NewTextResponse(out.String()), nil
 }
 
@@ -561,6 +578,7 @@ func (c *catalogue) call(ctx context.Context, call fantasy.ToolCall) (fantasy.To
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return fantasy.NewTextErrorResponse("invalid input: " + err.Error()), nil
 	}
+	params.Server = c.canonicalServer(params.Server)
 	instructions, tools, err := c.serverTools(ctx, params.Server, CallMCPToolToolName)
 	if err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
