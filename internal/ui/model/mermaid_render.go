@@ -175,6 +175,10 @@ func (f *graphicsFeature) runRequest(e *diagramEngines, req diagramRequest) (msg
 // job is how the worker answers req, and what it answers when that fails.
 func (f *graphicsFeature) job(req diagramRequest) (run func(*diagramEngines) tea.Msg, fail func(error) tea.Msg) {
 	if req.key.producer == producerBitmap {
+		if req.job == diagramJobCopy {
+			return func(*diagramEngines) tea.Msg { return f.copyBitmap(req) },
+				func(err error) tea.Msg { return diagramCopiedMsg{what: toolImageCopy, err: err} }
+		}
 		return func(*diagramEngines) tea.Msg { return renderBitmap(req) },
 			func(err error) tea.Msg { return diagramReadyMsg{key: req.key, err: err} }
 	}
@@ -184,7 +188,7 @@ func (f *graphicsFeature) job(req diagramRequest) (run func(*diagramEngines) tea
 			func(err error) tea.Msg { return diagramExportedMsg{err: err} }
 	case diagramJobCopy:
 		return func(e *diagramEngines) tea.Msg { return f.copyDiagram(e, req) },
-			func(err error) tea.Msg { return diagramCopiedMsg{err: err} }
+			func(err error) tea.Msg { return diagramCopiedMsg{what: diagramCopy, err: err} }
 	}
 	return func(e *diagramEngines) tea.Msg { return renderDiagram(e, req) },
 		func(err error) tea.Msg { return diagramReadyMsg{key: req.key, err: err} }
@@ -196,7 +200,7 @@ func (f *graphicsFeature) job(req diagramRequest) (run func(*diagramEngines) tea
 // writes the clipboard here, on the worker, so copies land in the order
 // they were asked for.
 func (f *graphicsFeature) copyDiagram(e *diagramEngines, req diagramRequest) diagramCopiedMsg {
-	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{err: err} }
+	fail := func(err error) diagramCopiedMsg { return diagramCopiedMsg{what: diagramCopy, err: err} }
 	raster, err := e.rasterizer()
 	if err != nil {
 		return fail(err)
@@ -217,7 +221,7 @@ func (f *graphicsFeature) copyDiagram(e *diagramEngines, req diagramRequest) dia
 	if err := f.writeImage(buf.Bytes()); err != nil {
 		return fail(err)
 	}
-	return diagramCopiedMsg{}
+	return diagramCopiedMsg{what: diagramCopy}
 }
 
 func (f *graphicsFeature) export(e *diagramEngines, req diagramRequest) tea.Msg {

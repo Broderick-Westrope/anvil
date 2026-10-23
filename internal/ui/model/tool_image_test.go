@@ -889,6 +889,7 @@ func TestHelpShowsTheViewerKeyOnAToolImage(t *testing.T) {
 
 	drill.SetSelected(drill.Len() - 1)
 	require.Contains(t, helpTexts(u.ShortHelp()), "o open in viewer")
+	require.Contains(t, helpTexts(u.ShortHelp()), "Y copy image")
 
 	drill.SetSelected(0)
 	require.NotContains(t, helpTexts(u.ShortHelp()), "o open in viewer", "the header")
