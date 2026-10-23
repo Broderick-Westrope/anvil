@@ -76,6 +76,9 @@ func TestWorthwhile(t *testing.T) {
 		"assistant reply":     {rng: []message.Message{msg("u", message.User, text("hi")), msg("a", message.Assistant, text("hello"))}, want: true},
 		"assistant tool call": {rng: []message.Message{msg("a", message.Assistant, call("c", "bash", map[string]string{"command": "ls"}))}, want: true},
 		"empty assistant":     {rng: []message.Message{msg("a", message.Assistant)}, want: false},
+		"assistant reply without a message type": {rng: []message.Message{{
+			ID: "a", Role: message.Assistant, Parts: []message.ContentPart{text("hello")},
+		}}, want: true},
 		"compaction only": {rng: []message.Message{{
 			ID: "c", Role: message.Assistant, MessageType: message.MessageTypeCompaction,
 			Parts: []message.ContentPart{message.CompactionContent{Summary: "s"}},
@@ -101,11 +104,13 @@ func TestLedger_FileOperations(t *testing.T) {
 			call("e1", "edit", map[string]string{"file_path": "/r/edited.go"}),
 			call("w1", "write", map[string]string{"file_path": "/r/new.go"}),
 			call("m1", "multiedit", map[string]string{"file_path": "/r/failed.go"}),
+			call("v3", "view", map[string]string{"file_path": "/r/missing.go"}),
 		),
 		msg("t1", message.Tool,
 			result("v1", "ok", false), result("v2", "ok", false),
 			result("e1", "ok", false), result("w1", "ok", false),
 			result("m1", "old_string not found", true),
+			result("v3", "file not found", true),
 		),
 	}
 
@@ -268,6 +273,8 @@ func TestPrompt_SerialisesConversationAndLedger(t *testing.T) {
 	require.Contains(t, got, "/r/login.go")
 	require.Contains(t, got, "focus on the PR")
 	require.NotContains(t, got, "secret plan")
+	require.NotContains(t, got, "earlier messages omitted")
+	require.NotContains(t, got, "Commands, in order")
 }
 
 func TestPrompt_ContentCannotForgeAMessage(t *testing.T) {
@@ -559,6 +566,7 @@ func TestLedger_RecognisesStateChangingCommands(t *testing.T) {
 		"gh issue view 3", "gh issue list", "gh release view v1", "gh pr view 7",
 		`echo "git push"`, "echo git commit -m x", `rg 'git commit' docs`, `grep -rn "wtp add" .`,
 		`gh pr view 7 | grep "gh pr merge"`, `git log --grep "git reset"`, `printf '%s\n' 'gh issue close 3'`,
+		"git", "git --version", `echo "unterminated`,
 	}
 	tests := map[string]bool{}
 	for _, c := range changing {
@@ -1009,4 +1017,285 @@ func TestLedger_RecordsEachRefOnce(t *testing.T) {
 	got := branchsummary.Ledger(rng, noChildren)
 
 	require.Equal(t, []string{"1a2b3c4", "5d6e7f8", "https://github.com/acme/app/pull/7"}, got.Events[0].Refs)
+}
+
+// filler is n bytes of text the redactor leaves alone, ending in a
+// non-space so trimming keeps all of it.
+func filler(n int) string {
+	b := []byte(strings.Repeat("f ", n)[:n])
+	b[n-1] = 'f'
+	return string(b)
+}
+
+// conversationStart is how many bytes of a prompt built with focus and an
+// empty ledger come before its conversation.
+func conversationStart(focus string, budget int) int {
+	return strings.Index(branchsummary.Prompt(nil, message.BranchLedger{}, focus, budget), "<conversation>\n")
+}
+
+// conversationReserve is what Prompt holds back from the conversation's
+// share of the budget: its tags and room for an omitted-messages marker.
+const conversationReserve = len("<conversation>\n</conversation>\n") + len("[%d earlier messages omitted]\n") + 8
+
+func compaction(id, summary string) message.Message {
+	return message.Message{
+		ID: id, Role: message.Assistant, MessageType: message.MessageTypeCompaction,
+		Parts: []message.ContentPart{message.CompactionContent{Summary: summary}},
+	}
+}
+
+func TestLedger_RecordsEveryRef(t *testing.T) {
+	t.Parallel()
+
+	output := "[main 1a2b3c4] x\nHEAD is now at 9a8b7c6 y\nhttps://github.com/acme/app/pull/1\nhttps://github.com/acme/app/pull/2\n"
+	rng := []message.Message{
+		msg("a1", message.Assistant, call("c", "bash", map[string]string{"command": "git commit -m x"})),
+		msg("t1", message.Tool, result("c", output, false)),
+	}
+
+	got := branchsummary.Ledger(rng, noChildren)
+
+	require.Equal(t, []string{"1a2b3c4", "9a8b7c6", "https://github.com/acme/app/pull/1", "https://github.com/acme/app/pull/2"}, got.Events[0].Refs)
+}
+
+func TestPrompt_LedgerMayTakeHalfTheBudget(t *testing.T) {
+	t.Parallel()
+
+	var ledger message.BranchLedger
+	for i := range 50 {
+		ledger.Modified = append(ledger.Modified, fmt.Sprintf("/r/%s%02d.go", strings.Repeat("d.", 45), i))
+	}
+
+	got := branchsummary.Prompt(nil, ledger, "", 4_000)
+
+	require.Contains(t, got, ledger.Modified[49]+"\n</ledger>")
+	require.NotContains(t, got, "more\n")
+}
+
+func TestPrompt_KeepsAnEarlierSummaryThatExactlyFits(t *testing.T) {
+	t.Parallel()
+
+	const budget = 1_000
+	wrapper := len("<summary source=\"compaction of history up to this point, which may predate the branch\">\n\n</summary>\n")
+	room := budget*3 - conversationStart("", budget) - wrapper
+
+	fits := branchsummary.Prompt([]message.Message{compaction("c", filler(room))}, message.BranchLedger{}, "", budget)
+	over := branchsummary.Prompt([]message.Message{compaction("c", filler(room+1))}, message.BranchLedger{}, "", budget)
+
+	require.Contains(t, fits, filler(room)+"\n</summary>")
+	require.NotContains(t, over, "<earlier-summaries>")
+}
+
+func TestPrompt_DropsSummariesOlderThanOneThatDoesNotFit(t *testing.T) {
+	t.Parallel()
+
+	rng := []message.Message{compaction("old", "OLDER-SUMMARY"), compaction("new", filler(3_900))}
+
+	got := branchsummary.Prompt(rng, message.BranchLedger{}, "", 1_000)
+
+	require.NotContains(t, got, "OLDER-SUMMARY")
+	require.NotContains(t, got, "<earlier-summaries>")
+}
+
+func TestPrompt_EarlierSummariesShareTheBudget(t *testing.T) {
+	t.Parallel()
+
+	rng := []message.Message{compaction("c", "COMPACTED "+filler(3_900))}
+	for i := range 50 {
+		rng = append(rng, msg(fmt.Sprint(i), message.User, text(strings.Repeat("y ", 200))))
+	}
+
+	got := branchsummary.Prompt(rng, message.BranchLedger{}, "", 2_000)
+
+	require.Contains(t, got, "COMPACTED")
+	require.Contains(t, got, "earlier messages omitted")
+	require.LessOrEqual(t, len(got), 2_000*3)
+}
+
+func TestPrompt_KeepsAMessageThatExactlyFits(t *testing.T) {
+	t.Parallel()
+
+	const budget = 1_000
+	room := budget*3 - conversationStart("", budget) - conversationReserve - len("<message role=\"user\">\n\n</message>\n")
+
+	got := branchsummary.Prompt([]message.Message{msg("u", message.User, text(filler(room)))}, message.BranchLedger{}, "", budget)
+
+	require.Contains(t, got, "<message role=\"user\">\n"+filler(room)+"\n</message>")
+	require.NotContains(t, got, "[truncated]")
+}
+
+func TestPrompt_CutsTheNewestMessageOnlyWhenSomeOfItFits(t *testing.T) {
+	t.Parallel()
+
+	const budget = 300
+	// The newest message needs room for its tags, the truncation marker and
+	// a closing newline before any of its text fits.
+	needed := len("<message role=\"assistant\">\n</message>\n") + len("…[truncated]") + 1
+	focusLen := budget*3 - conversationReserve - needed - conversationStart("", budget) - len("<focus>\n\n</focus>\n\n")
+	require.Positive(t, focusLen)
+	rng := []message.Message{msg("a1", message.Assistant, text("F"+strings.Repeat("word ", 1_000)))}
+
+	for _, tc := range []struct {
+		focus string
+		want  string
+	}{
+		{focus: filler(focusLen), want: ""},
+		{focus: filler(focusLen - 1), want: "<message role=\"assistant\">\nF…[truncated]\n</message>\n"},
+	} {
+		require.Equal(t, budget*3-conversationReserve-needed+len(tc.focus)-focusLen, conversationStart(tc.focus, budget))
+
+		got := branchsummary.Prompt(rng, message.BranchLedger{}, tc.focus, budget)
+
+		if tc.want == "" {
+			require.NotContains(t, got, "<message role=")
+		} else {
+			require.Contains(t, got, tc.want)
+		}
+	}
+}
+
+func TestPrompt_LedgerKeepsItsCountsWhenNoEntryFits(t *testing.T) {
+	t.Parallel()
+
+	ledger := message.BranchLedger{Modified: []string{"/r/" + strings.Repeat("d.", 140)}}
+
+	got := branchsummary.Prompt(nil, ledger, "", 100)
+
+	require.Contains(t, got, "<ledger>\nModified files:\n+1 more\n</ledger>")
+}
+
+func TestPrompt_KeepsALedgerThatExactlyFits(t *testing.T) {
+	t.Parallel()
+
+	const budget = 200
+	path := "/r/" + strings.Repeat("d.", 129)
+	block := "<ledger>\nModified files:\n- " + path + "\n</ledger>\n\n"
+	require.Len(t, block, budget*3/2)
+
+	got := branchsummary.Prompt(nil, message.BranchLedger{Modified: []string{path}}, "", budget)
+
+	require.Contains(t, got, block)
+}
+
+func TestPrompt_ShowsEachCommandsDirectoryAndRefs(t *testing.T) {
+	t.Parallel()
+
+	ledger := message.BranchLedger{Events: []message.LedgerEvent{
+		{Command: "git push", Dir: "/wt/x", Status: message.LedgerSucceeded, Refs: []string{"1a2b3c4"}},
+		{Command: "git pull", Status: message.LedgerFailed},
+	}}
+
+	got := branchsummary.Prompt(nil, ledger, "", 10_000)
+
+	require.Contains(t, got, "Commands, in order:\n- [succeeded] git push (in /wt/x) refs: 1a2b3c4\n- [failed] git pull\n</ledger>")
+}
+
+func TestPrompt_ShowsAFullCommandListWhole(t *testing.T) {
+	t.Parallel()
+
+	var events []message.LedgerEvent
+	for i := range 50 {
+		events = append(events, message.LedgerEvent{Command: fmt.Sprintf("git commit -m step-%02d", i), Status: message.LedgerSucceeded})
+	}
+
+	got := branchsummary.Prompt(nil, message.BranchLedger{Events: events}, "", 100_000)
+
+	require.Contains(t, got, "Commands, in order:\n- [succeeded] git commit -m step-00\n")
+	require.NotContains(t, got, "omitted")
+}
+
+func TestPrompt_CountsTheFilesLeftOut(t *testing.T) {
+	t.Parallel()
+
+	var modified []string
+	for i := range 60 {
+		modified = append(modified, fmt.Sprintf("/r/f%02d.go", i))
+	}
+
+	got := branchsummary.Prompt(nil, message.BranchLedger{Modified: modified}, "", 100_000)
+
+	require.Contains(t, got, "- /r/f49.go\n+10 more\n")
+}
+
+func TestPrompt_SkipsBlankTextParts(t *testing.T) {
+	t.Parallel()
+
+	rng := []message.Message{msg("a1", message.Assistant, text("  \n"), text("AFTER-BLANK"))}
+
+	got := branchsummary.Prompt(rng, message.BranchLedger{}, "", 10_000)
+
+	require.Contains(t, got, "<message role=\"assistant\">\nAFTER-BLANK\n</message>")
+}
+
+func TestTokens(t *testing.T) {
+	t.Parallel()
+
+	for chars, want := range map[int]int{0: 0, 1: 1, 2: 1, 3: 1, 4: 2, 6: 2, 7: 3} {
+		require.Equal(t, want, branchsummary.Tokens(chars), chars)
+	}
+}
+
+func TestPrompt_KeepsAFocusOfExactlyTheCap(t *testing.T) {
+	t.Parallel()
+
+	focus := filler(branchsummary.MaxFocusChars)
+
+	got := branchsummary.Prompt(nil, message.BranchLedger{}, focus, 10_000)
+
+	require.Contains(t, got, "<focus>\n"+focus+"\n</focus>")
+}
+
+func TestTruncation_CutsBeforeASplitCharacter(t *testing.T) {
+	t.Parallel()
+
+	focus := "a" + strings.Repeat("€", branchsummary.MaxFocusChars)
+
+	got := branchsummary.Prompt(nil, message.BranchLedger{}, focus, 10_000)
+
+	require.Contains(t, got, "<focus>\na"+strings.Repeat("€", (branchsummary.MaxFocusChars-1)/3)+"…[truncated]\n</focus>")
+}
+
+func TestFinalize_ToleratesInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
+	got := branchsummary.Finalize(strings.Repeat("\x80", 13_000), message.BranchLedger{})
+
+	require.Contains(t, got, "[summary truncated]")
+}
+
+func TestFinalize_KeepsASummaryOfExactlyTheCap(t *testing.T) {
+	t.Parallel()
+
+	summary := filler(12_000)
+
+	require.Equal(t, summary, branchsummary.Finalize(summary, message.BranchLedger{}))
+}
+
+func TestFinalize_KeepsFileListsThatExactlyFit(t *testing.T) {
+	t.Parallel()
+
+	var modified []string
+	for i := range 25 {
+		modified = append(modified, fmt.Sprintf("/r/%s%02d.go", strings.Repeat("d.", 94), i))
+	}
+	lists := "\n\n<modified-files>\n" + strings.Join(modified, "\n") + "\n</modified-files>"
+	summary := filler(16_000 - len(lists))
+
+	got := branchsummary.Finalize(summary, message.BranchLedger{Modified: modified})
+
+	require.True(t, got == summary+lists, "every entry kept")
+}
+
+func TestRedaction_KeepsOnlyCommitSHAsFromTheLedger(t *testing.T) {
+	t.Parallel()
+
+	token := "ghp_" + strings.Repeat("c", 36)
+	ledger := message.BranchLedger{Events: []message.LedgerEvent{{Command: "git push", Status: message.LedgerSucceeded, Refs: []string{token}}}}
+	rng := []message.Message{msg("a1", message.Assistant, text("Token "+token))}
+
+	prompt := branchsummary.Prompt(rng, ledger, "", 10_000)
+	stored := branchsummary.Finalize("Token "+token, ledger)
+
+	require.NotContains(t, prompt, token)
+	require.NotContains(t, stored, token)
 }

@@ -97,10 +97,11 @@ var stateChanging = map[string]map[string][]string{
 func stateChange(command, workingDir string) (dir string, ok bool) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
-		if !stateChangingCommand.MatchString(command) {
+		m := stateChangingCommand.FindStringSubmatch(command)
+		if m == nil {
 			return "", false
 		}
-		return commandDir(command, workingDir), true
+		return commandDir(m[1], workingDir), true
 	}
 	var gitDir string
 	syntax.Walk(file, func(node syntax.Node) bool {
@@ -200,27 +201,34 @@ func wordText(command string, w *syntax.Word) string {
 	return sb.String()
 }
 
-// gitOptions matches git's global options before its subcommand, such as
-// -C <dir>, which worktree workflows use for nearly every command.
-const gitOptions = `((?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--[\w-]+(?:=\S+)?))*)`
+const (
+	// gitOptions matches git's global options before its subcommand, such
+	// as -C <dir>, which worktree workflows use for nearly every command.
+	gitOptions = `((?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--[\w-]+(?:=\S+)?))*)`
+	// stateChangingPattern matches, as text, the commands stateChanging
+	// lists.
+	stateChangingPattern = `\bgit` + gitOptions + `\s+(?:(?:commit|push|pull|merge|rebase|reset|revert|restore|clean|am|cherry-pick|tag|` +
+		`checkout\s+-b|switch\s+-c|worktree\s+(?:add|remove|move)|branch\s+-[dDmM]|stash\s+(?:push|pop|drop|apply))\b` +
+		`|stash\s*(?:$|[;&|)\n]))` +
+		`|\bgh\s+(?:pr\s+(?:create|edit|merge|comment|close|ready|review)|issue\s+(?:create|edit|close|comment)|release\s+create)\b` +
+		`|\bwtp\s+(?:add|remove)\b`
+	// gitSHARecordPattern matches the records git prints a commit SHA in:
+	// a commit line, a push or fetch range, and a reset.
+	gitSHARecordPattern = `(?m)^\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,40})\]` +
+		`|^ +\+? *([0-9a-f]{7,40})\.\.\.?([0-9a-f]{7,40}) +\S+ +-> ` +
+		`|^HEAD is now at ([0-9a-f]{7,40})\b`
+)
 
 var (
 	// stateChangingCommand and gitDirOption match the same commands as
 	// text, for a command that doesn't parse.
-	stateChangingCommand = regexp.MustCompile(
-		`\bgit` + gitOptions + `\s+(?:(?:commit|push|pull|merge|rebase|reset|revert|restore|clean|am|cherry-pick|tag|` +
-			`checkout\s+-b|switch\s+-c|worktree\s+(?:add|remove|move)|branch\s+-[dDmM]|stash\s+(?:push|pop|drop|apply))\b` +
-			`|stash\s*(?:$|[;&|)\n]))` +
-			`|\bgh\s+(?:pr\s+(?:create|edit|merge|comment|close|ready|review)|issue\s+(?:create|edit|close|comment)|release\s+create)\b` +
-			`|\bwtp\s+(?:add|remove)\b`)
-	gitDirOption = regexp.MustCompile(`-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))`)
+	stateChangingCommand = regexp.MustCompile(stateChangingPattern)
+	gitDirOption         = regexp.MustCompile(`-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))`)
 )
 
 var (
 	shaPattern   = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
-	gitSHARecord = regexp.MustCompile(`(?m)^\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,40})\]` +
-		`|^ +\+? *([0-9a-f]{7,40})\.\.\.?([0-9a-f]{7,40}) +\S+ +-> ` +
-		`|^HEAD is now at ([0-9a-f]{7,40})\b`)
+	gitSHARecord = regexp.MustCompile(gitSHARecordPattern)
 	prURLPattern = regexp.MustCompile(`https://[^\s"')]+/pull/\d+`)
 	// failedOutput matches the lines bash adds to a failed command's
 	// output. It is read only for results recorded before bash stored exit
@@ -317,10 +325,7 @@ func (b *ledgerBuilder) ledger() message.BranchLedger {
 	// Ledgers carry forward through every later branch summary, so what
 	// one stores is capped. The newest events say what state the branch
 	// left, so the oldest are dropped.
-	events := b.events
-	if omitted := len(events) - maxStoredEvents; omitted > 0 {
-		events = events[omitted:]
-	}
+	events := b.events[max(len(b.events)-maxStoredEvents, 0):]
 	return message.BranchLedger{
 		Modified: modified[:min(len(modified), maxStoredFiles)],
 		Read:     read[:min(len(read), maxStoredFiles)],
@@ -334,14 +339,11 @@ func sortedUnique(s []string) []string {
 	return slices.Compact(out)
 }
 
-// commandDir is the directory a git command that doesn't parse acted in:
-// its -C option if it has one, otherwise the directory it ran in.
-func commandDir(command, workingDir string) string {
-	m := stateChangingCommand.FindStringSubmatch(command)
-	if m == nil || m[1] == "" {
-		return workingDir
-	}
-	if d := gitDirOption.FindStringSubmatch(m[1]); d != nil {
+// commandDir is the directory a git command that doesn't parse acted in,
+// given the global options it matched with: its -C option if it has one,
+// otherwise the directory it ran in.
+func commandDir(options, workingDir string) string {
+	if d := gitDirOption.FindStringSubmatch(options); d != nil {
 		return d[1] + d[2] + d[3]
 	}
 	return workingDir
@@ -622,10 +624,9 @@ func serialise(m message.Message, clean func(string) string) string {
 	for _, p := range m.Parts {
 		switch p := p.(type) {
 		case message.TextContent:
-			if strings.TrimSpace(p.Text) == "" {
-				continue
+			if strings.TrimSpace(p.Text) != "" {
+				sb.WriteString(clean(p.Text) + "\n")
 			}
-			sb.WriteString(clean(p.Text) + "\n")
 		case message.ToolCall:
 			fmt.Fprintf(&sb, "[Tool call] %s: %s\n", clean(p.Name), truncate(redactedInput(p.Input, clean), maxToolInputChars))
 		case message.ToolResult:
@@ -714,13 +715,19 @@ func Finalize(summary string, ledger message.BranchLedger) string {
 	if len(summary) > maxSummaryChars {
 		summary = cut(summary, maxSummaryChars) + "\n[summary truncated]"
 	}
-	// The lists give up entries, not their closing tags, to fit the cap.
-	// The summary's own cap leaves them room for at least their counts.
-	lists := fileLists(ledger, maxListEntries)
-	for n := maxListEntries; n > 0 && len(summary)+len(lists) > maxStoredChars; n-- {
-		lists = fileLists(ledger, n-1)
+	return summary + fitFileLists(ledger, maxStoredChars-len(summary))
+}
+
+// fitFileLists renders the ledger's file lists with as many entries as fit
+// in maxChars. They give up entries, not their closing tags, and with no
+// entries left they are returned whatever their length: the summary's own
+// cap leaves them room for at least their counts.
+func fitFileLists(ledger message.BranchLedger, maxChars int) string {
+	for n := maxListEntries; ; n-- {
+		if s := fileLists(ledger, n); n == 0 || len(s) <= maxChars {
+			return s
+		}
 	}
-	return summary + lists
 }
 
 // fileLists renders the ledger's file lists with at most n entries each.
