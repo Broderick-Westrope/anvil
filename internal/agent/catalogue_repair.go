@@ -47,14 +47,18 @@ func forwardToCatalogue(call fantasy.ToolCallContent, listing mcpListing, availa
 		return call, false
 	}
 	server := longestServerPrefix(call.ToolName, listing.routed)
-	if !listing.catalogue[server] || !json.Valid([]byte(call.Input)) {
+	arguments := call.Input
+	if strings.TrimSpace(arguments) == "" {
+		arguments = "{}"
+	}
+	if !listing.catalogue[server] || !json.Valid([]byte(arguments)) {
 		return call, false
 	}
 	input, err := json.Marshal(struct {
 		Server    string          `json:"server"`
 		Tool      string          `json:"tool"`
 		Arguments json.RawMessage `json:"arguments"`
-	}{server, call.ToolName[len("mcp_"+server+"_"):], json.RawMessage(call.Input)})
+	}{server, call.ToolName[len("mcp_"+server+"_"):], json.RawMessage(arguments)})
 	if err != nil {
 		return call, false
 	}

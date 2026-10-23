@@ -48,6 +48,11 @@ func TestRepairToolCall(t *testing.T) {
 			available: withCall,
 			want:      &fantasy.ToolCallContent{ToolName: tools.CallMCPToolToolName, Input: `{"server":"data_dog","tool":"search","arguments":{"q":1}}`},
 		},
+		"empty input forwards as an empty object": {
+			call:      fantasy.ToolCallContent{ToolName: "mcp_data_dog_whoami", Input: ``},
+			available: withCall,
+			want:      &fantasy.ToolCallContent{ToolName: tools.CallMCPToolToolName, Input: `{"server":"data_dog","tool":"whoami","arguments":{}}`},
+		},
 		"malformed JSON is repaired as before": {
 			call:      fantasy.ToolCallContent{ToolName: "view", Input: `{"path":"a"`},
 			available: withCall,
