@@ -12,7 +12,8 @@
 # different corpus sources, or if B wrote new entries to the shared
 # compilation cache. A load that fails and falls back to compiling writes
 # nothing, so also check NewRasterizer's time matches. It doesn't apply
-# the latency or memory pass bars; read those off benchstat's output.
+# the latency or memory pass bars; read those off benchstat's output. With
+# a dozen metrics, one at p < 0.05 with a small delta is likely noise.
 set -euo pipefail
 
 if (($# < 3)); then
@@ -32,11 +33,22 @@ trap 'rm -rf "$MERMAIDBENCH_CACHE"; echo "raw results: $out" >&2' EXIT
 
 entries() { find "$MERMAIDBENCH_CACHE" -type f | sort; }
 
-# A fills the cache, as an earlier Anvil session would have. Running B
-# once too means neither build's first measured run is the one that pages
-# its binary in.
-"$a" -test.run '^TestMemory$' >/dev/null
-"$b" -test.run '^$' >/dev/null 2>&1
+# run_test runs one test of one build into a log, and shows the log if it
+# fails.
+run_test() {
+	local bin="$1" test="$2" log="$3"
+	if ! "$bin" -test.run "^$test\$" >"$log" 2>&1; then
+		echo "FAIL: $bin $test:" >&2
+		cat "$log" >&2
+		exit 1
+	fi
+}
+
+# A fills the cache, as an earlier Anvil session would have. Running B's
+# memory test once too means neither build's first measured run is the one
+# that pages its binary in.
+run_test "$a" TestMemory "$out/warm-a.log"
+run_test "$b" TestMemory "$out/warm-b.log"
 before="$(entries)"
 
 # Alternate ABBA so whichever goes first in a pair isn't always the same
@@ -49,12 +61,11 @@ for i in $(seq "$runs"); do
 		[[ $build == b ]] && bin="$b"
 		for test in TestLatency TestMemory; do
 			log="$out/$build-$test-$i.log"
-			if ! "$bin" -test.run "^$test\$" >"$log" 2>&1; then
-				echo "FAIL: $build $test, run $i:" >&2
-				cat "$log" >&2
+			run_test "$bin" "$test" "$log"
+			if ! grep -E '^(Benchmark|# )' "$log" >>"$out/$build.txt"; then
+				echo "FAIL: no benchmark lines in $log; did the test skip?" >&2
 				exit 1
 			fi
-			grep -E '^(Benchmark|# )' "$log" >>"$out/$build.txt"
 		done
 	done
 	echo "run $i of $runs done" >&2

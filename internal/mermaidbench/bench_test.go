@@ -187,7 +187,8 @@ func TestLatency(t *testing.T) {
 	// checked to fail the same ones the same way.
 	var failures []string
 	for i, src := range sources {
-		if _, err := r.Render(ctx, src, pipeline.Options{MaxWidth: maxWidth}); err != nil {
+		_, err := r.Render(ctx, src, pipeline.Options{MaxWidth: maxWidth})
+		if err != nil {
 			failures = append(failures, fmt.Sprintf("%d: %v", i, err))
 		}
 	}
@@ -258,6 +259,9 @@ func settle() runtime.MemStats {
 func TestMemory(t *testing.T) {
 	// It needs no corpus, but skips with the rest of the harness.
 	corpusDir(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("TestMemory reads RSS with ps")
+	}
 	cache := os.Getenv("MERMAIDBENCH_CACHE")
 	if cache == "" {
 		t.Skip("MERMAIDBENCH_CACHE is unset; run TestMemory through scripts/mermaidbench-compare.sh, which warms a cache in another process first")
