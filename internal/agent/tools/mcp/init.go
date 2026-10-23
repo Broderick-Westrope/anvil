@@ -141,6 +141,7 @@ func ArmInit() {
 func ResetInitForTest() {
 	initMu.Lock()
 	initStarted = false
+	startupSnapshot = nil
 	initOnce = sync.Once{}
 	initDone = make(chan struct{})
 	initMu.Unlock()
@@ -280,8 +281,10 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 	slog.Info("Initializing MCP clients")
 	start := time.Now()
 	var wg sync.WaitGroup
-	// Initialize states for all configured MCPs
-	for name, m := range cfg.Config().MCP {
+	// Initialize states for all configured MCPs. The same map feeds the
+	// startup snapshot, so a config write mid-init can't skew it.
+	mcps := cfg.Config().MCP
+	for name, m := range mcps {
 		if m.Disabled {
 			updateState(name, StateDisabled, nil, nil, Counts{})
 			slog.Debug("Skipping disabled MCP", "name", name)
@@ -326,6 +329,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 		}(name, m)
 	}
 	wg.Wait()
+	recordSnapshot(mcps)
 	initOnce.Do(func() { close(initDone) })
 	// The first prompt waits for this to finish, so the total is the floor
 	// on its latency. Lazy servers are excluded; they connect on demand.
