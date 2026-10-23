@@ -322,6 +322,8 @@ func NewToolMessageItem(
 		item = NewReferencesToolMessageItem(sty, toolCall, result, canceled)
 	case tools.LSPRestartToolName:
 		item = NewLSPRestartToolMessageItem(sty, toolCall, result, canceled)
+	case tools.CallMCPToolToolName:
+		item = NewCatalogueCallMessageItem(sty, toolCall, result, canceled)
 	default:
 		if IsDockerMCPTool(toolCall.Name) {
 			item = NewDockerMCPToolMessageItem(sty, toolCall, result, canceled)
@@ -337,7 +339,7 @@ func NewToolMessageItem(
 	case tools.TodosToolName, agent.TaskToolName, tools.AgenticFetchToolName:
 		// Keep current (expanded) behavior.
 	default:
-		compact := !config.IsToolExpanded(opts.ExpandedPatterns, toolCall.Name)
+		compact := !config.IsToolExpanded(opts.ExpandedPatterns, expandName(toolCall))
 		if compactable, ok := item.(Compactable); ok {
 			compactable.SetCompact(compact)
 		}

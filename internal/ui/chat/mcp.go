@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 )
@@ -35,8 +36,80 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 	if len(toolNameParts) != 3 {
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid tool name"}, width)
 	}
-	mcpName := humanizedToolName(toolNameParts[1])
-	toolName := humanizedToolName(toolNameParts[2])
+	return renderMCPTool(sty, width, opts, toolNameParts[1], toolNameParts[2], opts.ToolCall.Input)
+}
+
+// NewCatalogueCallMessageItem creates the item for a call_mcp_tool call,
+// which renders as the MCP tool call it proxies.
+func NewCatalogueCallMessageItem(
+	sty *styles.Styles,
+	toolCall message.ToolCall,
+	result *message.ToolResult,
+	canceled bool,
+) ToolMessageItem {
+	return newBaseToolMessageItem(sty, toolCall, result, &CatalogueCallRenderContext{}, canceled)
+}
+
+// CatalogueCallRenderContext renders a call_mcp_tool call as the MCP
+// tool it runs: server, tool and the tool's own arguments.
+type CatalogueCallRenderContext struct{}
+
+// RenderTool implements the [ToolRenderer] interface.
+func (b *CatalogueCallRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
+	call, ok := parseCatalogueCall(opts.ToolCall.Input)
+	if !ok {
+		if opts.IsPending() {
+			return pendingTool(sty, "MCP", opts.Anim, opts.Compact)
+		}
+		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
+	}
+	return renderMCPTool(sty, width, opts, call.Server, call.Tool, call.Arguments)
+}
+
+// catalogueCall is a call_mcp_tool input read as the call it proxies.
+type catalogueCall struct {
+	Server    string
+	Tool      string
+	Arguments string
+}
+
+// parseCatalogueCall reads a call_mcp_tool input. Arguments may be an
+// object or a string holding one, as call_mcp_tool accepts both.
+func parseCatalogueCall(input string) (catalogueCall, bool) {
+	var raw struct {
+		Server    string          `json:"server"`
+		Tool      string          `json:"tool"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(input), &raw); err != nil || raw.Server == "" || raw.Tool == "" {
+		return catalogueCall{}, false
+	}
+	args := string(raw.Arguments)
+	var asString string
+	if json.Unmarshal(raw.Arguments, &asString) == nil {
+		args = asString
+	}
+	if args == "" || args == "null" {
+		args = "{}"
+	}
+	return catalogueCall{Server: raw.Server, Tool: raw.Tool, Arguments: args}, true
+}
+
+// expandName is the name expanded_tools patterns match a call by: a
+// proxied MCP call matches as the inner tool.
+func expandName(toolCall message.ToolCall) string {
+	if toolCall.Name != tools.CallMCPToolToolName {
+		return toolCall.Name
+	}
+	if call, ok := parseCatalogueCall(toolCall.Input); ok {
+		return "mcp_" + call.Server + "_" + call.Tool
+	}
+	return toolCall.Name
+}
+
+func renderMCPTool(sty *styles.Styles, width int, opts *ToolRenderOpts, server, tool, input string) string {
+	mcpName := humanizedToolName(server)
+	toolName := humanizedToolName(tool)
 
 	mcpName = sty.Tool.MCPName.Render(mcpName)
 	toolName = sty.Tool.MCPToolName.Render(toolName)
@@ -48,7 +121,7 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 	}
 
 	var params map[string]any
-	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
 
