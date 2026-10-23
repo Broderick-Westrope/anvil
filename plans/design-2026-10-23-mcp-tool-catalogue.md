@@ -21,7 +21,7 @@ The cheaper fix is an `enabled_tools` allow-list of the observed union, which al
 - In:
   - `lazy_mode` on MCP config, including the regenerated JSON schema.
   - The three catalogue tools and their `.md` descriptions.
-  - Connecting a catalogue server on first use.
+  - Connecting a catalogue server on first use, including `mcp.WaitSettled`.
   - Permissions, the bouncer, hooks, timers and the UI treating a proxied call as the inner MCP tool.
   - Subagents and workflow agents.
   - Excluding catalogue servers from lazy-enable state and the palette toggle.
@@ -82,32 +82,34 @@ call_mcp_tool(server, tool, arguments)  // Validates arguments, then runs the to
   - **Tool list mode:** the helper skips catalogue-server tools, judged by the server's config on the unwrapped tool (`Tool.MCP()`). The one exception is inner tool names a workflow `agent()` passes in explicitly. `buildWorkflowAgent` still connects their server through `lazyServersFor`, since catalogue servers are lazy.
   - **Resolver mode:** it returns the server's tools, and keys them by `Tool.MCP()`, never by parsing `mcp_<server>_` out of a name. Server names can contain `_`, and the OAuth rename changes case.
   - **Connecting:** the resolver connects a deferred server with `toolsmcp.ConnectDeferred` before building, so the search that connects a server already sees its tools. It skips `refreshMCPTools`, which would rebuild the orchestrator's list for tools that are never listed, and which fails in a session with no orchestrator. That also makes it work the same in subagents.
-  - **Connection states:** it mirrors `enable_mcp`'s handling one state at a time (`enable_mcp.go`).
+  - **Connection states:** it follows `enable_mcp`'s handling one state at a time (`enable_mcp.go`), except for a server that is still starting.
     - Auth expiry returns `enable_mcp`'s non-error "a human must renew it" text.
     - A server that is disabled or in error returns a non-error message saying so, never an empty match list that reads as "no such tools".
-    - A server that is still connecting, typically because parallel tool calls in one step each try to connect it, makes later callers wait on that connect instead of failing with `ErrAlreadyConnecting`.
+    - A server that is still connecting makes later callers wait for it to settle, bounded by the server's timeout, instead of failing with `ErrAlreadyConnecting` or answering "retry shortly" as `enable_mcp` does. The race is between agents (the orchestrator, concurrent subagents, parallel workflow `agent()` calls or a palette enable), not within one step: fantasy runs tools one at a time unless `Info().Parallel` is set, and the catalogue tools stay sequential like direct MCP tools. `internal/agent/tools/mcp` has no way to wait today (`ConnectDeferred` returns `ErrAlreadyConnecting` before taking its unexported lock), so it gains a generic `WaitSettled(ctx, name)` that returns once the server leaves `StateStarting`, re-checking state after subscribing so a transition isn't missed.
 - **Search.**
   - **Ranking:** lowercase term overlap, with name matches weighted over description matches and ties broken by name.
   - **Result size:** a query returns at most 20 rows. `server` with no query lists every name on that server, uncapped. That listing is the fallback when a search misses.
   - **Instructions:** when `server` is given, the result starts with that server's MCP instructions.
-  - **Without `server`:** search covers only servers that are already connected and matches the `lazy_description` of the rest, so one vague query never connects (or prompts OAuth for) every catalogue server.
-- **Describe.** It returns `m.tool.InputSchema` as the server sent it. `Tool.Info()` in `mcp-tools.go` keeps only `properties` and `required`.
+  - **Without `server`:** search covers only servers that are already connected and matches the `lazy_description` of the rest, so one vague query never connects (or prompts OAuth for) every catalogue server. Connection state is per process, so another session's connect can widen these results. That changes only a tool result, never the prefix.
+- **Tool names.** Search returns the raw MCP tool name (`search_datadog_logs`). Describe and call take that name, and also accept the full `mcp_<server>_<tool>` form in any case, since models echo whatever they last saw.
+- **Describe.** It returns the server's input schema as sent, through a new `InputSchema()` accessor on `tools.Tool`. `Tool.Info()` in `mcp-tools.go` keeps only `properties` and `required`.
 - **Call.**
   - **Unknown tool:** an error naming the closest search matches.
   - **Schema violation:** an error listing the violations and then the schema, with a fixed prefix so the rate can be counted from `messages`. The server is never contacted.
   - **Unresolvable schema** (one that won't unmarshal into `jsonschema.Schema`, or has a remote `$ref` that `jsonschema-go` can't load): the call passes through unvalidated, and a debug log records it.
   - **Valid call:** it runs the wrapped tool with a `fantasy.ToolCall` carrying the outer call's `ID`, the inner tool's real name (`Info().Name`) and `arguments` as `Input`.
     - The permission prompt observer, hook approvals and the UI's awaiting-permission state all key on the call ID, so they and the outer `timedTool` behave as for a direct call.
-    - The outer `call_mcp_tool` is not hook-wrapped, so a broad hook fires once per call.
-- **Arguments.** `arguments` accepts a JSON object or a string holding one, since models often send nested objects as strings. Its parameter schema is an object with no fixed properties. Some providers convert or reject that kind of schema (fantasy's Gemini conversion is one place to check), so the criteria exercise it on each provider family.
+    - The outer `call_mcp_tool` is not hook-wrapped, so a broad hook fires once per call, and a hook matching `call_mcp_tool` itself never fires. Hooks target the inner name.
+- **Arguments.** `arguments` is declared with no `type`, and accepts a JSON object or a string holding one, since models often send nested objects as strings. A property-less `{"type": "object"}` is what Gemini tends to reject (fantasy maps it to an OBJECT with no properties), while an untyped parameter maps to a string there and stays untyped on Anthropic and OpenAI. The criteria confirm it on each provider family.
 - **Validation order.** Validation runs before the inner tool's hooks. Input that a hook rewrites (`UpdatedInput`) is therefore not re-validated, the same as for a direct MCP call today.
 - **Who gets the catalogue tools.** They are registered for an agent when at least one catalogue server passes its `allowed_mcp`, the same gate MCP tools pass today.
   - **Not `allowsTool`:** an agent whose `tools:` lists only built-ins (the documented explorer with `tools: [glob, grep, ls, view]` and `mcps: muninn:`) keeps its MCP access when a server switches to catalogue mode.
-  - **How to remove them:** they disappear only through `options.disabled_tools` or an explicit `!call_mcp_tool` (or `!search_mcp_tools`, `!describe_mcp_tool`) entry in the agent's filter.
+  - **How to remove them:** globally through `options.disabled_tools`. Per agent, leave the catalogue servers out of `mcps:`, or, in an agent whose `tools:` is a negative list, add `!call_mcp_tool` (and the other two). A `!name` entry in a positive list is invalid: `ValidateFilterList` rejects mixed lists, and the fallback then allows every built-in, so the docs must not suggest it there.
+  - **Description:** each agent's catalogue tool descriptions list the catalogue servers its `allowed_mcp` permits, as `enable_mcp` does. That depends only on config, so the prefix stays stable.
 - **Lazy state stays out of it.** These skip catalogue servers unconditionally, judged by config, whatever the derived lazy state says:
   - `enable_mcp`,
   - `reconnectDeferredServers`,
-  - `mcpInstructions`, which today includes any connected server missing from the tool map, as catalogue servers now always are,
+  - `mcpInstructions`, which today includes any connected server missing from the tool map, as catalogue servers now always are (it gains the catalogue server names as an input). The one exception is a workflow agent that names a server's tools directly: it gets that server's instructions, since it never searches,
   - the palette's lazy toggle.
 
   So a session that enabled Datadog before it became a catalogue server, or an old `MCPToggleContent`, never brings back its tools or instructions. The palette shows catalogue servers with their mode and connection state, without a lazy toggle.
@@ -156,14 +158,14 @@ Declined:
 **Risks and Tradeoffs:**
 - **Not worth building yet.** Allow-lists may close most of the gap. Before building, set `enabled_tools` to the observed union on LaunchDarkly, Linear and Slack, and leave Datadog narrowed, for a week. Then re-run the schema-share query and count sessions where the model wanted a tool it couldn't see.
 - **Argument quality.** Schema-violation errors carry a fixed prefix and are counted from `messages`. If they exceed about 1 in 10 `call_mcp_tool` calls, reading schemas from results isn't working, and per-tool loading or native tool search deserves another look.
-- **Extra steps.** A first use adds two steps, a search and a describe, since the call replaces the direct call. Each step re-reads the whole cached prompt. Sessions using lazy servers average about 215k prompt tokens, a figure that includes the schemas this design removes, so two extra steps cost at most about $0.10 against about $2.25 of schema saved per session, plus a few seconds of latency each. Compaction can drop earlier describe results, which costs another describe after a summary. For a session that uses most of a small server's tools, whole-server mode stays cheaper, which is why the mode is per server.
+- **Extra steps.** A first use adds two steps, a search and a describe, since the call replaces the direct call. Each step re-reads the whole cached prompt. Sessions using lazy servers average about 215k prompt tokens, a figure that includes the schemas this design removes, so two extra steps cost about $0.10 to $0.15 including writes for the new results, against about $2.25 of schema saved per session, plus a few seconds of latency each. Compaction can drop earlier describe results, which costs another describe after a summary. For a session that uses most of a small server's tools, whole-server mode stays cheaper, which is why the mode is per server.
 - **Discovery.** If search misses, the model may conclude a tool doesn't exist. Listing every name on a server is the fallback, and the `search_mcp_tools` description says to use it.
 - **Indirection.** Logs, `step_usage` tool counts and `anvil_info` show the catalogue tools, not the inner ones. Permission records and hooks show the inner name.
 
 **Success Criteria:**
 - [ ] With Datadog set to `lazy_mode: "catalogue"`, a session that searches, describes and calls two Datadog tools has the same `tools_hash` and `tool_count` on every `step_usage` turn row, and no `tools_changed` miss.
-- [ ] The first `search_mcp_tools(server=datadog)` in a session connects the deferred server and returns its matches in the same result, in both the orchestrator and a subagent. Two parallel searches on a deferred server in one step both return matches.
-- [ ] An agent with `tools: [glob, grep, ls, view]` and `mcps: {datadog: []}` can search and call Datadog tools once Datadog is in catalogue mode.
+- [ ] The first `search_mcp_tools(server=datadog)` in a session connects the deferred server and returns its matches in the same result, in both the orchestrator and a subagent. Two concurrent subagents whose first search hits the same deferred server both return matches.
+- [ ] An agent with `tools: [glob, grep, ls, view]` and `mcps: {datadog: []}` can search and call Datadog tools once Datadog is in catalogue mode. An agent with `tools: ["!call_mcp_tool", "!search_mcp_tools", "!describe_mcp_tool"]` gets none of the three and keeps every other built-in.
 - [ ] Searching a server that is in error or disabled returns a message saying so, not an empty match list.
 - [ ] `call_mcp_tool` succeeds on an Anthropic, an OpenAI and a Gemini model, with `arguments` sent as an object and as a JSON string.
 - [ ] The same scripted Datadog task, run in `"server"` mode, with an `enabled_tools` allow-list and in catalogue mode, is recorded with total prompt tokens, list cost and step count for each. Catalogue mode uses fewer prompt tokens than `"server"` mode.
@@ -191,6 +193,8 @@ Declined:
   - `refreshMCPTools` (orchestrator only),
   - where `enable_mcp` bypasses `allowsTool`.
 - `internal/agent/tools/enable_mcp.go`: deferred connect and auth-expiry behaviour to reuse.
+- `internal/agent/tools/mcp/init.go`: `ConnectDeferred`, `InitializeSingle`, state events; where `WaitSettled` goes.
+- `internal/config/filter.go`, `internal/agent/tool_access.go`: filter-list validation and its allow-all fallback.
 - `internal/agent/lazy_mcp.go`: `deriveLazyMCPState`, `filterLazyMCPTools`, `reconnectDeferredServers`, `mcpInstructions`.
 - `internal/agent/turn.go`, `internal/permission/permission.go`: `timedTool`, the prompt observer and hook approval keyed on call ID.
 - `internal/agent/hooked_tool.go`: hook wrapping (top-level only), and where to skip `call_mcp_tool`.
