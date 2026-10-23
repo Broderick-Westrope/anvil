@@ -90,7 +90,8 @@ to `UI` and cases to the dispatchers. That keeps upstream's cases in
 so cherry-picks still apply. See `docs/adr/0003-ui-complexity.md`. The
 workflow feature (`model/workflow.go`) is the worked example. The graphics
 feature (`model/graphics.go`), which draws Mermaid diagrams and tool images,
-is the other.
+is another. The smallest is `fileOpenFeature` (`model/file_open.go`), which
+only claims the open and edit messages a tool drill-in sends.
 
 Diagrams are the one exception that touches upstream-shaped code
 directly, because chat items are built in `UI` (`ExtractMessageItems`):
