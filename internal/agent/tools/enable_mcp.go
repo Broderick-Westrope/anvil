@@ -135,8 +135,8 @@ func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.A
 // success response rather than an error: the call did not fail
 // because of a malformed request, and framing it as an error pushes
 // models toward retry loops. The wording tells the model not to
-// retry within the turn and not to attempt a shell command. tool names
-// the tool the model shouldn't retry.
+// retry within the turn and not to attempt a shell command. The tool
+// argument names the tool the model shouldn't retry.
 func authRequiredResponse(name, tool string) fantasy.ToolResponse {
 	msg := fmt.Sprintf(
 		"MCP '%s' cannot be used: its authentication has expired "+
