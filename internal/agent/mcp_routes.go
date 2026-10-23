@@ -49,36 +49,46 @@ func deriveMCPRoutes(snap map[string]toolsmcp.ServerSnapshot) mcpRoutes {
 		if server.Config.Disabled || name == config.DockerMCPName {
 			continue
 		}
-		catalogue, reason, short := routeFor(server)
+		route := routeFor(server)
 		description := server.Config.LazyDescription
 		if description == "" {
 			description = name
 		}
-		auto := server.Config.Route != config.MCPRouteDirect && server.Config.Route != config.MCPRouteCatalogue
-		routes[name] = mcpRoute{catalogue: catalogue, auto: auto, reason: reason, short: short, description: description}
+		route.description = description
+		routes[name] = route
 	}
 	return routes
 }
 
-func routeFor(server toolsmcp.ServerSnapshot) (catalogue bool, reason, short string) {
+// routeFor applies the route rule to one server, leaving its description
+// for the caller.
+func routeFor(server toolsmcp.ServerSnapshot) mcpRoute {
 	switch server.Config.Route {
 	case config.MCPRouteDirect:
-		return false, "route: direct", "set in config"
+		return mcpRoute{reason: "route: direct", short: "set in config"}
 	case config.MCPRouteCatalogue:
-		return true, "route: catalogue", "set in config"
+		return mcpRoute{catalogue: true, reason: "route: catalogue", short: "set in config"}
 	}
 	if server.Config.IsLazy() {
-		return true, "auto: lazy", "lazy"
+		return mcpRoute{catalogue: true, auto: true, reason: "auto: lazy", short: "lazy"}
 	}
 	if server.State != toolsmcp.StateConnected {
-		return true, fmt.Sprintf("auto: %s at startup", server.State), fmt.Sprintf("%s at startup", server.State)
+		return mcpRoute{
+			catalogue: true, auto: true,
+			reason: fmt.Sprintf("auto: %s at startup", server.State),
+			short:  fmt.Sprintf("%s at startup", server.State),
+		}
 	}
 	size := humanize.Comma(int64(server.SentBytes))
-	short = humanize.Bytes(uint64(server.SentBytes))
+	limit := humanize.Comma(catalogueThresholdBytes)
+	route := mcpRoute{auto: true, short: humanize.Bytes(uint64(server.SentBytes))}
 	if server.SentBytes < catalogueThresholdBytes {
-		return false, fmt.Sprintf("auto: %s bytes, under %s", size, humanize.Comma(catalogueThresholdBytes)), short
+		route.reason = fmt.Sprintf("auto: %s bytes, under %s", size, limit)
+		return route
 	}
-	return true, fmt.Sprintf("auto: %s bytes, not under %s", size, humanize.Comma(catalogueThresholdBytes)), short
+	route.catalogue = true
+	route.reason = fmt.Sprintf("auto: %s bytes, not under %s", size, limit)
+	return route
 }
 
 // isCatalogue reports whether the server's tools go through the
