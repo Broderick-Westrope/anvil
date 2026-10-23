@@ -38,12 +38,12 @@ is Anvil's old `measure.go` generalised.
 - Later, the pipeline (`Renderer`, `Rasterizer`, `Theme`, the fonts and
   the resvg wrapper) moved out of `internal/mermaid` into pele-go's nested
   module `github.com/Broderick-Westrope/pele-go/raster`, so other programs
-  can import it. Its API is the one Anvil used, plus `ResolveVars` and
-  `FontFaces` for `HTMLDocument` and `ErrRasterTimeout` in place of
-  `resvg.ErrRenderTimeout`: layout and rasterizing stay separate, and
-  Anvil still owns the `Rasterizer`'s lifecycle. `internal/mermaid` keeps
-  only `HTMLDocument`, whose page names the font family
-  `Anvil DejaVu Sans`.
+  can import it. Its API is the one Anvil used, plus `ResolveVars`,
+  `FontFace` and `FontFaces` for `HTMLDocument`, and `ErrRasterTimeout` in
+  place of `resvg.ErrRenderTimeout`: layout and rasterizing stay separate,
+  and Anvil still owns the `Rasterizer`'s lifecycle. `internal/mermaid`
+  keeps only `HTMLDocument`, whose page names the font family `Anvil
+  DejaVu Sans`.
 
 ### Upgrading
 
