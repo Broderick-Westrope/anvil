@@ -189,7 +189,14 @@ Terms with a specific meaning in this codebase are defined in
   and reserves the session synchronously when one starts, so a message
   sent meanwhile queues behind it. The TUI feature
   (`internal/ui/model/branch_summary.go`) renders only the service's
-  events, showing the run as a live agent item. Design:
+  events, showing the run as a live agent item. The built-in prompt has
+  an evaluation set in `internal/agent/testdata/branch_summary_eval`
+  (made-up conversations modelled on real failures, each with required
+  facts, forbidden claims and an optional length bound). It runs live
+  against your configured model with
+  `ANVIL_BRANCH_SUMMARY_EVAL=1 go test ./internal/agent -run
+  TestBranchSummaryEval -v`; run it whenever you change the prompt or
+  the serialisation. Design:
   `plans/completed/design-2026-10-20-branch-summaries.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
