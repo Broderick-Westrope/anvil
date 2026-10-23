@@ -17,12 +17,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	fimage "github.com/Broderick-Westrope/anvil/internal/ui/image"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/Broderick-Westrope/pele-go/raster"
 	"github.com/pkg/browser"
 )
 
@@ -141,7 +141,7 @@ type diagramRequest struct {
 	// data and mimeType are a bitmap's base64 data and type, for
 	// producerBitmap.
 	data, mimeType string
-	theme          mermaid.Theme
+	theme          raster.Theme
 	cellW, cellH   int
 	maxCols        int
 	job            diagramJob
@@ -203,9 +203,9 @@ var (
 // graphics. Producers make the images: Mermaid renders ```mermaid fences
 // in finished assistant messages, shows one full size in a drill-in, opens
 // one in the browser and copies one to the clipboard (see
-// internal/mermaid); bitmaps are the images tools return, drawn in their
-// drill-ins (tool_image.go). Only the drill-in on top holds a full-size
-// image.
+// github.com/Broderick-Westrope/pele-go/raster and internal/mermaid);
+// bitmaps are the images tools return, drawn in their drill-ins
+// (tool_image.go). Only the drill-in on top holds a full-size image.
 type graphicsFeature struct {
 	host featureHost
 	caps *common.Capabilities
@@ -245,14 +245,14 @@ type graphicsFeature struct {
 	// palette is the theme without its background, and paletteHash its
 	// hash; see initPalette.
 	paletteOnce sync.Once
-	palette     mermaid.Theme
+	palette     raster.Theme
 	paletteHash uint64
 	// returnMemory hands memory freed by releasing the engines back to
 	// the OS; Go would otherwise keep it, and the process stays at its
 	// peak.
 	returnMemory func()
 	// newRenderer loads the layout engine; tests make it fail.
-	newRenderer func() (*mermaid.Renderer, error)
+	newRenderer func() (*raster.Renderer, error)
 	// openURL opens a page in the user's browser.
 	openURL func(string) error
 	// writeImage puts a PNG on the system clipboard. The worker calls it.
@@ -295,7 +295,7 @@ func newGraphicsFeature(host featureHost, caps *common.Capabilities, com *common
 		exportDir:       diagramExportDir(),
 		compileCacheDir: diagramCompileCacheDir(),
 		returnMemory:    debug.FreeOSMemory,
-		newRenderer:     mermaid.NewRenderer,
+		newRenderer:     raster.NewRenderer,
 		openURL:         browser.OpenURL,
 		writeImage:      writeClipboardImage,
 		clipboardReady:  imageClipboardReady,
@@ -361,7 +361,7 @@ func (f *graphicsFeature) background() string {
 // the boxes behind edge labels, so it has to be the colour around the
 // transparent image: Anvil's background, the terminal's own when the TUI
 // is transparent, or the theme's until the terminal reports it.
-func (f *graphicsFeature) theme() mermaid.Theme {
+func (f *graphicsFeature) theme() raster.Theme {
 	f.initPalette()
 	theme := maps.Clone(f.palette)
 	theme["pele-bg"] = f.background()
@@ -373,7 +373,7 @@ func (f *graphicsFeature) theme() mermaid.Theme {
 func (f *graphicsFeature) initPalette() {
 	f.paletteOnce.Do(func() {
 		p := f.com.Styles.Diagram
-		f.palette = mermaid.Theme{
+		f.palette = raster.Theme{
 			"pele-fg":           hexColor(p.Fg),
 			"pele-muted":        hexColor(p.Muted),
 			"pele-line":         hexColor(p.Line),

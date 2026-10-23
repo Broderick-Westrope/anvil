@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
-	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
+	"github.com/Broderick-Westrope/pele-go/raster"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/stretchr/testify/require"
 )
@@ -72,19 +72,19 @@ func TestGraphicsFeatureCopiesADiagramAsAPNG(t *testing.T) {
 			img, err := png.Decode(bytes.NewReader(written[0]))
 			require.NoError(t, err)
 
-			pele, err := mermaid.NewRenderer()
+			pele, err := raster.NewRenderer()
 			require.NoError(t, err)
-			layout, err := pele.Render(context.Background(), src, mermaid.Options{})
+			layout, err := pele.Render(context.Background(), src, raster.Options{})
 			require.NoError(t, err)
 			require.Equal(t, int(math.Ceil(2*layout.Width)), img.Bounds().Dx(), "twice the layout's size")
 			require.Equal(t, int(math.Ceil(2*layout.Height)), img.Bounds().Dy(), "twice the layout's size")
 
 			// The copy is the chat's transparent image drawn over pele-bg.
-			raster, err := mermaid.NewRasterizer(context.Background(), f.compileCacheDir)
+			rast, err := raster.NewRasterizer(context.Background(), f.compileCacheDir)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = raster.Close() })
+			t.Cleanup(func() { _ = rast.Close() })
 			theme := f.theme()
-			drawn, err := raster.Rasterize(layout, theme, mermaid.RasterOptions{Scale: 2})
+			drawn, err := rast.Rasterize(layout, theme, raster.RasterOptions{Scale: 2})
 			require.NoError(t, err)
 			want := image.NewRGBA(drawn.Bounds())
 			draw.Draw(want, want.Bounds(), image.NewUniform(lipgloss.Color(theme["pele-bg"])), image.Point{}, draw.Src)
