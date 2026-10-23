@@ -284,14 +284,17 @@ Terms with a specific meaning in this codebase are defined in
   MCP tool's may not be local), `o` opens the file in the OS default app
   and `e` opens it in `$EDITOR` (at `view`'s offset), from any item. The
   drill-in's items share one `chat.toolFile`, which re-parses the input
-  only when it changes, since it's asked on every render; on a drawn
-  image `o` still opens the image. `fileOpenFeature`
-  (`internal/ui/model/file_open.go`) joins relative paths like the tools
-  (`filepathext.SmartJoin`), refuses network paths before touching them,
-  and follows symlinks. The model chose the path and may have written the
-  file, so `o` opens only passive types whose bytes sniff as that type
-  (`openTypes`, an allowlist like `imageExts`), never an executable file;
-  `e` opens anything as text.
+  only when it changes, since it's asked on every render. When the result
+  is a drawn image, `o` opens the image instead, on every item;
+  `chat.FileKeys` is that rule, read by the header hint and the help.
+  `fileOpenFeature` (`internal/ui/model/file_open.go`) joins relative
+  paths like the tools (`filepathext.SmartJoin`), refuses UNC and device
+  paths in any slash before touching them (`isNetworkPath`), and follows
+  symlinks. The model chose the path and may have written the file, so
+  `o` opens only passive types whose bytes sniff as that type
+  (`openTypes`, an allowlist like `imageExts`; HTML content under a text
+  name is refused too), never an executable file; `e` opens anything as
+  text.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 

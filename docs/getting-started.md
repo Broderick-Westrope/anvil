@@ -61,7 +61,9 @@ Press `esc` twice to cancel the turn.
 Tool calls and subagent runs collapse to one line each. Press `tab` to move
 focus to the chat, move between items with `j` and `k`, and press `space`
 to expand one or `l` to drill into it: a subagent's whole session, a tool's
-full input and output, or a diagram at full size. `h` comes back out.
+full input and output, or a diagram at full size. `h` comes back out. In
+a tool's detail, `o` opens the file it worked on and `e` opens it in
+`$EDITOR`.
 
 See [Keybindings](./keybindings.md) for the full list.
 
