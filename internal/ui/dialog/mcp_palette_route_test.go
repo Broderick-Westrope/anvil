@@ -26,6 +26,7 @@ func TestMCPPaletteLabelsTheRoute(t *testing.T) {
 		"catalogue":     {entry: MCPPaletteEntry{State: mcp.StateConnected, Route: "catalogue (auto: lazy)"}, want: "connected · catalogue (auto: lazy)"},
 		"direct":        {entry: MCPPaletteEntry{State: mcp.StateConnected, Route: "direct"}, want: "connected · direct"},
 		"pending":       {entry: MCPPaletteEntry{State: mcp.StateStarting, Route: "route pending"}, want: "connecting... · route pending"},
+		"connected catalogue server": {entry: MCPPaletteEntry{State: mcp.StateLazy, Route: "catalogue (lazy)", Catalogue: true}, want: "connected · catalogue (lazy)"},
 		"no route info": {entry: MCPPaletteEntry{State: mcp.StateConnected}, want: "connected"},
 	}
 	for name, tc := range tests {

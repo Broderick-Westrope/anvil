@@ -112,6 +112,10 @@ func (i *MCPPaletteItem) stateLabel() string {
 	if i.entry.IsLazy && i.entry.Enabled {
 		return "✓ enabled"
 	}
+	if i.entry.Catalogue && i.entry.State == mcp.StateLazy {
+		// Connected; a catalogue server needs no enabling.
+		return mcp.StateConnected.String()
+	}
 	if i.entry.IsLazy {
 		return "lazy"
 	}
