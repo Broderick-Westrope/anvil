@@ -49,7 +49,10 @@ is Anvil's old `measure.go` generalised.
   release that requires the pele-go release porting the new Pele version.
   Run `go test ./internal/mermaid/...` here and in pele-go's `raster/`,
   and compare the output from `MERMAID_TEST_OUT=<dir>` before and after.
-  Gantt marks the current time, so make the two runs back to back.
+  Gantt marks the current time, so make the two runs back to back. Build
+  both sides with the same Go toolchain (`GOTOOLCHAIN=<Anvil's go.mod
+  version>` in pele-go's `raster/`): `image/png` compresses differently
+  between Go releases, so PNGs with identical pixels can differ in bytes.
   `internal/mermaidbench/compare.sh` compares latency and memory between
   the two builds.
 - **resvg or its fonts:** see `raster/README.md` in pele-go.
