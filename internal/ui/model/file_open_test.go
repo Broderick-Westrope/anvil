@@ -2,10 +2,12 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -50,8 +52,13 @@ func newFileOpenTest(t *testing.T) *fileOpenTest {
 
 func (ft *fileOpenTest) write(t *testing.T, name string, mode os.FileMode) string {
 	t.Helper()
+	return ft.writeContent(t, name, "x", mode)
+}
+
+func (ft *fileOpenTest) writeContent(t *testing.T, name, content string, mode os.FileMode) string {
+	t.Helper()
 	path := filepath.Join(ft.dir, name)
-	require.NoError(t, os.WriteFile(path, []byte("x"), mode))
+	require.NoError(t, os.WriteFile(path, []byte(content), mode))
 	return path
 }
 
@@ -95,6 +102,33 @@ func TestFileOpenFeatureOpensAFileInTheDefaultApp(t *testing.T) {
 	}
 }
 
+func TestFileOpenFeatureOpensPassiveTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		name    string
+		content string
+	}{
+		"Go source":                  {name: "main.go", content: "package main\n"},
+		"an empty text file":         {name: "empty.txt", content: ""},
+		"an upper-case extension":    {name: "README.MD", content: "# hi\n"},
+		"a PNG":                      {name: "a.png", content: "\x89PNG\r\n\x1a\nthe bytes"},
+		"a JPEG named .jpeg":         {name: "a.jpeg", content: "\xff\xd8\xffthe bytes"},
+		"a PDF":                      {name: "a.pdf", content: "%PDF-1.7\n"},
+		"text longer than the sniff": {name: "long.log", content: strings.Repeat("line\n", 200)},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ft := newFileOpenTest(t)
+			path := ft.writeContent(t, tc.name, tc.content, 0o644)
+
+			requireInfo(t, ft.run(t, chat.FileOpenMsg{Path: tc.name}), util.InfoTypeInfo, "Opened "+tc.name)
+			require.Equal(t, []string{fileURL(path)}, ft.opened)
+		})
+	}
+}
+
 func TestFileOpenFeatureWontOpenWhatTheOSWouldRun(t *testing.T) {
 	t.Parallel()
 
@@ -105,6 +139,28 @@ func TestFileOpenFeatureWontOpenWhatTheOSWouldRun(t *testing.T) {
 		"a Windows program, whatever its case": {
 			setup: func(t *testing.T, ft *fileOpenTest) string { return ft.write(t, "setup.EXE", 0o644) },
 		},
+		"HTML, which runs in a browser": {setup: func(t *testing.T, ft *fileOpenTest) string { return ft.write(t, "a.html", 0o644) }},
+		"SVG, which runs in a browser":  {setup: func(t *testing.T, ft *fileOpenTest) string { return ft.write(t, "a.svg", 0o644) }},
+		"a remote desktop file":         {setup: func(t *testing.T, ft *fileOpenTest) string { return ft.write(t, "a.rdp", 0o644) }},
+		"no extension":                  {setup: func(t *testing.T, ft *fileOpenTest) string { return ft.write(t, "Makefile", 0o644) }},
+		"a trailing dot": {setup: func(t *testing.T, ft *fileOpenTest) string {
+			if runtime.GOOS == "windows" {
+				t.Skip("Windows drops the dot")
+			}
+			return ft.write(t, "run.bat.", 0o644)
+		}},
+		"HTML named as text": {setup: func(t *testing.T, ft *fileOpenTest) string {
+			return ft.writeContent(t, "notes.md", "<!DOCTYPE html><script>x</script>", 0o644)
+		}},
+		"a script named as an image": {setup: func(t *testing.T, ft *fileOpenTest) string {
+			return ft.writeContent(t, "a.png", "#!/bin/sh\n", 0o644)
+		}},
+		"a data stream's name": {setup: func(t *testing.T, ft *fileOpenTest) string {
+			if runtime.GOOS == "windows" {
+				t.Skip("the colon names a stream, not a file")
+			}
+			return ft.write(t, "a.bat:x.txt", 0o644)
+		}},
 		"a symlink to a script": {setup: func(t *testing.T, ft *fileOpenTest) string {
 			target := ft.write(t, "x.sh", 0o644)
 			link := filepath.Join(ft.dir, "notes.md")
@@ -115,7 +171,7 @@ func TestFileOpenFeatureWontOpenWhatTheOSWouldRun(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				t.Skip("Windows has no executable bit")
 			}
-			return ft.write(t, "tool", 0o755)
+			return ft.write(t, "tool.txt", 0o744)
 		}},
 	}
 	for name, tc := range tests {
@@ -131,6 +187,23 @@ func TestFileOpenFeatureWontOpenWhatTheOSWouldRun(t *testing.T) {
 	}
 }
 
+func TestFileOpenFeatureWontTouchANetworkPath(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{"//host/share/a.txt"}
+	if runtime.GOOS == "windows" {
+		// Elsewhere backslashes are part of a relative file name.
+		paths = append(paths, `\\host\share\a.txt`)
+	}
+	for _, path := range paths {
+		ft := newFileOpenTest(t)
+		requireInfo(t, ft.run(t, chat.FileOpenMsg{Path: path}), util.InfoTypeError, "won't open a network path")
+		requireInfo(t, ft.run(t, chat.FileEditMsg{Path: path}), util.InfoTypeError, "won't open a network path")
+		require.Empty(t, ft.opened)
+		require.Empty(t, ft.edited)
+	}
+}
+
 func TestFileOpenFeatureReportsAFileItCantOpen(t *testing.T) {
 	t.Parallel()
 
@@ -139,17 +212,23 @@ func TestFileOpenFeatureReportsAFileItCantOpen(t *testing.T) {
 		setup  func(t *testing.T, ft *fileOpenTest)
 		reason string
 	}{
-		"missing": {path: "gone.md", setup: func(*testing.T, *fileOpenTest) {}, reason: "open file:"},
+		"missing": {path: "gone.md", setup: func(*testing.T, *fileOpenTest) {}, reason: "gone.md: "},
 		"a directory": {path: "sub", setup: func(t *testing.T, ft *fileOpenTest) {
 			require.NoError(t, os.Mkdir(filepath.Join(ft.dir, "sub"), 0o755))
 		}, reason: "is not a regular file"},
 		"a dangling symlink": {path: "link", setup: func(t *testing.T, ft *fileOpenTest) {
 			symlink(t, filepath.Join(ft.dir, "gone"), filepath.Join(ft.dir, "link"))
-		}, reason: "open file:"},
+		}, reason: "link: "},
+		"unreadable": {path: "secret.txt", setup: func(t *testing.T, ft *fileOpenTest) {
+			if runtime.GOOS == "windows" {
+				t.Skip("Windows has no write-only mode")
+			}
+			ft.write(t, "secret.txt", 0o200)
+		}, reason: "secret.txt: open "},
 		"no default app": {path: "notes.md", setup: func(t *testing.T, ft *fileOpenTest) {
 			ft.write(t, "notes.md", 0o644)
 			ft.openURL = func(string) error { return errors.New("no app") }
-		}, reason: "open file: no app"},
+		}, reason: "notes.md: no app"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -168,13 +247,12 @@ func TestFileOpenFeatureEditsAFileInTheEditor(t *testing.T) {
 
 	ft := newFileOpenTest(t)
 	path := ft.write(t, "run.command", 0o755)
+	symlink(t, path, filepath.Join(ft.dir, "link"))
 
-	msg := ft.run(t, chat.FileEditMsg{Path: "run.command", Line: 3})
+	msg := ft.run(t, chat.FileEditMsg{Path: "link", Line: 3})
 
-	_, isInfo := msg.(util.InfoMsg)
-	require.False(t, isInfo, "it runs the editor, even on what o won't open")
-	require.NotNil(t, msg)
-	require.Equal(t, []string{path}, ft.edited)
+	require.Equal(t, "tea.execMsg", fmt.Sprintf("%T", msg), "it runs the editor, even on what o won't open")
+	require.Equal(t, []string{path}, ft.edited, "the file the link resolved to")
 	require.Equal(t, []int{3}, ft.lines)
 }
 
@@ -182,14 +260,17 @@ func TestFileOpenFeatureReportsAFileItCantEdit(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		path       string
-		editErr    error
-		reason     string
-		editorRuns bool
+		path    string
+		editErr error
+		reason  string
+		edited  []string
 	}{
-		"missing":        {path: "gone.md", reason: "edit file:"},
-		"a directory":    {path: ".", reason: "is not a regular file"},
-		"no editor runs": {path: "notes.md", editErr: errors.New("snap"), reason: "edit file: snap", editorRuns: true},
+		"missing":     {path: "gone.md", reason: "gone.md: "},
+		"a directory": {path: ".", reason: "is not a regular file"},
+		"no editor runs": {
+			path: "notes.md", editErr: errors.New("snap"), reason: "notes.md: snap",
+			edited: []string{"notes.md"},
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -199,7 +280,11 @@ func TestFileOpenFeatureReportsAFileItCantEdit(t *testing.T) {
 			ft.editErr = tc.editErr
 
 			requireInfo(t, ft.run(t, chat.FileEditMsg{Path: tc.path}), util.InfoTypeError, tc.reason)
-			require.Equal(t, tc.editorRuns, len(ft.edited) == 1)
+			var want []string
+			for _, name := range tc.edited {
+				want = append(want, filepath.Join(ft.dir, name))
+			}
+			require.Equal(t, want, ft.edited)
 		})
 	}
 }
