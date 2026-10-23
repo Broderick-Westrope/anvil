@@ -29,9 +29,9 @@ type fileOpenFeature struct {
 	workingDir func() string
 	openURL    func(string) error
 	editorCmd  func(path string, line int) (*exec.Cmd, error)
-	// goos picks the file manager, and run runs its command.
-	goos string
-	run  func(ctx context.Context, args []string) error
+	// goos picks the file manager, and runReveal runs its commands.
+	goos      string
+	runReveal func(ctx context.Context, c revealCommand) error
 }
 
 func newFileOpenFeature(workingDir func() string) *fileOpenFeature {
@@ -40,13 +40,39 @@ func newFileOpenFeature(workingDir func() string) *fileOpenFeature {
 		openURL:    browser.OpenURL,
 		editorCmd:  editorCommand,
 		goos:       runtime.GOOS,
-		run:        runCommand,
+		runReveal:  runRevealCommand,
 	}
 }
 
-// runCommand runs args and waits for it to exit.
-func runCommand(ctx context.Context, args []string) error {
-	return exec.CommandContext(ctx, args[0], args[1:]...).Run()
+// runRevealCommand runs c and, unless it's detached, waits for it to exit
+// within ctx, reporting its first line of stderr if it fails.
+func runRevealCommand(ctx context.Context, c revealCommand) error {
+	if c.detach {
+		// Nothing waits, so the deadline mustn't kill what it started.
+		cmd := exec.CommandContext(context.WithoutCancel(ctx), c.args[0], c.args[1:]...)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		go cmd.Wait() //nolint:errcheck
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, c.args[0], c.args[1:]...)
+	setRawCmdLine(cmd, c.cmdLine)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	// Bounds Wait after a kill, should a child still hold stderr open.
+	cmd.WaitDelay = time.Second
+	err := cmd.Run()
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return fmt.Errorf("didn't answer within %s", revealTimeout)
+	}
+	if line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); line != "" {
+		return fmt.Errorf("%w: %s", err, line)
+	}
+	return err
 }
 
 // editorCommand runs $EDITOR on path, at line when it's positive.
@@ -67,7 +93,8 @@ func (*fileOpenFeature) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool) { return nil,
 // HandleAction implements feature.
 func (*fileOpenFeature) HandleAction(dialog.Action) (tea.Cmd, bool) { return nil, false }
 
-// HandleMsg implements feature, claiming the open and edit requests.
+// HandleMsg implements feature, claiming the open, edit and reveal
+// requests.
 func (f *fileOpenFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case chat.FileOpenMsg:
@@ -202,60 +229,86 @@ func editorExited(path string) tea.ExecCallback {
 	}
 }
 
-// revealTimeout bounds how long a file manager may take to answer.
+// revealTimeout bounds how long each file manager command may take to
+// answer.
 const revealTimeout = 10 * time.Second
 
-// revealCommand is a command that shows a file selected in the file
-// manager.
+// revealCommand is a command that shows a file in the file manager.
 type revealCommand struct {
 	args []string
+	// cmdLine, when set, is the whole Windows command line, for Explorer,
+	// which parses its own: Go would quote "/select,C:\a b" as one
+	// argument, which Explorer doesn't read as /select.
+	cmdLine string
 	// anyExit counts any exit as shown: explorer /select exits 1 even
-	// when it worked.
+	// when it worked, so its failures can't be told apart.
 	anyExit bool
+	// detach counts starting as shown: some xdg-open fallbacks run the
+	// file manager in the foreground, so it wouldn't exit until it closed.
+	detach bool
+	// shown is what the user is told when it works.
+	shown string
 }
 
 // revealCommands are the commands that show path in goos's file manager,
-// to try in order. Showing a file opens nothing, so unlike o it needs no
-// allowlist. Linux has no one command, so it asks the file manager over
-// D-Bus to select the file, then falls back to opening its directory.
+// to try in order. They open at most path's directory, never the file, so
+// unlike o they need no allowlist. Linux has no one command, so it asks
+// the file manager over D-Bus to select the file, then falls back to
+// opening its directory.
 func revealCommands(goos, path string) []revealCommand {
+	shown := "Showed " + filepath.Base(path)
 	switch goos {
 	case "darwin":
-		return []revealCommand{{args: []string{"open", "-R", path}}}
+		return []revealCommand{{args: []string{"open", "-R", path}, shown: shown}}
 	case "windows":
-		return []revealCommand{{args: []string{"explorer", "/select," + path}, anyExit: true}}
+		// A Windows path can't contain a quote, so quoting it is safe.
+		return []revealCommand{{
+			args:    []string{"explorer", "/select," + path},
+			cmdLine: `explorer /select,"` + path + `"`,
+			anyExit: true,
+			shown:   shown,
+		}}
 	default:
 		// A comma separates a D-Bus array's items, so it's escaped.
 		uri := strings.ReplaceAll(fileURL(path), ",", "%2C")
+		dir := filepath.Dir(path)
 		return []revealCommand{
 			{args: []string{
-				"dbus-send", "--session", "--print-reply", "--dest=org.freedesktop.FileManager1",
-				"--type=method_call", "/org/freedesktop/FileManager1",
-				"org.freedesktop.FileManager1.ShowItems", "array:string:" + uri, "string:",
-			}},
-			{args: []string{"xdg-open", filepath.Dir(path)}},
+				// Its reply timeout is in milliseconds, and stays under
+				// revealTimeout so its own error explains the failure.
+				"dbus-send", "--session", "--print-reply", "--reply-timeout=5000",
+				"--dest=org.freedesktop.FileManager1", "--type=method_call",
+				"/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems",
+				"array:string:" + uri, "string:",
+			}, shown: shown},
+			{args: []string{"xdg-open", dir}, detach: true, shown: "Opened " + dir},
 		}
 	}
 }
 
-// reveal shows path selected in the OS file manager, trying each of
-// revealCommands until one works.
+// reveal shows path in the OS file manager, trying each of
+// revealCommands, each with its own revealTimeout, until one works.
 func (f *fileOpenFeature) reveal(path string) tea.Cmd {
 	return func() tea.Msg {
 		realPath, _, err := localFile(path)
 		if err != nil {
 			return util.NewErrorMsg(fmt.Errorf("reveal file: %w", err))
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), revealTimeout)
-		defer cancel()
 		var failed error
 		for _, c := range revealCommands(f.goos, realPath) {
-			err := f.run(ctx, c.args)
+			ctx, cancel := context.WithTimeout(context.Background(), revealTimeout)
+			err := f.runReveal(ctx, c)
+			cancel()
 			var exit *exec.ExitError
 			if err == nil || c.anyExit && errors.As(err, &exit) {
-				return util.NewInfoMsg("Showed " + filepath.Base(realPath))
+				return util.NewInfoMsg(c.shown)
 			}
-			failed = errors.Join(failed, fmt.Errorf("%s: %w", c.args[0], err))
+			// A missing command's error already names it.
+			var notRun *exec.Error
+			if !errors.As(err, &notRun) {
+				err = fmt.Errorf("%s: %w", c.args[0], err)
+			}
+			failed = errors.Join(failed, err)
 		}
 		return util.NewErrorMsg(fmt.Errorf("reveal file %s: %w", realPath, failed))
 	}
