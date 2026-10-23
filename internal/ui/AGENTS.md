@@ -221,7 +221,7 @@ tool names to specific types:
 | `chat/references.go`      | References                                               |
 | `chat/lsp_restart.go`     | LSPRestart                                               |
 | `chat/todos.go`           | Todos                                                    |
-| `chat/mcp.go`             | MCP tools (`mcp_` prefix)                                |
+| `chat/mcp.go`             | MCP tools (`mcp_` prefix), and `call_mcp_tool` as the inner tool |
 | `chat/generic.go`         | Fallback for unrecognized tools                          |
 | `chat/assistant.go`       | Assistant messages ("Thought for" line, content, errors) |
 | `chat/thinking_detail.go` | Full thinking text in the thinking drill-in              |

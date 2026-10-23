@@ -133,8 +133,7 @@ Terms with a specific meaning in this codebase are defined in
   don't connect at startup. Under the default route they go through the
   MCP tool catalogue (below); routed `direct`, their tools are excluded
   from the LLM context until explicitly enabled; the first enable
-  connects them. The
-  `enable_mcp` built-in tool lets the agent activate
+  connects them. The `enable_mcp` built-in tool lets the agent activate
   them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
   Enabled state is branch-scoped — derived from message history
   (`deriveLazyMCPState` in `internal/agent/lazy_mcp.go`) so it persists
