@@ -41,11 +41,13 @@ func forwardToCatalogue(call fantasy.ToolCallContent, servers []string, availabl
 	if !slices.ContainsFunc(available, func(t fantasy.AgentTool) bool { return t.Info().Name == tools.CallMCPToolToolName }) {
 		return call, false
 	}
-	name := strings.ToLower(call.ToolName)
 	server := ""
 	for _, candidate := range servers {
-		// The longest matching server wins: names can contain "_".
-		if strings.HasPrefix(name, strings.ToLower("mcp_"+candidate+"_")) && len(candidate) > len(server) {
+		// The longest matching server wins: names can contain "_". The
+		// match ignores case (the OAuth rename capitalises the server)
+		// over the prefix's own bytes, so slicing the tool off is safe.
+		prefix := "mcp_" + candidate + "_"
+		if len(call.ToolName) > len(prefix) && strings.EqualFold(call.ToolName[:len(prefix)], prefix) && len(candidate) > len(server) {
 			server = candidate
 		}
 	}
