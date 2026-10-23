@@ -41,7 +41,10 @@ func connectMCPServers(t *testing.T, instructions map[string]string, lazy ...str
 		m := config.MCPConfig{Type: config.MCPHttp, URL: ts.URL}
 		for _, l := range lazy {
 			if l == name {
+				// Pinned direct: these tests cover the enable_mcp
+				// flow, which auto routing replaces with the catalogue.
 				m.LazyDescription = "Lazy " + name
+				m.Route = config.MCPRouteDirect
 			}
 		}
 		cfg.Config().MCP[name] = m
@@ -93,7 +96,7 @@ func TestMCPInstructions(t *testing.T) {
 			for _, server := range tc.enabled {
 				state.Enable(server)
 			}
-			require.Equal(t, tc.want, mcpInstructions(tc.lazyMap, state))
+			require.Equal(t, tc.want, mcpInstructions(mcpListing{lazyTools: tc.lazyMap}, state))
 		})
 	}
 }

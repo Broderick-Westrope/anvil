@@ -1,0 +1,140 @@
+package agent_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/require"
+
+	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
+)
+
+// countingServer serves an MCP server with instructions and one tool,
+// ping, that takes a required word and counts its calls.
+func countingServer(t *testing.T, calls *atomic.Int32) string {
+	t.Helper()
+	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "counting"}, &sdkmcp.ServerOptions{Instructions: "Say hello before calling ping."})
+	server.AddTool(&sdkmcp.Tool{Name: "ping", Description: "Replies pong.", InputSchema: map[string]any{
+		"type": "object", "properties": map[string]any{"word": map[string]any{"type": "string"}}, "required": []string{"word"},
+	}}, func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		calls.Add(1)
+		return &sdkmcp.CallToolResult{Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: "pong"}}}, nil
+	})
+	ts := httptest.NewServer(sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server { return server }, nil))
+	t.Cleanup(ts.Close)
+	return ts.URL
+}
+
+func newRoutedFixture(t *testing.T, mcps config.MCPs) *branchfixture.Fixture {
+	t.Helper()
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
+	return branchfixture.New(t, branchfixture.WithAgents("reviewer"), branchfixture.WithMCP(mcps))
+}
+
+// toolNames returns the tool names a recorded provider request listed.
+func toolNames(t *testing.T, body string) []string {
+	t.Helper()
+	var req struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &req))
+	names := make([]string, 0, len(req.Tools))
+	for _, tool := range req.Tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func toolsJSON(t *testing.T, body string) string {
+	t.Helper()
+	var req struct {
+		Tools json.RawMessage `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &req))
+	return string(req.Tools)
+}
+
+func TestCatalogueServerIsReachedOnlyThroughTheCatalogue(t *testing.T) {
+	const name = "catroute"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls), Route: config.MCPRouteCatalogue}})
+	session := newParent(t, f)
+	f.Permissions.AutoApproveSession(session)
+	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "search_mcp_tools", ToolInput: `{"server":"catroute","query":"ping"}`},
+		branchfixture.Response{ToolName: "call_mcp_tool", ToolInput: `{"server":"catroute","tool":"ping","arguments":{"word":"hi"}}`},
+		branchfixture.Response{Text: "done"},
+	)
+
+	_, err := f.Coordinator.Run(f.Context, session, "ping it")
+	require.NoError(t, err)
+
+	requests := f.Provider.Requests()
+	require.Len(t, requests, 3)
+	first := toolsJSON(t, requests[0].Body)
+	for _, req := range requests {
+		require.Equal(t, first, toolsJSON(t, req.Body), "the tool list never changes")
+		require.NotContains(t, toolNames(t, req.Body), "mcp_catroute_ping")
+		require.NotContains(t, req.Body, "Say hello before calling ping.</", "instructions stay out of the system prompt")
+	}
+	require.Subset(t, toolNames(t, requests[0].Body), []string{"search_mcp_tools", "describe_mcp_tool", "call_mcp_tool"})
+	require.Contains(t, requests[1].Body, "Say hello before calling ping.", "search returns the instructions")
+	require.Contains(t, requests[2].Body, "pong")
+	require.Equal(t, int32(1), calls.Load())
+}
+
+func TestAutoListsASmallConnectedServerDirectly(t *testing.T) {
+	const name = "catsmall"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls)}})
+	session := newParent(t, f)
+	f.Provider.Enqueue(branchfixture.Response{Text: "done"})
+
+	_, err := f.Coordinator.Run(f.Context, session, "hi")
+	require.NoError(t, err)
+
+	names := toolNames(t, f.Provider.Requests()[0].Body)
+	require.Contains(t, names, "mcp_catsmall_ping")
+	require.NotContains(t, names, "search_mcp_tools")
+	require.Contains(t, f.Provider.Requests()[0].Body, "Say hello before calling ping.")
+}
+
+func TestProxiedCallIsDeniedByARuleOnTheInnerName(t *testing.T) {
+	const name = "catdeny"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls), Route: config.MCPRouteCatalogue}})
+	session := newParent(t, f)
+	require.NoError(t, f.Permissions.GrantSession(session, "mcp_catdeny_*", "", config.PermissionDeny))
+	f.Provider.Enqueue(branchfixture.Response{ToolName: "call_mcp_tool", ToolInput: `{"server":"catdeny","tool":"ping","arguments":"{\"word\":\"hi\"}"}`})
+
+	_, err := f.Coordinator.Run(f.Context, session, "ping it")
+	require.NoError(t, err)
+
+	require.Zero(t, calls.Load())
+	require.Contains(t, toolResultTexts(t, f, session), "Permission denied")
+}
+
+func toolResultTexts(t *testing.T, f *branchfixture.Fixture, session string) string {
+	t.Helper()
+	msgs, err := f.Messages.List(f.Context, session)
+	require.NoError(t, err)
+	var out strings.Builder
+	for _, msg := range msgs {
+		for _, result := range msg.ToolResults() {
+			out.WriteString(result.Content + "\n")
+		}
+	}
+	return out.String()
+}

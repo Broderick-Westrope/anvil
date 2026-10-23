@@ -180,6 +180,11 @@ type coordinator struct {
 	// agentBuildMu, then orchestratorMu.
 	agentBuildMu sync.Mutex
 
+	// routesMu guards routes, the MCP route map. It stays nil until the
+	// startup snapshot exists and is never written after.
+	routesMu sync.Mutex
+	routes   mcpRoutes
+
 	// Admission gate for top-level runs (Run, RunWake, Summarize). While
 	// pauses > 0 new runs wait on resumed; active counts admitted calls
 	// from entry to return. Nested runs (sub-agents, auto-summarise, title
@@ -822,12 +827,12 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 				return err
 			}
 		}
-		agentTools, lazyMap, buildErr := c.buildTools(ctx, agentCfg, depth)
+		agentTools, listing, buildErr := c.buildTools(ctx, agentCfg, depth)
 		if buildErr != nil {
 			return buildErr
 		}
 		result.SetTools(agentTools)
-		result.SetLazyMCPToolMap(lazyMap)
+		result.SetMCPListing(listing)
 		return nil
 	})
 
@@ -1003,7 +1008,9 @@ func (c *coordinator) orchestratorConfig() (config.Agent, bool) {
 // At depth ≤ 1 the task delegation tool is excluded.
 // AllowedTools is applied via ParseFilterList; AllowedMCP is applied per server.
 // It snapshots coordinator fields under RLock to avoid races with ReloadPlugins.
-func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, map[string]string, error) {
+// named lists tools a workflow agent asked for by name; a named MCP tool
+// is listed even when its server is routed through the catalogue.
+func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int, named ...string) ([]fantasy.AgentTool, mcpListing, error) {
 	c.orchestratorMu.RLock()
 	allSkills := c.allSkills
 	activeSkills := c.activeSkills
@@ -1011,7 +1018,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 	agentMDs := c.agentMDs
 	plugins := c.plugins
 	c.orchestratorMu.RUnlock()
-	return c.buildToolsWithState(ctx, agent, depth, allSkills, activeSkills, skillTracker, agentMDs, plugins)
+	return c.buildToolsWithState(ctx, agent, depth, allSkills, activeSkills, skillTracker, agentMDs, plugins, named)
 }
 
 func (c *coordinator) buildToolsWithState(
@@ -1023,7 +1030,8 @@ func (c *coordinator) buildToolsWithState(
 	skillTracker *skills.Tracker,
 	agentMDs map[string]prompt.AgentMD,
 	plugins []*plugin.Plugin,
-) ([]fantasy.AgentTool, map[string]string, error) {
+	namedTools []string,
+) ([]fantasy.AgentTool, mcpListing, error) {
 	isSubAgent := depth < 3
 
 	logFile := filepath.Join(c.cfg.Config().Options.ProjectDirectory, "logs", "anvil.log")
@@ -1041,7 +1049,7 @@ func (c *coordinator) buildToolsWithState(
 	if depth > 1 && (agent.ID == config.AgentOrchestrator || len(agentMDs[agent.ID].DelegatesTo) > 0) {
 		taskTool, err := c.taskTool(ctx, agent.ID, depth)
 		if err != nil {
-			return nil, nil, err
+			return nil, mcpListing{}, err
 		}
 		candidateTools = append(candidateTools, taskTool)
 	}
@@ -1049,7 +1057,7 @@ func (c *coordinator) buildToolsWithState(
 	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
 	agenticFetch, err := c.agenticFetchTool(ctx, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, mcpListing{}, err
 	}
 	spillDataDir := config.GlobalDataDir()
 	jobOpts := tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive, SpillDir: spillDataDir}
@@ -1108,30 +1116,11 @@ func (c *coordinator) buildToolsWithState(
 		}
 	}
 
-	cfg := c.cfg.Config()
-	lazyMCPToolMap := make(map[string]string)
-	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
-		if !access.allowsMCPTool(tool.MCP(), tool.MCPToolName()) {
-			slog.Debug("MCP tool not allowed", "tool", tool.Name(), "agent", agent.Name)
-			continue
-		}
-		filteredTools = append(filteredTools, tool)
-
-		// Record lazy MCP tool mapping for filtering at run time.
-		if mcpCfg, ok := cfg.MCP[tool.MCP()]; ok && mcpCfg.IsLazy() {
-			lazyMCPToolMap[tool.Name()] = tool.MCP()
-		}
-	}
-
-	// The enable_mcp tool only exposes the lazy MCPs the agent may use.
-	lazyMCPs := make(map[string]string)
-	for name, mcpCfg := range cfg.MCP {
-		if mcpCfg.IsLazy() && access.allowsMCPServer(name) {
-			lazyMCPs[name] = mcpCfg.LazyDescription
-		}
-	}
-	if len(lazyMCPs) > 0 {
-		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs, c.connectDeferredMCP))
+	mcpTools := c.newAgentMCPTools(access, hookRunner, isSubAgent)
+	listed, listing := mcpTools.listed(namedTools)
+	filteredTools = append(filteredTools, listed...)
+	if enableMCP := mcpTools.enableMCPTool(c.connectDeferredMCP); enableMCP != nil {
+		filteredTools = append(filteredTools, enableMCP)
 	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
@@ -1141,10 +1130,16 @@ func (c *coordinator) buildToolsWithState(
 	// Sub-agents run without hook interception to avoid firing the user's
 	// hooks N times per delegated turn. The top-level invocation of the
 	// sub-agent tool itself is still wrapped from the orchestrator's side.
-	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
-	filteredTools = wrapToolsWithErrorResults(filteredTools)
+	filteredTools = mcpTools.wrap(filteredTools)
 
-	return filteredTools, lazyMCPToolMap, nil
+	// The catalogue tools are not hook-wrapped: the inner tool a call
+	// runs is, so a hook fires once per call, under the inner name.
+	filteredTools = append(filteredTools, wrapToolsWithErrorResults(mcpTools.catalogueTools(c.cfg))...)
+	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
+		return strings.Compare(a.Info().Name, b.Info().Name)
+	})
+
+	return filteredTools, listing, nil
 }
 
 // buildAgentModels resolves the large and small models for an agent.
@@ -1358,12 +1353,12 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		orch.SetProviderConfig(largeProviderCfg)
 	}
 
-	agentTools, lazyMap, err := c.buildTools(ctx, orchestratorCfg, 3)
+	agentTools, listing, err := c.buildTools(ctx, orchestratorCfg, 3)
 	if err != nil {
 		return err
 	}
 	orch.SetTools(agentTools)
-	orch.SetLazyMCPToolMap(lazyMap)
+	orch.SetMCPListing(listing)
 
 	// Inject the connect callback so the agent can reconnect replayed
 	// deferred servers at Run start.
@@ -1401,14 +1396,14 @@ func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, er
 		return 0, errOrchestratorAgentNotConfigured
 	}
 
-	agentTools, lazyMap, err := c.buildTools(ctx, orchestratorCfg, 3)
+	agentTools, listing, err := c.buildTools(ctx, orchestratorCfg, 3)
 	if err != nil {
 		return 0, fmt.Errorf("rebuilding tools after MCP connect: %w", err)
 	}
 
 	orch := c.getOrchestrator()
 	orch.SetTools(agentTools)
-	orch.SetLazyMCPToolMap(lazyMap)
+	orch.SetMCPListing(listing)
 
 	return len(toolsmcp.ServerTools(name)), nil
 }
@@ -1897,7 +1892,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) ([]PluginWarning, error
 		return pluginWarnings, fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
 
-	agentTools, lazyMap, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins)
+	agentTools, listing, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins, nil)
 	if err != nil {
 		return pluginWarnings, fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
@@ -1921,7 +1916,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) ([]PluginWarning, error
 	c.agents.Reset(make(map[string]SessionAgent))
 	orch.SetSystemPrompt(systemPrompt)
 	orch.SetTools(agentTools)
-	orch.SetLazyMCPToolMap(lazyMap)
+	orch.SetMCPListing(listing)
 	c.orchestratorMu.Unlock()
 
 	slog.Info("Plugin reload complete",
