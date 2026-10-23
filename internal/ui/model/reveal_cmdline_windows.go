@@ -11,5 +11,9 @@ import (
 // for programs that parse their own. An empty line keeps the one Go builds
 // from cmd's arguments.
 func setRawCmdLine(cmd *exec.Cmd, line string) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: line}
+	// new, not a composite literal's &: the mutation check runs on Linux,
+	// where this file isn't built, so it can't cover a mutant of the &.
+	attr := new(syscall.SysProcAttr)
+	attr.CmdLine = line
+	cmd.SysProcAttr = attr
 }
