@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 )
@@ -101,13 +102,14 @@ func parseCatalogueCall(input string) (catalogueCall, bool) {
 }
 
 // expandName is the name expanded_tools patterns match a call by: a
-// proxied MCP call matches as the inner tool.
+// proxied MCP call matches as the inner tool, under the same name a
+// direct call would have (including the OAuth rename).
 func expandName(toolCall message.ToolCall) string {
 	if toolCall.Name != tools.CallMCPToolToolName {
 		return toolCall.Name
 	}
 	if call, ok := parseCatalogueCall(toolCall.Input); ok {
-		return "mcp_" + call.Server + "_" + call.Tool
+		return mcp.ToolName(call.Server, call.Tool)
 	}
 	return toolCall.Name
 }
