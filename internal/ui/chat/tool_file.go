@@ -57,8 +57,7 @@ type toolFile struct {
 }
 
 // file is the local path the call names and the line it starts at, or ""
-// when it names none. Skills are read from anvil:// paths, which aren't
-// files.
+// when it names none.
 func (f *toolFile) file() (string, int) {
 	tc := f.source.ToolCall()
 	if tc.Input != f.lastInput {
@@ -69,7 +68,8 @@ func (f *toolFile) file() (string, int) {
 }
 
 // parseToolFile reads which local file, and line in it, a call to the
-// built-in tool name with input names.
+// built-in tool name with input names. Skills are read from anvil://
+// paths, which aren't files.
 func parseToolFile(name, input string) (string, int) {
 	if !fileTools[name] {
 		return "", 0
@@ -94,31 +94,50 @@ func parseToolFile(name, input string) (string, int) {
 	return params.FilePath, line
 }
 
-// keys reports whether o and e open the call's file. On a call whose
-// result is a drawn image, o opens the image instead, wherever it's
-// pressed, so the keys mean one thing throughout the drill-in.
-func (f *toolFile) keys() (open, edit bool) {
+// OpenTarget is what o opens from a tool drill-in item.
+type OpenTarget int
+
+const (
+	// OpensNothing leaves o to the chat.
+	OpensNothing OpenTarget = iota
+	// OpensFile opens the file the call names in the OS default app.
+	OpensFile
+	// OpensImage opens the image the call returned in the OS viewer.
+	OpensImage
+)
+
+// fileKeys is what o and e do on every item of a drill-in.
+type fileKeys struct {
+	open OpenTarget
+	edit bool
+}
+
+// keys is what o and e do. When the call returned an image, o opens that
+// image, as on the output item, so o means one thing throughout the
+// drill-in; e still opens the file.
+func (f *toolFile) keys() fileKeys {
 	path, _ := f.file()
-	edit = path != ""
-	open = edit && (f.images == nil || resultImage(f.source) == nil)
-	return open, edit
+	keys := fileKeys{edit: path != ""}
+	switch {
+	case f.images != nil && resultImage(f.source) != nil:
+		keys.open = OpensImage
+	case keys.edit:
+		keys.open = OpensFile
+	}
+	return keys
 }
 
 // HandleKeyEvent implements KeyEventHandler.
 func (f *toolFile) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
-	open, edit := f.keys()
+	keys := f.keys()
 	path, line := f.file()
 	var msg tea.Msg
-	switch key.String() {
-	case "o":
-		if !open {
-			return false, nil
-		}
+	switch {
+	case key.String() == "o" && keys.open == OpensImage:
+		msg = ImageOpenMsg{Data: resultImage(f.source).Data}
+	case key.String() == "o" && keys.open == OpensFile:
 		msg = FileOpenMsg{Path: path}
-	case "e":
-		if !edit {
-			return false, nil
-		}
+	case key.String() == "e" && keys.edit:
 		msg = FileEditMsg{Path: path, Line: line}
 	default:
 		return false, nil
@@ -126,12 +145,13 @@ func (f *toolFile) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	return true, func() tea.Msg { return msg }
 }
 
-// FileKeys reports whether o and e open the file a tool drill-in item's
-// call names.
-func FileKeys(item list.Item) (open, edit bool) {
-	f, ok := item.(interface{ keys() (bool, bool) })
+// FileKeys reports what o opens from a tool drill-in item, and whether e
+// opens the file its call names.
+func FileKeys(item list.Item) (open OpenTarget, edit bool) {
+	f, ok := item.(interface{ keys() fileKeys })
 	if !ok {
-		return false, false
+		return OpensNothing, false
 	}
-	return f.keys()
+	keys := f.keys()
+	return keys.open, keys.edit
 }

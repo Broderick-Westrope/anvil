@@ -93,7 +93,6 @@ func BuildToolDetailItems(sty *styles.Styles, source ToolMessageItem, images Ima
 			Versioned: list.NewVersioned(),
 			toolFile:  file,
 			sty:       sty,
-			images:    images,
 		})
 	}
 
@@ -176,8 +175,7 @@ type toolDetailHeaderItem struct {
 	cachedRender string
 	cachedWidth  int
 	cachedFocus  bool
-	cachedOpen   bool
-	cachedEdit   bool
+	cachedKeys   fileKeys
 	lastStatus   ToolStatus
 }
 
@@ -197,9 +195,8 @@ func (h *toolDetailHeaderItem) RawRender(width int) string {
 // Render implements list.Item.
 func (h *toolDetailHeaderItem) Render(width int) string {
 	status := h.source.Status()
-	open, edit := h.keys()
-	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused &&
-		h.cachedOpen == open && h.cachedEdit == edit {
+	keys := h.keys()
+	if h.cachedWidth == width && h.lastStatus == status && h.cachedFocus == h.focused && h.cachedKeys == keys {
 		return h.cachedRender
 	}
 
@@ -214,7 +211,7 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
 	rendered := fmt.Sprintf("%s %s", icon, name)
 	// The hint goes when it doesn't fit; the help bar still has the keys.
-	if hint := h.fileHint(open, edit); lipgloss.Width(prefix+rendered+hint) <= width {
+	if hint := h.fileHint(keys); lipgloss.Width(prefix+rendered+hint) <= width {
 		rendered += hint
 	}
 	rendered = prefix + rendered
@@ -222,21 +219,24 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	h.cachedRender = rendered
 	h.cachedWidth = width
 	h.cachedFocus = h.focused
-	h.cachedOpen, h.cachedEdit = open, edit
+	h.cachedKeys = keys
 	h.lastStatus = status
 	return rendered
 }
 
-// fileHint is the header's hint for the keys that open the call's file.
-func (h *toolDetailHeaderItem) fileHint(open, edit bool) string {
+// fileHint is the header's hint for o and e.
+func (h *toolDetailHeaderItem) fileHint(keys fileKeys) string {
 	key := func(k, tip string) string {
 		return "  " + h.sty.Header.Keystroke.Render(k) + " " + h.sty.Header.KeystrokeTip.Render(tip)
 	}
 	var hint string
-	if open {
+	switch keys.open {
+	case OpensFile:
 		hint += key("o", "open file")
+	case OpensImage:
+		hint += key("o", "open in viewer")
 	}
-	if edit {
+	if keys.edit {
 		hint += key("e", "open in $EDITOR")
 	}
 	return hint
@@ -516,8 +516,7 @@ func (p *toolDetailParamItem) SetFocused(v bool) {
 type toolDetailOutputItem struct {
 	*list.Versioned
 	*toolFile
-	sty    *styles.Styles
-	images ImageRenderer
+	sty *styles.Styles
 	// shownImage is the image result last rendered, which o opens, or nil
 	// when the output last rendered as text.
 	shownImage *message.ToolResult

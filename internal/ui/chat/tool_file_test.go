@@ -28,7 +28,8 @@ func TestToolDrillInOpensTheFileItsCallNamesFromEveryItem(t *testing.T) {
 
 	for _, item := range items {
 		open, edit := FileKeys(item)
-		require.True(t, open && edit, item.ID())
+		require.Equal(t, OpensFile, open, item.ID())
+		require.True(t, edit, item.ID())
 		handled, msg := pressKey(item, "o")
 		require.True(t, handled, item.ID())
 		require.Equal(t, FileOpenMsg{Path: "/tmp/a.go"}, msg, item.ID())
@@ -103,7 +104,8 @@ func TestToolDrillInWithoutAFileLeavesTheKeys(t *testing.T) {
 			source := helperToolItem(t, tc.tool, tc.input, &message.ToolResult{Content: "x"}, ToolStatusSuccess)
 			for _, item := range BuildToolDetailItems(&sty, source, &fakeImages{}) {
 				open, edit := FileKeys(item)
-				require.False(t, open || edit, item.ID())
+				require.Equal(t, OpensNothing, open, item.ID())
+				require.False(t, edit, item.ID())
 				for _, k := range []string{"o", "e"} {
 					handled, msg := pressKey(item, k)
 					require.False(t, handled, item.ID())
@@ -119,7 +121,8 @@ func TestFileKeysAreOffOutsideADrillIn(t *testing.T) {
 	t.Parallel()
 
 	open, edit := FileKeys(helperToolItem(t, "view", `{"file_path":"/a"}`, nil, ToolStatusSuccess))
-	require.False(t, open || edit)
+	require.Equal(t, OpensNothing, open)
+	require.False(t, edit)
 }
 
 func TestToolDetailOutputImageKeepsOForTheImageAndEForTheFile(t *testing.T) {
@@ -169,7 +172,8 @@ func TestEveryBuiltInFileToolOpensItsFile(t *testing.T) {
 		sty := styles.TokyoNight()
 		source := helperToolItem(t, name, `{"file_path":"/a"}`, &message.ToolResult{Content: "x"}, ToolStatusSuccess)
 		open, edit := FileKeys(BuildToolDetailItems(&sty, source, nil)[0])
-		require.True(t, open && edit, name)
+		require.Equal(t, OpensFile, open, name)
+		require.True(t, edit, name)
 	}
 }
 
@@ -189,15 +193,14 @@ func TestToolFileFollowsTheInputAsItChanges(t *testing.T) {
 	require.Equal(t, FileOpenMsg{Path: "/b"}, msg)
 }
 
-func TestToolDetailHeaderLeavesOToADrawnImage(t *testing.T) {
+func TestToolDetailHeaderHintsWhatOOpensOnAnImage(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
 
 	header := ansi.Strip(BuildToolDetailItems(&sty, source, &fakeImages{})[0].Render(80))
-	require.Contains(t, header, "View  e open in $EDITOR")
-	require.NotContains(t, header, "open file")
+	require.Contains(t, header, "View  o open in viewer  e open in $EDITOR")
 
 	header = ansi.Strip(BuildToolDetailItems(&sty, source, nil)[0].Render(80))
 	require.Contains(t, header, "o open file", "nothing draws the image, so o opens the file")
@@ -218,21 +221,72 @@ func TestToolDetailHeaderDropsTheHintWhenItDoesntFit(t *testing.T) {
 	require.Contains(t, ansi.Strip(narrow), "View")
 }
 
-func TestADrawnImageKeepsOThroughoutTheDrillIn(t *testing.T) {
+func TestAnImageResultKeepsOForTheImageThroughoutTheDrillIn(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
 	source := helperToolItem(t, "view", `{"file_path":"/tmp/a.png"}`, imageResult(), ToolStatusSuccess)
 	items := BuildToolDetailItems(&sty, source, &fakeImages{})
 
-	for _, item := range items[:len(items)-1] {
+	for _, item := range items {
+		item.Render(80)
 		open, edit := FileKeys(item)
-		require.False(t, open, item.ID())
+		require.Equal(t, OpensImage, open, item.ID())
 		require.True(t, edit, item.ID())
-		handled, msg := pressKey(item, "o")
-		require.False(t, handled, item.ID())
-		require.Nil(t, msg, item.ID())
+		_, msg := pressKey(item, "o")
+		require.Equal(t, ImageOpenMsg{Data: "aGVsbG8="}, msg, item.ID())
 		_, msg = pressKey(item, "e")
 		require.Equal(t, FileEditMsg{Path: "/tmp/a.png"}, msg, item.ID())
 	}
+}
+
+func TestAnMCPImageOpensFromEveryItem(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "mcp_shots_take", `{"url":"x"}`, imageResult(), ToolStatusSuccess)
+	header := BuildToolDetailItems(&sty, source, &fakeImages{})[0]
+
+	open, edit := FileKeys(header)
+	require.Equal(t, OpensImage, open)
+	require.False(t, edit)
+	require.Contains(t, ansi.Strip(header.Render(80)), "o open in viewer")
+	handled, msg := pressKey(header, "e")
+	require.False(t, handled)
+	require.Nil(t, msg)
+}
+
+func TestToolDetailHeaderFollowsEachKeyAsItChanges(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+
+	// An image arriving changes only what o opens.
+	source := helperToolItem(t, "view", `{"file_path":"/a.png"}`, nil, ToolStatusRunning)
+	header := BuildToolDetailItems(&sty, source, &fakeImages{})[0]
+	require.Contains(t, ansi.Strip(header.Render(80)), "o open file  e open in $EDITOR")
+	source.SetResult(imageResult())
+	require.Contains(t, ansi.Strip(header.Render(80)), "o open in viewer  e open in $EDITOR")
+
+	// A path arriving on an image call changes only e.
+	source = helperToolItem(t, "view", `{"file_pa`, imageResult(), ToolStatusRunning)
+	header = BuildToolDetailItems(&sty, source, &fakeImages{})[0]
+	require.NotContains(t, ansi.Strip(header.Render(80)), "$EDITOR")
+	tc := source.ToolCall()
+	tc.Input = `{"file_path":"/a.png"}`
+	source.SetToolCall(tc)
+	require.Contains(t, ansi.Strip(header.Render(80)), "e open in $EDITOR")
+}
+
+func TestToolDetailHeaderFollowsTheStatus(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	source := helperToolItem(t, "view", `{"file_path":"/a"}`, nil, ToolStatusRunning)
+	header := BuildToolDetailItems(&sty, source, nil)[0]
+	running := header.Render(80)
+
+	source.SetStatus(ToolStatusError)
+
+	require.NotEqual(t, running, header.Render(80))
 }

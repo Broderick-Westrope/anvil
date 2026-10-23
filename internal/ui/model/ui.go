@@ -4009,12 +4009,19 @@ func (m *UI) selectedItemBindings() []key.Binding {
 		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyImage}
 	}
 	var binds []key.Binding
-	if chat.ShowsToolImage(selected) {
+	image := chat.ShowsToolImage(selected)
+	if image {
 		binds = append(binds, m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage)
 	}
-	if open, edit := chat.FileKeys(selected); open {
-		binds = append(binds, m.keyMap.Chat.OpenFile, m.keyMap.Chat.EditFile)
-	} else if edit {
+	open, edit := chat.FileKeys(selected)
+	switch {
+	case image:
+	case open == chat.OpensImage:
+		binds = append(binds, m.keyMap.Chat.OpenImage)
+	case open == chat.OpensFile:
+		binds = append(binds, m.keyMap.Chat.OpenFile)
+	}
+	if edit {
 		binds = append(binds, m.keyMap.Chat.EditFile)
 	}
 	return binds
