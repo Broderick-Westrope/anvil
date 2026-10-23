@@ -38,7 +38,7 @@ func StartupSnapshot(cfg *config.ConfigStore) (map[string]ServerSnapshot, bool) 
 }
 
 func takeSnapshot(mcps config.MCPs) map[string]ServerSnapshot {
-	snap := make(map[string]ServerSnapshot, len(mcps))
+	snap := map[string]ServerSnapshot{}
 	for name, m := range mcps {
 		info, _ := GetState(name)
 		snap[name] = ServerSnapshot{Config: m, State: info.State, SentBytes: SentToolBytes(name)}

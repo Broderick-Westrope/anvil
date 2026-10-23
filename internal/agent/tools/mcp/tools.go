@@ -268,7 +268,7 @@ func updateTools(cfg *config.ConfigStore, name string, tools []*Tool) int {
 		allTools.Del(name)
 		return 0
 	}
-	registered := make([]*RegisteredTool, 0, len(tools))
+	var registered []*RegisteredTool
 	for _, tool := range tools {
 		registered = append(registered, newRegisteredTool(tool))
 	}

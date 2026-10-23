@@ -28,7 +28,7 @@ func DeleteStateForTest(name string) {
 // SetToolsForTest registers tools for a server as a connect would, without
 // connecting anything. Pair with t.Cleanup(DeleteToolsForTest).
 func SetToolsForTest(name string, tools ...*Tool) {
-	registered := make([]*RegisteredTool, 0, len(tools))
+	var registered []*RegisteredTool
 	for _, tool := range tools {
 		registered = append(registered, newRegisteredTool(tool))
 	}
