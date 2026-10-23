@@ -261,6 +261,9 @@ func (c *catalogue) connect(ctx context.Context, server, caller string) error {
 	switch {
 	case err == nil:
 		return nil
+	case ctx.Err() != nil:
+		// Cancelled, not a failure of the server.
+		return ctx.Err()
 	case errors.Is(err, mcp.ErrAlreadyConnecting):
 		return c.settle(ctx, server)
 	case mcp.NeedsAuth(err):

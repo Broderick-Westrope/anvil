@@ -409,11 +409,14 @@ func TestCallWithoutArgumentsSendsAnEmptyObject(t *testing.T) {
 	require.Equal(t, "whoami ran with {}", resp.Content)
 }
 
-func TestFirstSentenceCutsOnRunes(t *testing.T) {
-	t.Parallel()
-	got := firstSentence("a" + strings.Repeat("é", 250))
-	require.True(t, strings.HasSuffix(got, "..."))
-	require.True(t, utf8.ValidString(got))
+func TestSearchRowsCutLongDescriptionsOnRunes(t *testing.T) {
+	long := catalogueServerTool{name: "long_tool", description: "a" + strings.Repeat("é", 250), schema: objectSchema(nil, map[string]any{})}
+	f := newCatalogueFixture(t, "cat-runes", "", false, long)
+
+	text := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-runes", "query": "long"}).Content
+
+	require.Contains(t, text, "...\n")
+	require.True(t, utf8.ValidString(text))
 }
 
 func TestCatalogueToolsNeverSendANullRequiredList(t *testing.T) {
@@ -456,4 +459,17 @@ func TestSearchWaitsOutAConnectRetryInsteadOfReportingItsError(t *testing.T) {
 	resp := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-retry", "query": "logs"})
 
 	require.Contains(t, resp.Content, "- search_logs")
+}
+
+func TestACancelledConnectIsReportedAsCancelled(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-cancel", "", true, logSearchTool)
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), SessionIDContextKey, "session-1"))
+	cancel()
+
+	search := f.tools[0]
+	resp, err := search.Run(ctx, fantasy.ToolCall{ID: "outer", Name: SearchMCPToolsToolName, Input: `{"server":"cat-cancel","query":"logs"}`})
+
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Equal(t, context.Canceled.Error(), resp.Content)
 }
