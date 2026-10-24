@@ -287,8 +287,9 @@ func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
 		w.closeRequests(w.requests.finish(ev.SessionID, live, true))
 	}
 	// A run heard from before has no provisional invocation of its own;
-	// one never heard from is the provisional invocation.
-	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, ok && live == ev.RunID))
+	// one never heard from is the provisional invocation. When the live run
+	// was another one, the session's requests were all closed above.
+	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, ok))
 	delete(w.live, ev.SessionID)
 	outcome := ev.Message
 	if ev.Status == workflowhost.StatusCompleted {

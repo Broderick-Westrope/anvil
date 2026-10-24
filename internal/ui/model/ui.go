@@ -3791,9 +3791,9 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		} else {
 			m.activeChat().Draw(scr, layout.main)
 		}
-		if layout.pills.Dy() > 0 && m.pillsView != "" && m.composeTarget().shown {
-			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
-		}
+		// The pills area has no height, and nothing to draw, where the
+		// editor is hidden.
+		uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 		// The editor is there for the root session, and for a drilled-in
 		// session the user can talk to, such as a workflow's builder.
 		if m.composeTarget().shown {

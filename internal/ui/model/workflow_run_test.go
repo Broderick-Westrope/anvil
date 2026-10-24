@@ -783,6 +783,19 @@ func TestARunningRunOnScreenIsReloadedWithoutAnnouncements(t *testing.T) {
 	_, cmd := f.u.refreshRunningWorkflowRuns()
 	f.run(cmd)
 	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "audit · pass 2")
+
+	// The count starts again: the next reload is as many ticks away.
+	later := next
+	later.Phases = append(later.Phases, workflowhost.RunPhase{Step: "hand over"})
+	f.ws.views["run-1"] = later
+	for range workflowRunReloadTicks - 1 {
+		_, cmd := f.u.refreshRunningWorkflowRuns()
+		f.run(cmd)
+	}
+	require.NotContains(t, ansi.Strip(f.node(t).Render(100)), "hand over", "a reload restarts the count")
+	_, cmd = f.u.refreshRunningWorkflowRuns()
+	f.run(cmd)
+	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "hand over")
 }
 
 func TestAWorkflowRunViewThatDidntLoadIsntShown(t *testing.T) {

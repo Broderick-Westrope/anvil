@@ -263,7 +263,6 @@ func (m *UI) renderPills() {
 
 	effective := m.effectiveFocusedSection()
 	todosFocused := m.pillsExpanded && effective == pillSectionTodos
-	queueFocused := m.pillsExpanded && effective == pillSectionQueue
 
 	inProgressIcon := t.Tool.TodoInProgressIcon.Render(styles.SpinnerIcon)
 	if m.todoIsSpinning {
@@ -282,7 +281,8 @@ func (m *UI) renderPills() {
 	if m.pillsExpanded {
 		if todosFocused && hasIncomplete {
 			expandedList = todoList(m.pillsSession().Todos, inProgressIcon, t, contentWidth)
-		} else if queueFocused && hasQueue {
+		} else if hasQueue {
+			// Todos aren't shown, so a queue has the focus.
 			if m.com != nil && m.com.Workspace != nil && m.com.Workspace.AgentIsReady() {
 				queueItems := m.com.Workspace.AgentQueuedPromptsList(m.pillsSession().ID)
 				expandedList = queueList(queueItems, t)

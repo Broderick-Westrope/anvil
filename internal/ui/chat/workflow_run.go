@@ -177,7 +177,8 @@ func (w *WorkflowRunMessageItem) build(width int) string {
 	title := sty.Messages.WorkflowTag.Render("Workflow") + " " + sty.Messages.WorkflowTitle.Render("/"+w.marker.Command)
 	header := workflowStatusIcon(sty, w.status()) + " " + title
 	if input := FirstLine(w.marker.Input); input != "" {
-		header += " " + sty.Tool.ParamMain.Render(ansi.Truncate(input, max(width-lipgloss.Width(header)-1, 0), "…"))
+		// Cut to fit with the rest of the header below.
+		header += " " + sty.Tool.ParamMain.Render(input)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, ansi.Truncate(header, width, "…"),
 		ansi.Truncate("  "+sty.Tool.StatsLine.Render(w.summary()), width, "…"))
@@ -408,10 +409,7 @@ func formatRunCost(cost float64) string {
 }
 
 func formatRunDuration(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	return d.Round(time.Second).String()
+	return max(d, 0).Round(time.Second).String()
 }
 
 // FirstLine is the first line of s, trimmed of surrounding space.

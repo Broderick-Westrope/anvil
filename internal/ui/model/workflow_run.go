@@ -1,8 +1,11 @@
 package model
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -179,7 +182,10 @@ func (m *UI) refreshRunningWorkflowRuns() (bool, tea.Cmd) {
 		return false, nil
 	}
 	m.workflowRuns.ticks++
-	reload := m.workflowRuns.ticks%workflowRunReloadTicks == 0
+	reload := m.workflowRuns.ticks >= workflowRunReloadTicks
+	if reload {
+		m.workflowRuns.ticks = 0
+	}
 	var reloads []tea.Cmd
 	running := func(runID string) bool {
 		view, ok := m.workflowRuns.view(runID)
@@ -238,17 +244,20 @@ func (v uiWorkflowViews) TargetRun() (workflowhost.RunView, bool) {
 	if m.isDrilledIn() || !m.hasSession() {
 		return workflowhost.RunView{}, false
 	}
-	var latest workflowhost.RunView
+	var candidates []workflowhost.RunView
 	for _, view := range m.workflowRuns.views {
-		// Ties on start time go to the larger run ID, so the choice
-		// doesn't depend on map order.
-		newer := latest.RunID == "" || view.StartedAt.After(latest.StartedAt) ||
-			(view.StartedAt.Equal(latest.StartedAt) && view.RunID > latest.RunID)
-		if view.InvokingSessionID == m.session.ID && view.Status == workflowhost.StatusRunning && newer {
-			latest = view
+		if view.InvokingSessionID == m.session.ID && view.Status == workflowhost.StatusRunning {
+			candidates = append(candidates, view)
 		}
 	}
-	return latest, latest.RunID != ""
+	if len(candidates) == 0 {
+		return workflowhost.RunView{}, false
+	}
+	// Ties on start time go to the larger run ID, so the choice doesn't
+	// depend on map order.
+	return slices.MaxFunc(candidates, func(a, b workflowhost.RunView) int {
+		return cmp.Or(a.StartedAt.Compare(b.StartedAt), strings.Compare(a.RunID, b.RunID))
+	}), true
 }
 
 func (v uiWorkflowViews) RunChanged(runID string) tea.Cmd {

@@ -569,6 +569,7 @@ type runNodeWorkspace struct {
 	busy       map[string]bool
 	anyBusy    bool
 	queued     map[string]int
+	queuedList map[string][]string
 	cancelled  []string
 	historyFor []string
 }
@@ -585,11 +586,13 @@ func newRunNodeWorkspace() *runNodeWorkspace {
 	}}
 }
 
-func (*runNodeWorkspace) AgentIsReady() bool                        { return true }
-func (w *runNodeWorkspace) AgentIsSessionBusy(id string) bool       { return w.busy[id] }
-func (w *runNodeWorkspace) AgentIsBusy() bool                       { return w.anyBusy }
-func (w *runNodeWorkspace) AgentQueuedPrompts(id string) int        { return w.queued[id] }
-func (*runNodeWorkspace) AgentQueuedPromptsList(string) []string    { return nil }
+func (*runNodeWorkspace) AgentIsReady() bool                  { return true }
+func (w *runNodeWorkspace) AgentIsSessionBusy(id string) bool { return w.busy[id] }
+func (w *runNodeWorkspace) AgentIsBusy() bool                 { return w.anyBusy }
+func (w *runNodeWorkspace) AgentQueuedPrompts(id string) int  { return w.queued[id] }
+func (w *runNodeWorkspace) AgentQueuedPromptsList(id string) []string {
+	return w.queuedList[id]
+}
 func (*runNodeWorkspace) AgentSubagentRunning(string) bool          { return false }
 func (*runNodeWorkspace) WorkingDir() string                        { return "/work" }
 func (*runNodeWorkspace) SetComposerState(string, bool, bool, bool) {}

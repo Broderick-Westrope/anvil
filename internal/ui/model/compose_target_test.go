@@ -240,3 +240,19 @@ func TestABuildersPillsAreDrawn(t *testing.T) {
 	f.u.Draw(scr, scr.Bounds())
 	require.Contains(t, ansi.Strip(scr.Render()), "2 Queued")
 }
+
+// Opening the pills with only a queue lists what's queued for the session
+// the editor sends to.
+func TestOpenPillsListABuildersQueue(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	f.ws.anyBusy = true
+	f.ws.queued = map[string]int{"sess-2": 1}
+	f.ws.queuedList = map[string][]string{"sess-2": {"use the shared hook"}}
+	f.press(tea.KeyPressMsg{Code: 'x'})
+	f.u.togglePillsExpanded()
+	f.u.renderPills()
+	require.Contains(t, ansi.Strip(f.u.pillsView), "use the shared hook")
+}
