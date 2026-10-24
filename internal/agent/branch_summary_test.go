@@ -665,6 +665,36 @@ func TestBranchWorthSummarizing(t *testing.T) {
 	require.False(t, worth)
 }
 
+func TestBranchWorthSummarizing_CarriesAStoredSummaryToAnotherBranch(t *testing.T) {
+	t.Parallel()
+	f := newBranchFixture(t)
+	f.setSummarizer(reply("summary"))
+	summary, err := f.c.SummarizeBranch(t.Context(), f.request())
+	require.NoError(t, err)
+	sibling, err := f.env.messages.Create(t.Context(), f.sessionID, message.CreateMessageParams{
+		Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "do item 2"}}, ParentMessageID: f.a1,
+	})
+	require.NoError(t, err)
+
+	worth, err := f.c.BranchWorthSummarizing(t.Context(), summary.ID, sibling.ID)
+	require.NoError(t, err)
+	require.True(t, worth, "moving to another branch would drop the summary")
+
+	worth, err = f.c.BranchWorthSummarizing(t.Context(), summary.ID, f.a1)
+	require.NoError(t, err)
+	require.False(t, worth, "summarising it under its own parent would recreate it")
+
+	require.NoError(t, f.env.sessions.MoveLeaf(t.Context(), f.sessionID, sibling.ID))
+	carried, err := f.c.SummarizeBranch(t.Context(), BranchSummaryRequest{
+		SessionID: f.sessionID, FromLeafID: summary.ID, TargetID: sibling.ID, Agent: BuiltinBranchSummarizer,
+	})
+	require.NoError(t, err)
+	require.Equal(t, sibling.ID, carried.ParentMessageID)
+	events := carried.Parts[0].(message.BranchSummaryContent).Ledger.Events
+	require.Len(t, events, 1)
+	require.Equal(t, "git commit -m item1", events[0].Command)
+}
+
 func TestSummarizeBranch_KeepsNoToolLoopRoomForAnAgentWithoutTools(t *testing.T) {
 	t.Parallel()
 	f := newBranchFixture(t)

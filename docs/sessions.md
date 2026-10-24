@@ -168,6 +168,11 @@ keep typing while it works; a message you send queues behind it and lands after 
 While a summary runs, toggling an MCP server is refused, and model or reasoning changes take effect without
 being recorded in the conversation. Either would move the conversation past the point the summary is for.
 
+A summary you rewind or switch away from is part of the branch you're leaving, so Anvil offers to summarize
+it again, even when nothing else was said after it. The new summary carries forward the earlier one's text
+and the commands it recorded. Rewinding to the message a summary sits under only offers a summary if the
+conversation went on past it.
+
 Summaries are best-effort: the summarizer works from the branch's messages and the tool calls it can see,
 with secrets redacted before anything is sent, and it may still get details wrong. It's a snapshot as of the
 branch's last message, so check live `git` and `gh` state before relying on it.

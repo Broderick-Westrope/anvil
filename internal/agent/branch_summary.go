@@ -39,7 +39,8 @@ var readOnlySummarizerTools = []string{tools.ViewToolName, tools.GrepToolName, t
 
 var (
 	// ErrNothingToSummarize means the abandoned range has no assistant
-	// reply, so there is nothing a summary could say.
+	// reply or earlier branch summary, so there is nothing a summary could
+	// say.
 	ErrNothingToSummarize = errors.New("nothing to summarize")
 	// ErrStaleBranchSummary means the session moved away from the rewind
 	// target while the summary was generating, so it was thrown away.
@@ -127,7 +128,7 @@ func (c *coordinator) SummarizeBranch(ctx context.Context, req BranchSummaryRequ
 	if err != nil {
 		return message.Message{}, err
 	}
-	if !branchsummary.Worthwhile(rng) {
+	if !branchsummary.Worthwhile(rng, req.TargetID) {
 		return message.Message{}, ErrNothingToSummarize
 	}
 	ledger := branchsummary.Ledger(rng, func(messageID string, call message.ToolCall) []message.Message {
@@ -236,7 +237,7 @@ func (c *coordinator) BranchWorthSummarizing(ctx context.Context, fromLeaf, targ
 	if err != nil {
 		return false, err
 	}
-	return branchsummary.Worthwhile(rng), nil
+	return branchsummary.Worthwhile(rng, target), nil
 }
 
 // abandonedRange returns the messages on the path to fromLeaf that aren't

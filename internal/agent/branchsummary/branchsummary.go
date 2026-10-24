@@ -57,13 +57,23 @@ func Abandoned(fromPath, targetPath []message.Message) []message.Message {
 	return slices.Clone(fromPath[shared:])
 }
 
-// Worthwhile reports whether the range holds an assistant reply, so a
-// summary could say something. A rewind that drops only the user's own
-// message isn't worth summarising.
-func Worthwhile(rng []message.Message) bool {
+// Worthwhile reports whether a summary could say something about the
+// range a rewind to target leaves: it holds an assistant reply, or an
+// earlier branch summary, which would otherwise drop out of the
+// conversation with everything it recorded. A rewind that drops only the
+// user's own message isn't worth summarising, and neither is one that
+// only steps off a summary onto the message it was stored under, since
+// summarising it there would just recreate it.
+func Worthwhile(rng []message.Message, target string) bool {
 	return slices.ContainsFunc(rng, func(m message.Message) bool {
-		return m.Role == message.Assistant && (m.MessageType == message.MessageTypeMessage || m.MessageType == "") &&
-			(strings.TrimSpace(m.Content().Text) != "" || len(m.ToolCalls()) > 0)
+		switch m.MessageType {
+		case message.MessageTypeBranchSummary:
+			return m.ParentMessageID != target
+		case message.MessageTypeMessage, "":
+			return m.Role == message.Assistant && (strings.TrimSpace(m.Content().Text) != "" || len(m.ToolCalls()) > 0)
+		default:
+			return false
+		}
 	})
 }
 

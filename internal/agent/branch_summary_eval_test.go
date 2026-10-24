@@ -185,7 +185,7 @@ func TestBranchSummaryEvalFixturesReachThePrompt(t *testing.T) {
 			targetPath, err := env.messages.GetBranchPath(t.Context(), target)
 			require.NoError(t, err)
 			rng := branchsummary.Abandoned(fromPath, targetPath)
-			require.True(t, branchsummary.Worthwhile(rng), "a fixture must leave something to summarize")
+			require.True(t, branchsummary.Worthwhile(rng, target), "a fixture must leave something to summarize")
 			prompt := branchsummary.Prompt(rng, branchsummary.Ledger(rng, func(string, message.ToolCall) []message.Message { return nil }), "", 50_000)
 
 			for _, pattern := range f.Required {
