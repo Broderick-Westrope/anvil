@@ -1,0 +1,27 @@
+{
+  "why": "The branch merged main and moved a package; after the return the agent took those commits for someone else's.",
+  "trunk": [
+    {"role": "user", "text": "The feat/workflows worktree at /wt/feat-workflows is ready for review once it's up to date."},
+    {"role": "assistant", "text": "Next step is merging main into it."}
+  ],
+  "branch": [
+    {"role": "user", "text": "Merge main into feat/workflows and fix the conflicts."},
+    {"role": "assistant", "text": "Merging.", "calls": [
+      {"id": "c1", "name": "bash", "input": {"command": "git -C /wt/feat-workflows merge main"}}
+    ]},
+    {"role": "tool", "results": [
+      {"id": "c1", "content": "CONFLICT (content): Merge conflict in internal/agent/agent.go\nAutomatic merge failed; fix conflicts and then commit the result.\nExit code 1", "metadata": {"exit_code": 1}}
+    ]},
+    {"role": "assistant", "text": "Resolved the conflict and committed the merge. Main's new layering rule forbids internal/workflow/host importing app code, so I moved it.", "calls": [
+      {"id": "c2", "name": "bash", "input": {"command": "git -C /wt/feat-workflows commit --no-edit"}},
+      {"id": "c3", "name": "bash", "input": {"command": "git -C /wt/feat-workflows mv internal/workflow/host internal/app/workflowhost && git -C /wt/feat-workflows commit -m \"Move the workflow host into the app layer\""}}
+    ]},
+    {"role": "tool", "results": [
+      {"id": "c2", "content": "[feat/workflows e7641156] Merge branch 'main' into feat/workflows", "metadata": {"exit_code": 0}},
+      {"id": "c3", "content": "[feat/workflows 8f311cc5] Move the workflow host into the app layer\n 6 files changed", "metadata": {"exit_code": 0}}
+    ]},
+    {"role": "assistant", "text": "Merged main (e7641156) and moved the host to internal/app/workflowhost (8f311cc5). Tests pass. Not pushed."}
+  ],
+  "required": ["e7641156", "8f311cc5", "internal/app/workflowhost"],
+  "forbidden": ["someone else", "another (person|contributor|developer)"]
+}

@@ -56,5 +56,8 @@ func ValidateFiles(workingDir, dataDir string, validateBouncer func(*Bouncer) er
 	if err := cfg.ValidateMCPAuth(); err != nil {
 		return fmt.Errorf("invalid MCP auth configuration: %w", err)
 	}
+	if err := cfg.ValidateMCPRoutes(); err != nil {
+		return fmt.Errorf("invalid MCP route configuration: %w", err)
+	}
 	return nil
 }

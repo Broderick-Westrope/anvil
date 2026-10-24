@@ -57,13 +57,20 @@ const (
 	MessageTypeLabel               MessageType = "label"
 	MessageTypeModelChange         MessageType = "model_change"
 	MessageTypeThinkingLevelChange MessageType = "thinking_level_change"
-	MessageTypeMCPToggle           MessageType = "mcp_toggle"
+	// MessageTypeMCPToggle is kept so old sessions' lazy MCP toggles
+	// decode and stay out of context (ADR 0008).
+	MessageTypeMCPToggle MessageType = "mcp_toggle"
 	// MessageTypeWorkflowRun marks where a workflow run started in the
 	// session that invoked it. The UI shows it as the run's node.
 	MessageTypeWorkflowRun MessageType = "workflow_run"
 	// MessageTypeJobEvent is a user-role notice about background job
 	// events. It is sent to the model like any user message.
 	MessageTypeJobEvent MessageType = "job_event"
+	// MessageTypeSubagentInjection is a user-role message injected into a
+	// running subagent by a human, the orchestrator or the harness. It is
+	// sent to the model like any user message, and its InjectionContent
+	// parts record where it came from.
+	MessageTypeSubagentInjection MessageType = "subagent_injection"
 )
 
 type ContentPart interface {
@@ -128,9 +135,19 @@ type ToolCall struct {
 	Input            string `json:"input"`
 	ProviderExecuted bool   `json:"provider_executed"`
 	Finished         bool   `json:"finished"`
+	// StartedAt is when the tool began running, in Unix milliseconds, or
+	// zero when unknown. It is for display only and never reaches the
+	// model.
+	StartedAt int64 `json:"started_at,omitempty"`
 }
 
 func (ToolCall) isPart() {}
+
+// MediaPlaceholder is the text of a tool result that returned media of type
+// mimeType and no text of its own, so the result says what it carries.
+func MediaPlaceholder(mimeType string) string {
+	return "Loaded " + mimeType + " content"
+}
 
 type ToolResult struct {
 	ToolCallID string `json:"tool_call_id"`
@@ -140,6 +157,10 @@ type ToolResult struct {
 	MIMEType   string `json:"mime_type"`
 	Metadata   string `json:"metadata"`
 	IsError    bool   `json:"is_error"`
+	// FinishedAt is when the result was recorded, in Unix milliseconds, or
+	// zero when unknown. It is for display only and never reaches the
+	// model.
+	FinishedAt int64 `json:"finished_at,omitempty"`
 }
 
 func (ToolResult) isPart() {}
@@ -166,6 +187,45 @@ func (CompactionContent) isPart() {}
 type BranchSummaryContent struct {
 	Summary string `json:"summary"`
 	FromID  string `json:"from_id"`
+	// ChildSessionID is the session the summarizer agent ran in.
+	ChildSessionID string `json:"child_session_id,omitempty"`
+	// Agent is the summarizer agent's name.
+	Agent string `json:"agent,omitempty"`
+	// Ledger is what the abandoned branch's tool calls did, extracted
+	// in code. Later summaries carry it forward.
+	Ledger BranchLedger `json:"ledger,omitzero"`
+}
+
+// BranchLedger records the effects of an abandoned branch's tool calls.
+type BranchLedger struct {
+	// Modified lists files a successful edit or write changed.
+	Modified []string `json:"modified,omitempty"`
+	// Read lists files viewed but not modified.
+	Read []string `json:"read,omitempty"`
+	// Events are state-changing commands, in the order they ran.
+	Events []LedgerEvent `json:"events,omitempty"`
+}
+
+// LedgerStatus is how a recorded tool call ended.
+type LedgerStatus string
+
+const (
+	LedgerSucceeded LedgerStatus = "succeeded"
+	LedgerFailed    LedgerStatus = "failed"
+	LedgerDenied    LedgerStatus = "denied"
+	// LedgerUnknown means no result was recorded, or the command moved to
+	// a background job.
+	LedgerUnknown LedgerStatus = "unknown"
+)
+
+// LedgerEvent is one state-changing command from an abandoned branch.
+type LedgerEvent struct {
+	Tool    string       `json:"tool"`
+	Command string       `json:"command"`
+	Dir     string       `json:"dir,omitempty"`
+	Status  LedgerStatus `json:"status"`
+	// Refs are commit SHAs and URLs the command printed.
+	Refs []string `json:"refs,omitempty"`
 }
 
 func (BranchSummaryContent) isPart() {}
@@ -193,7 +253,8 @@ type ThinkingLevelChangeContent struct {
 
 func (ThinkingLevelChangeContent) isPart() {}
 
-// MCPToggleContent stores metadata for an MCP server toggle entry.
+// MCPToggleContent is the part of an old MCPToggle message. It is kept
+// only so old sessions decode (ADR 0008).
 type MCPToggleContent struct {
 	ServerName string `json:"server_name"`
 	Enabled    bool   `json:"enabled"`
@@ -491,6 +552,19 @@ func (m *Message) AddToolCall(tc ToolCall) {
 		}
 	}
 	m.Parts = append(m.Parts, tc)
+}
+
+// MarkToolCallStarted records when the tool call began running. It
+// reports whether the message holds a tool call with that ID.
+func (m *Message) MarkToolCallStarted(toolCallID string, at time.Time) bool {
+	for i, part := range m.Parts {
+		if c, ok := part.(ToolCall); ok && c.ID == toolCallID {
+			c.StartedAt = at.UnixMilli()
+			m.Parts[i] = c
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Message) SetToolCalls(tc []ToolCall) {

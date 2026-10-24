@@ -181,8 +181,7 @@ func (m *UI) refuseInOrchestratorSession(x any) tea.Cmd {
 		return util.ReportWarn("The command's message wasn't sent, because a workflow session has the editor; run it again from your own session")
 	case dialog.ActionRunCustomCommand, dialog.ActionRunMCPPrompt,
 		dialog.ActionSummarize, dialog.ActionRenameSession, dialog.ActionRegenerateTitle,
-		dialog.ActionInitializeProject, dialog.ActionNavigateTree, dialog.ActionReturnToPreBranch,
-		dialog.ActionToggleLazyMCP:
+		dialog.ActionInitializeProject, dialog.ActionNavigateTree, dialog.ActionReturnToPreBranch:
 		return util.ReportWarn("That acts on your own session; go back to it first")
 	default:
 		return nil

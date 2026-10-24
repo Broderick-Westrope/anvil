@@ -128,6 +128,7 @@ type Session struct {
 	TitleIsCustom       int64          `json:"title_is_custom"`
 	Pinned              int64          `json:"pinned"`
 	PinNote             string         `json:"pin_note"`
+	CostRolledUp        float64        `json:"cost_rolled_up"`
 	WorkflowRunID       string         `json:"workflow_run_id"`
 	WorkflowSeq         int64          `json:"workflow_seq"`
 	WorkflowKind        string         `json:"workflow_kind"`
@@ -174,6 +175,27 @@ type StepUsage struct {
 	HistoryHash        string        `json:"history_hash"`
 	HistoryPrefixMatch sql.NullInt64 `json:"history_prefix_match"`
 	FingerprintError   string        `json:"fingerprint_error"`
+}
+
+type Subagent struct {
+	SessionID       string `json:"session_id"`
+	ParentSessionID string `json:"parent_session_id"`
+	Handle          string `json:"handle"`
+	Origin          string `json:"origin"`
+	AgentType       string `json:"agent_type"`
+	Depth           int64  `json:"depth"`
+	Provider        string `json:"provider"`
+	Model           string `json:"model"`
+	CreatedAt       int64  `json:"created_at"`
+}
+
+type SubagentCall struct {
+	ID         string        `json:"id"`
+	SessionID  string        `json:"session_id"`
+	Kind       string        `json:"kind"`
+	Cost       float64       `json:"cost"`
+	CreatedAt  int64         `json:"created_at"`
+	FinishedAt sql.NullInt64 `json:"finished_at"`
 }
 
 type WorkflowApproval struct {

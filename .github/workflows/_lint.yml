@@ -1,0 +1,46 @@
+name: lint matrix
+
+# Every step can be skipped. The ruleset requires the "lint / lint (<os>)"
+# checks by name, and only a called workflow's matrix job reports those
+# names, so skipping has to happen inside it rather than on the caller.
+on:
+  workflow_call:
+    inputs:
+      lint:
+        type: boolean
+        required: true
+        description: Run golangci-lint. When false, every job passes without linting.
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+
+jobs:
+  lint:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - if: ${{ !inputs.lint }}
+        run: echo "No code changed, so there is nothing to lint."
+      # By default, the GitHub Action on Windows uses core.autocrlf=true,
+      # which makes formatters report every line as changed.
+      - if: ${{ inputs.lint }}
+        run: git config --global core.autocrlf input
+      - if: ${{ inputs.lint }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: ${{ inputs.lint }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - if: ${{ inputs.lint }}
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          args: --config=.golangci.yml --timeout=10m ./...
+          # Keep in step with tools/golangci-lint.mod, which local runs use.
+          version: v2.14

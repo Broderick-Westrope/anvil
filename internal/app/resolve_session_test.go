@@ -104,6 +104,10 @@ func (m *mockSessionService) MoveLeaf(context.Context, string, string) error {
 	return nil
 }
 
+func (m *mockSessionService) Refresh(context.Context, string) error {
+	return nil
+}
+
 func (m *mockSessionService) IsAgentToolSession(sessionID string) bool {
 	_, _, ok := m.ParseAgentToolSessionID(sessionID)
 	return ok
@@ -229,3 +233,25 @@ func TestResolveSession_Last_NoSessions(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no sessions found")
 }
+
+func (m *mockSessionService) CreateSubagent(context.Context, session.Subagent) (session.Subagent, error) {
+	return session.Subagent{}, nil
+}
+
+func (m *mockSessionService) GetSubagentByHandle(context.Context, string, string) (session.Subagent, error) {
+	return session.Subagent{}, sql.ErrNoRows
+}
+
+func (m *mockSessionService) CreateSubagentCall(context.Context, session.SubagentCall) error {
+	return nil
+}
+
+func (m *mockSessionService) GetSubagentCall(context.Context, string) (session.SubagentCall, error) {
+	return session.SubagentCall{}, sql.ErrNoRows
+}
+
+func (m *mockSessionService) RollUpChildCost(context.Context, string, string) error { return nil }
+
+func (m *mockSessionService) FinishSubagentCall(context.Context, string) error { return nil }
+
+func (m *mockSessionService) AddCost(context.Context, string, float64) error { return nil }

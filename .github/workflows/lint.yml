@@ -10,9 +10,12 @@ permissions:
   pull-requests: read
 
 jobs:
+  changes:
+    uses: ./.github/workflows/_changes.yml
+
   lint:
-    uses: charmbracelet/meta/.github/workflows/lint.yml@main
+    needs: changes
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/_lint.yml
     with:
-      golangci_path: .golangci.yml
-      golangci_version: v2.14
-      timeout: 10m
+      lint: ${{ needs.changes.outputs.code != 'false' }}

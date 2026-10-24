@@ -123,6 +123,18 @@ type AssistantMessageItem struct {
 	// docs/notes/2026-05-12-chat-rendering-perf.md. See
 	// streaming_markdown.go for the full algorithm.
 	streamingContent streamingMarkdown
+
+	// segment is set when the message is shown as several nodes around
+	// its diagrams; this item then shows only one run of its text.
+	segment *assistantSegment
+}
+
+// assistantSegment is one run of a message's text between its diagrams.
+// Index 0 is the head: it keeps the message's ID and its "Thought for"
+// line, so lookups by message ID still find it.
+type assistantSegment struct {
+	index int
+	text  string
 }
 
 // NewAssistantMessageItem creates a new AssistantMessageItem.
@@ -148,32 +160,50 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 	return a
 }
 
-// StartAnimation starts the assistant message animation if it should be spinning.
-func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
-	if !a.isSpinning() {
-		return nil
-	}
-	return a.anim.Start()
+// Spinning implements [Animatable].
+func (a *AssistantMessageItem) Spinning() bool {
+	return a.isSpinning()
 }
 
-// Animate progresses the assistant message animation if it should be spinning.
-func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
+// Advance implements [Animatable].
+func (a *AssistantMessageItem) Advance() bool {
 	if !a.isSpinning() {
-		return nil
+		return false
 	}
+	a.anim.Advance()
 	// Bump the F6 list-cache version so the next draw re-renders
-	// this item: a spinner tick mutates anim's internal frame
-	// counter, which changes the rendered output but is invisible
-	// to the per-section content hashes. Without the bump the
-	// list cache would serve the previously rendered frame
-	// indefinitely and the spinner would appear frozen.
+	// this item: a spinner frame mutates anim's internal counter,
+	// which changes the rendered output but is invisible to the
+	// per-section content hashes. Without the bump the list cache
+	// would serve the previously rendered frame indefinitely and
+	// the spinner would appear frozen.
 	a.Bump()
-	return a.anim.Animate(msg)
+	return true
 }
 
 // ID implements MessageItem.
 func (a *AssistantMessageItem) ID() string {
+	if a.segment != nil && a.segment.index > 0 {
+		return segmentID(a.message.ID, a.segment.index)
+	}
 	return a.message.ID
+}
+
+// text is the markdown this item shows: its segment, or the whole content.
+func (a *AssistantMessageItem) text() string {
+	if a.segment != nil {
+		return a.segment.text
+	}
+	return a.message.Content().Text
+}
+
+// SegmentKey identifies what a segment shows, so an unchanged split isn't
+// rebuilt. It is empty for an unsplit message.
+func (a *AssistantMessageItem) SegmentKey() string {
+	if a.segment == nil {
+		return ""
+	}
+	return "text:" + a.segment.text
 }
 
 func (a *AssistantMessageItem) SourceMessage() message.Message {
@@ -205,7 +235,7 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 // markdown of the content. Thinking text isn't shown here, so it isn't
 // selectable either.
 func (a *AssistantMessageItem) SelectionSource() string {
-	return strings.TrimSpace(a.message.Content().Text)
+	return strings.TrimSpace(a.text())
 }
 
 // Render implements MessageItem.
@@ -310,7 +340,7 @@ func (a *AssistantMessageItem) compositionKey() uint64 {
 // render is recomputed.
 func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	var messageParts []string
-	content := strings.TrimSpace(a.message.Content().Text)
+	content := strings.TrimSpace(a.text())
 
 	var footer string
 	if a.hasThinking() {
@@ -330,11 +360,27 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	}
 
 	if a.message.IsFinished() {
+		var banner string
 		switch {
 		case a.message.FinishReason() == message.FinishReasonCanceled:
-			messageParts = append(messageParts, a.sty.Messages.AssistantCanceled.Render("Canceled"))
+			// Tool calls render below this item, and cancelling a turn
+			// closes each unfinished one out with its own interrupted
+			// result. Saying it here too would put "Canceled" above the
+			// tools it is describing.
+			if len(a.message.ToolCalls()) > 0 {
+				break
+			}
+			banner = a.sty.Messages.AssistantCanceled.Render("Canceled")
 		case a.message.IsErrorLike():
-			messageParts = append(messageParts, a.cachedError(width))
+			banner = a.cachedError(width)
+		}
+		if banner != "" {
+			// Set the banner off from the text above it, or it reads as
+			// the end of the sentence the model was in the middle of.
+			if len(messageParts) > 0 {
+				messageParts = append(messageParts, "")
+			}
+			messageParts = append(messageParts, banner)
 		}
 	}
 
@@ -373,7 +419,7 @@ func (a *AssistantMessageItem) contentKey() (uint64, uint64) {
 	if a.message.IsFinished() {
 		fin = 1
 	}
-	return fnv64(a.message.Content().Text), fin
+	return fnv64(a.text()), fin
 }
 
 // errorKey returns the (srcHash, extra) cache key components for the
@@ -418,7 +464,7 @@ func (a *AssistantMessageItem) cachedContent(width int) string {
 	if a.contentSec.hit(width, srcHash, extra) {
 		return a.contentSec.out
 	}
-	out := a.renderMarkdown(a.message.Content().Text, width)
+	out := a.renderMarkdown(a.text(), width)
 	a.contentSec.store(width, srcHash, extra, out, 0)
 	return out
 }
@@ -454,6 +500,9 @@ func (a *AssistantMessageItem) renderThinkingFooter() string {
 
 // hasThinking reports whether the message has any thinking text.
 func (a *AssistantMessageItem) hasThinking() bool {
+	if a.segment != nil && a.segment.index > 0 {
+		return false
+	}
 	return strings.TrimSpace(a.message.ReasoningContent().Thinking) != ""
 }
 
@@ -531,8 +580,7 @@ func (a *AssistantMessageItem) isSpinning() bool {
 // sub-section caches whose source text or extras changed are
 // invalidated; the others survive and serve cache hits on the next
 // RawRender.
-func (a *AssistantMessageItem) SetMessage(msg *message.Message) tea.Cmd {
-	wasSpinning := a.isSpinning()
+func (a *AssistantMessageItem) SetMessage(msg *message.Message) {
 	a.message = msg
 	// Bump the F6 version even if the underlying *message.Message
 	// pointer is identical: callers may have mutated the message in
@@ -544,16 +592,14 @@ func (a *AssistantMessageItem) SetMessage(msg *message.Message) tea.Cmd {
 	// section's source hash, so an unchanged section keeps its prefix
 	// cache valid while a changed section forces a miss naturally.
 	// Section caches themselves are content-keyed, so they do not
-	// need an explicit drop here either.
-	if !wasSpinning && a.isSpinning() {
-		return a.StartAnimation()
-	}
-	return nil
+	// need an explicit drop here either. If the message started
+	// spinning again, the UI's animation clock picks it up on the
+	// next update.
 }
 
 // Finished implements list.Item. The assistant message is freezable
 // once the message reports IsFinished() and is no longer spinning
-// (no animation tick remains pending). Streaming tail animation is
+// (no animation frame remains pending). Streaming tail animation is
 // caught by isSpinning, so freezing only kicks in once the turn is
 // fully terminal. The list cache invalidates the entry on the next
 // version bump if anything (focus, highlight, expansion) changes.
@@ -584,6 +630,10 @@ func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) 
 	}
 	return y < a.thinkingFooterHeight
 }
+
+// ClickDrillIn implements ClickDrillInHandler: a handled click is on the
+// "Thought for" line.
+func (a *AssistantMessageItem) ClickDrillIn() tea.Cmd { return a.ThinkingDrillIn() }
 
 // ThinkingDrillIn returns a command that opens the thinking text in a
 // drill-in view, or nil when the message has no thinking.

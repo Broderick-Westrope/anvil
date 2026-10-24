@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -100,7 +102,7 @@ func TestUpdateState_ErrorClosesSessionAndClearsTools(t *testing.T) {
 
 	sess, sessCtx := liveSession(t, "do_thing")
 	sessions.Set(name, sess)
-	allTools.Set(name, []*Tool{{Name: "do_thing"}})
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "do_thing"})})
 
 	// Preconditions: tool registered and session live.
 	_, ok := allTools.Get(name)
@@ -125,6 +127,83 @@ func TestUpdateState_ErrorClosesSessionAndClearsTools(t *testing.T) {
 	require.Equal(t, StateError, info.State)
 }
 
+// TestUpdateState_ErrorFromStaleSessionPreservesHealthyReplacement pins the
+// teardown scoping: a StateError reported against a session that is NO LONGER
+// the registered one (a renewal already replaced it) must not tear down the
+// healthy replacement or its registrations. Before the fix updateState closed
+// whatever session was in the map, so a stale error transition — e.g. a
+// refresh whose list call timed out after another path had already renewed —
+// killed the fresh session and wiped its tools.
+func TestUpdateState_ErrorFromStaleSessionPreservesHealthyReplacement(t *testing.T) {
+	const name = "test-stale-error"
+	t.Cleanup(func() {
+		sessions.Del(name)
+		allTools.Del(name)
+		allPrompts.Del(name)
+		allResources.Del(name)
+		states.Del(name)
+	})
+
+	stale, staleCtx := liveSession(t, "old_tool")
+	fresh, freshCtx := liveSession(t, "new_tool")
+
+	// The registry holds the fresh session and its registrations.
+	sessions.Set(name, fresh)
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "new_tool"})})
+	allPrompts.Set(name, []*Prompt{{Name: "new_prompt"}})
+
+	// A stale error arrives for the OLD session.
+	updateState(name, StateError, errors.New("ping timeout"), stale, Counts{})
+
+	// The fresh session must still be registered and open.
+	got, ok := sessions.Get(name)
+	require.True(t, ok, "healthy replacement session was removed")
+	require.Same(t, fresh, got)
+	require.NoError(t, freshCtx.Err(), "healthy replacement session was closed")
+	_, ok = allTools.Get(name)
+	require.True(t, ok, "healthy replacement's tools were cleared")
+	_, ok = allPrompts.Get(name)
+	require.True(t, ok, "healthy replacement's prompts were cleared")
+
+	// The stale session must have been closed.
+	require.ErrorIs(t, staleCtx.Err(), context.Canceled, "stale session must still be closed")
+}
+
+// TestUpdateState_ErrorFromCurrentSessionClearsEverything pins the complement:
+// when the erroring session IS the registered one, the teardown must behave
+// exactly as before the scoping — session removed and closed, every registry
+// entry cleared, and the published state must not carry the dead session.
+func TestUpdateState_ErrorFromCurrentSessionClearsEverything(t *testing.T) {
+	const name = "test-current-error"
+	t.Cleanup(func() {
+		sessions.Del(name)
+		allTools.Del(name)
+		allPrompts.Del(name)
+		allResources.Del(name)
+		states.Del(name)
+	})
+
+	sess, sessCtx := liveSession(t, "do_thing")
+	sessions.Set(name, sess)
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "do_thing"})})
+	allPrompts.Set(name, []*Prompt{{Name: "a_prompt"}})
+
+	updateState(name, StateError, errors.New("pipe broke"), sess, Counts{})
+
+	_, ok := sessions.Get(name)
+	require.False(t, ok, "errored current session must be removed")
+	require.ErrorIs(t, sessCtx.Err(), context.Canceled, "errored current session must be closed")
+	_, ok = allTools.Get(name)
+	require.False(t, ok, "errored current session's tools must be cleared")
+	_, ok = allPrompts.Get(name)
+	require.False(t, ok, "errored current session's prompts must be cleared")
+
+	info, ok := GetState(name)
+	require.True(t, ok)
+	require.Equal(t, StateError, info.State)
+	require.Nil(t, info.Client, "a dead session must never be published on the state")
+}
+
 // TestUpdateState_ErrorClearsPromptsAndResources pins that a StateError
 // transition also drops the dead server's prompts and resources, not just its
 // tools. Leaving them registered lets a disconnected server keep advertising
@@ -140,7 +219,7 @@ func TestUpdateState_ErrorClearsPromptsAndResources(t *testing.T) {
 		states.Del(name)
 	})
 
-	allTools.Set(name, []*Tool{{Name: "do_thing"}})
+	allTools.Set(name, []*RegisteredTool{newRegisteredTool(name, &Tool{Name: "do_thing"})})
 	allPrompts.Set(name, []*Prompt{{Name: "a_prompt"}})
 	allResources.Set(name, []*Resource{{Name: "a_resource"}})
 
@@ -413,4 +492,32 @@ func TestGetOrRenewClient_RestoresPromptsAndResources(t *testing.T) {
 	require.Equal(t, StateConnected, info.State)
 	require.Equal(t, Counts{Tools: 1, Prompts: 1, Resources: 1}, info.Counts,
 		"reported counts must match the restored registries")
+}
+
+// TestMaybeStdioErr_SurfacesChildOutput pins that a stdio server which dies
+// during startup reports the child's output instead of a bare EOF.
+func TestMaybeStdioErr_SurfacesChildOutput(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "echo 'startup failed: bad config'; exit 3")
+
+	got := maybeStdioErr(io.EOF, &mcp.CommandTransport{Command: cmd})
+	require.Error(t, got)
+	require.NotEqual(t, io.EOF, got)
+	require.ErrorContains(t, got, "startup failed: bad config",
+		"the re-executed child's output must surface in the error")
+}
+
+// TestStdioCheck_DoesNotDuplicateArgv0 pins the argv0 handling in the
+// diagnostic re-run. exec.Cmd.Args carries argv0 as its first element and
+// exec.CommandContext prepends Path as argv0 itself, so passing Args through
+// whole re-ran "sh sh -c ..." and the error reported that malformed
+// command's failure instead of the child's real startup output.
+func TestStdioCheck_DoesNotDuplicateArgv0(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "echo 'real startup error'; exit 3")
+
+	err := stdioCheck(cmd)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "real startup error",
+		"the re-run must execute the original command, not a duplicated argv0")
+	require.NotContains(t, err.Error(), "cannot execute binary file",
+		"a duplicated argv0 makes the shell try to exec itself as a script")
 }

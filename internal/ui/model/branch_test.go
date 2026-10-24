@@ -31,25 +31,17 @@ func newIntegrationUI(t *testing.T, f *branchfixture.Fixture, sessionID string, 
 	require.NoError(t, err)
 
 	m := &UI{
-		state:           uiChat,
-		dialog:          dialog.NewOverlay(),
-		enabledLazyMCPs: make(map[string]bool),
-		com:             com,
-		keyMap:          DefaultKeyMap(),
-		chat:            NewChat(com),
-		focus:           uiFocusMain,
-		session:         &sess,
+		state:   uiChat,
+		dialog:  dialog.NewOverlay(),
+		com:     com,
+		keyMap:  DefaultKeyMap(),
+		chat:    NewChat(com),
+		focus:   uiFocusMain,
+		session: &sess,
 	}
 	m.textarea = textarea.New()
 	m.attachments = attachments.New(
-		attachments.NewRenderer(
-			com.Styles.Attachments.Normal,
-			com.Styles.Attachments.Deleting,
-			com.Styles.Attachments.Image,
-			com.Styles.Attachments.Text,
-			com.Styles.Attachments.Skill,
-			com.Styles.Attachments.Remove,
-		),
+		attachments.NewRenderer(com.Styles.Attachments),
 		attachments.Keymap{
 			DeleteMode: m.keyMap.Editor.AttachmentDeleteMode,
 			DeleteAll:  m.keyMap.Editor.DeleteAllAttachments,

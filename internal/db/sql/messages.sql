@@ -43,21 +43,32 @@ DELETE FROM messages
 WHERE session_id = ?;
 
 -- name: ListUserMessagesBySession :many
+-- Backs prompt history, which steps back one entry at a time.
 SELECT *
 FROM messages
 WHERE session_id = ? AND role = 'user'
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 200;
 
 -- name: ListUserMessagesByWorkingDir :many
--- A fork's copies of its source's messages keep their times, so none is
--- newer than the fork itself (times are whole seconds, so one can share
--- its second); they're left out so each prompt is listed once.
-SELECT m.*
-FROM messages m
-JOIN sessions s ON m.session_id = s.id
-WHERE m.role = 'user' AND s.working_dir = ?
-    AND NOT (s.forked_from_message_id != '' AND m.created_at <= s.created_at)
-ORDER BY m.created_at DESC;
+-- Backs prompt history when no session is open. The subquery picks the 200
+-- newest rowids from the covering session/role index, so the sort never
+-- touches message parts; only the rows kept are read in full. A fork's
+-- copies of its source's messages keep their times, so none is newer than
+-- the fork itself (times are whole seconds, so one can share its second);
+-- they're left out so each prompt is listed once.
+SELECT *
+FROM messages
+WHERE rowid IN (
+    SELECT m.rowid
+    FROM messages m
+    JOIN sessions s ON m.session_id = s.id
+    WHERE m.role = 'user' AND s.working_dir = ?
+        AND NOT (s.forked_from_message_id != '' AND m.created_at <= s.created_at)
+    ORDER BY m.created_at DESC
+    LIMIT 200
+)
+ORDER BY created_at DESC;
 
 -- name: GetBranchPath :many
 WITH RECURSIVE branch AS (

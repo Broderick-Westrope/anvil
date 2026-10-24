@@ -22,13 +22,13 @@ func TestWorkflowTurnRendersAsWorkflowMessage(t *testing.T) {
 		Parts: []message.ContentPart{message.TextContent{Text: commands.FormatWorkflowTurnXML("build", prompt)}},
 	}
 
-	items := ExtractMessageItems(&sty, msg, nil, nil)
+	items := ExtractMessageItems(&sty, msg, nil, ToolItemOptions{}, nil)
 	require.Len(t, items, 1)
 	_, ok := items[0].(*WorkflowTurnMessageItem)
 	require.True(t, ok, "workflow turns must not render as user messages")
 
 	out := ansi.Strip(items[0].Render(80))
-	require.Contains(t, out, "Workflow /build")
+	require.Contains(t, out, "Workflow  /build")
 	require.Contains(t, out, "Build the thing.")
 	require.Contains(t, out, "Using skill: go-style")
 	require.NotContains(t, out, "secret skill body")
@@ -44,7 +44,7 @@ func TestUserMessageStaysUserMessage(t *testing.T) {
 		Role:  message.User,
 		Parts: []message.ContentPart{message.TextContent{Text: "plain"}},
 	}
-	items := ExtractMessageItems(&sty, msg, nil, nil)
+	items := ExtractMessageItems(&sty, msg, nil, ToolItemOptions{}, nil)
 	_, ok := items[0].(*UserMessageItem)
 	require.True(t, ok)
 }

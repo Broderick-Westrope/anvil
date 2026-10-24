@@ -26,10 +26,10 @@ func TestJobOutputRender(t *testing.T) {
 		t.Parallel()
 		for _, finished := range []bool{false, true} {
 			opts := &ToolRenderOpts{
-				ToolCall:  message.ToolCall{Name: tools.JobOutputToolName, Input: `{"shell_id":"001","wait":true}`, Finished: finished},
-				Status:    ToolStatusRunning,
-				StartedAt: jobRenderStart,
-				Now:       jobRenderStart.Add(72 * time.Second),
+				ToolCall:         message.ToolCall{Name: tools.JobOutputToolName, Input: `{"shell_id":"001","wait":true}`, Finished: finished},
+				Status:           ToolStatusRunning,
+				MessageCreatedAt: jobRenderStart,
+				Now:              jobRenderStart.Add(72 * time.Second),
 			}
 			out := renderJobOutput(t, opts)
 			require.Contains(t, out, "waiting 1m12s")
@@ -43,10 +43,10 @@ func TestJobOutputRender(t *testing.T) {
 		t.Parallel()
 		for _, finished := range []bool{false, true} {
 			out := renderJobOutput(t, &ToolRenderOpts{
-				ToolCall:  message.ToolCall{Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: finished},
-				Status:    ToolStatusRunning,
-				StartedAt: jobRenderStart,
-				Now:       jobRenderStart.Add(72 * time.Second),
+				ToolCall:         message.ToolCall{Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: finished},
+				Status:           ToolStatusRunning,
+				MessageCreatedAt: jobRenderStart,
+				Now:              jobRenderStart.Add(72 * time.Second),
 			})
 			require.NotContains(t, out, "waiting")
 		}
@@ -55,10 +55,10 @@ func TestJobOutputRender(t *testing.T) {
 	t.Run("canceled wait shows no counter", func(t *testing.T) {
 		t.Parallel()
 		out := renderJobOutput(t, &ToolRenderOpts{
-			ToolCall:  message.ToolCall{Name: tools.JobOutputToolName, Input: `{"shell_id":"001","wait":true}`, Finished: true},
-			Status:    ToolStatusCanceled,
-			StartedAt: jobRenderStart,
-			Now:       jobRenderStart.Add(72 * time.Second),
+			ToolCall:         message.ToolCall{Name: tools.JobOutputToolName, Input: `{"shell_id":"001","wait":true}`, Finished: true},
+			Status:           ToolStatusCanceled,
+			MessageCreatedAt: jobRenderStart,
+			Now:              jobRenderStart.Add(72 * time.Second),
 		})
 		require.NotContains(t, out, "waiting 1m12s")
 	})
@@ -72,9 +72,9 @@ func TestJobOutputRender(t *testing.T) {
 				Content:  "done",
 				Metadata: `{"shell_id":"001","description":"build","done":true,"runtime_ms":554000}`,
 			},
-			Status:    ToolStatusSuccess,
-			StartedAt: jobRenderStart,
-			Now:       jobRenderStart.Add(10 * time.Minute),
+			Status:           ToolStatusSuccess,
+			MessageCreatedAt: jobRenderStart,
+			Now:              jobRenderStart.Add(10 * time.Minute),
 		}
 		out := renderJobOutput(t, opts)
 		require.Contains(t, out, "build · ran 9m14s")
@@ -105,8 +105,8 @@ func TestJobOutputItem(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	tc := message.ToolCall{ID: "tc-wait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001","wait":true}`, Finished: true}
-	item := NewToolMessageItem(&sty, "msg", tc, nil, false, nil)
-	SetToolCallStartedAt(item, time.Now().Add(-90*time.Second).Unix())
+	item := NewToolMessageItem(&sty, "msg", tc, nil, false, ToolItemOptions{})
+	SetToolMessageCreatedAt(item, time.Now().Add(-90*time.Second).Unix())
 
 	wait, ok := item.(*JobOutputToolMessageItem)
 	require.True(t, ok)
@@ -116,7 +116,7 @@ func TestJobOutputItem(t *testing.T) {
 	item.SetResult(&message.ToolResult{ToolCallID: "tc-wait", Content: "done"})
 	require.False(t, wait.isSpinning())
 
-	noWait := NewToolMessageItem(&sty, "msg", message.ToolCall{ID: "tc-nowait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: true}, nil, false, nil)
+	noWait := NewToolMessageItem(&sty, "msg", message.ToolCall{ID: "tc-nowait", Name: tools.JobOutputToolName, Input: `{"shell_id":"001"}`, Finished: true}, nil, false, ToolItemOptions{})
 	require.False(t, noWait.(*JobOutputToolMessageItem).isSpinning())
 }
 
@@ -124,10 +124,10 @@ func TestJobHeaderLabelsJobIDNotPID(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	out := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Output", "05A", "dev server", 100))
+	out := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Output", "05A", "dev server", 100, 0))
 	require.Equal(t, "✓ Job (Output) ID 05A dev server", out)
 	require.NotContains(t, out, "PID")
 
-	noID := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Start", "", "quick exit", 100))
+	noID := ansi.Strip(jobHeader(&sty, ToolStatusSuccess, "Start", "", "quick exit", 100, 0))
 	require.Equal(t, "✓ Job (Start) quick exit", noID)
 }

@@ -1,6 +1,11 @@
 package model
 
-import "charm.land/bubbles/v2/key"
+import (
+	"runtime"
+
+	"charm.land/bubbles/v2/key"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+)
 
 type KeyMap struct {
 	Editor struct {
@@ -12,6 +17,13 @@ type KeyMap struct {
 		PasteImage  key.Binding
 		MentionFile key.Binding
 		Commands    key.Binding
+
+		// Selection and clipboard. SelectAll is handled by the textarea
+		// itself; it is listed here for help.
+		PasteText     key.Binding
+		SelectAll     key.Binding
+		CopySelection key.Binding
+		CutSelection  key.Binding
 
 		// Attachments key maps
 		AttachmentDeleteMode key.Binding
@@ -30,6 +42,8 @@ type KeyMap struct {
 		Tab            key.Binding
 		Details        key.Binding
 		TogglePills    key.Binding
+		ToggleSidebar  key.Binding
+		EndFollow      key.Binding
 		PillLeft       key.Binding
 		PillRight      key.Binding
 		Down           key.Binding
@@ -50,7 +64,21 @@ type KeyMap struct {
 		FocusSidebar   key.Binding
 		FocusChat      key.Binding
 		Branch         key.Binding
+
+		// OpenDiagram, CopyImage, OpenImage, OpenFile, EditFile and
+		// RevealFile are handled by the selected item itself; the bindings
+		// are only shown in the help.
+		OpenDiagram key.Binding
+		CopyImage   key.Binding
+		OpenImage   key.Binding
+		OpenFile    key.Binding
+		EditFile    key.Binding
+		RevealFile  key.Binding
 	}
+
+	// SubagentInterrupt sends a drilled-in subagent a message and cuts
+	// off its current attempt.
+	SubagentInterrupt key.Binding
 
 	// Global key maps
 	Quit       key.Binding
@@ -127,6 +155,12 @@ func DefaultKeyMap() KeyMap {
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "send"),
 	)
+	km.SubagentInterrupt = key.NewBinding(
+		// ctrl+enter only reaches terminals that disambiguate it; alt+i
+		// works everywhere.
+		key.WithKeys("ctrl+enter", "alt+i"),
+		key.WithHelp("alt+i", "interrupt and send"),
+	)
 	km.Editor.OpenEditor = key.NewBinding(
 		key.WithKeys("ctrl+o"),
 		key.WithHelp("ctrl+o", "open editor"),
@@ -145,6 +179,22 @@ func DefaultKeyMap() KeyMap {
 	km.Editor.PasteImage = key.NewBinding(
 		key.WithKeys("ctrl+v"),
 		key.WithHelp("ctrl+v", "paste image from clipboard"),
+	)
+	km.Editor.PasteText = key.NewBinding(
+		key.WithKeys("ctrl+shift+v"),
+		key.WithHelp("ctrl+shift+v", "paste text"),
+	)
+	km.Editor.SelectAll = key.NewBinding(
+		key.WithKeys(editorSelectAllKey),
+		key.WithHelp(editorSelectAllKey, "select all"),
+	)
+	km.Editor.CopySelection = key.NewBinding(
+		key.WithKeys("ctrl+shift+c"),
+		key.WithHelp("ctrl+shift+c", "copy selection"),
+	)
+	km.Editor.CutSelection = key.NewBinding(
+		key.WithKeys("ctrl+shift+x"),
+		key.WithHelp("ctrl+shift+x", "cut selection"),
 	)
 	km.Editor.MentionFile = key.NewBinding(
 		key.WithKeys("@"),
@@ -196,6 +246,14 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.TogglePills = key.NewBinding(
 		key.WithKeys("ctrl+t", "ctrl+space"),
 		key.WithHelp("ctrl+t", "toggle tasks"),
+	)
+	km.Chat.EndFollow = key.NewBinding(
+		key.WithKeys("ctrl+end"),
+		key.WithHelp("ctrl+end", "bottom & follow"),
+	)
+	km.Chat.ToggleSidebar = key.NewBinding(
+		key.WithKeys("ctrl+b"),
+		key.WithHelp("ctrl+b", "toggle sidebar"),
 	)
 	km.Chat.PillLeft = key.NewBinding(
 		key.WithKeys("left", "h"),
@@ -255,8 +313,32 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("G", "end"),
 	)
 	km.Chat.Copy = key.NewBinding(
-		key.WithKeys("c", "y", "C", "Y"),
+		key.WithKeys("c", "y", "C"),
 		key.WithHelp("c/y", "copy"),
+	)
+	km.Chat.OpenDiagram = key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open in browser"),
+	)
+	km.Chat.CopyImage = key.NewBinding(
+		key.WithKeys("Y"),
+		key.WithHelp("Y", "copy image"),
+	)
+	km.Chat.OpenImage = key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open in viewer"),
+	)
+	km.Chat.OpenFile = key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open file"),
+	)
+	km.Chat.EditFile = key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "open in $EDITOR"),
+	)
+	km.Chat.RevealFile = key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", chat.RevealLabel(runtime.GOOS)),
 	)
 	km.Chat.ClearHighlight = key.NewBinding(
 		key.WithKeys("esc", "alt+esc"),

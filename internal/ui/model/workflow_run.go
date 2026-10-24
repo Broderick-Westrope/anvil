@@ -210,3 +210,58 @@ func (m *UI) refreshRunningWorkflowRuns() (bool, tea.Cmd) {
 	}
 	return true, tea.Batch(reloads...)
 }
+
+// uiWorkflowViews is UI's run nodes and run views as the workflow feature
+// sees them.
+type uiWorkflowViews struct{ m *UI }
+
+// TargetRun is the running run the workflow controls act on: the run
+// whose view is open beneath whatever is on top (such as one of its
+// builders), else the run whose node is selected, else the latest run
+// started from the session on screen. A run picked out by its view or
+// node is the only candidate: if it has finished, nothing is controlled,
+// so a control never reaches a run the user isn't looking at.
+func (v uiWorkflowViews) TargetRun() (workflowhost.RunView, bool) {
+	m := v.m
+	running := func(runID string) (workflowhost.RunView, bool) {
+		view, ok := m.workflowRuns.view(runID)
+		return view, ok && view.Status == workflowhost.StatusRunning
+	}
+	for i := len(m.drillStack) - 1; i >= 0; i-- {
+		if runID := m.drillStack[i].runID; runID != "" {
+			return running(runID)
+		}
+	}
+	if node, ok := m.activeChat().SelectedItem().(*chat.WorkflowRunMessageItem); ok {
+		return running(node.RunID())
+	}
+	if m.isDrilledIn() || !m.hasSession() {
+		return workflowhost.RunView{}, false
+	}
+	var latest workflowhost.RunView
+	for _, view := range m.workflowRuns.views {
+		// Ties on start time go to the larger run ID, so the choice
+		// doesn't depend on map order.
+		newer := latest.RunID == "" || view.StartedAt.After(latest.StartedAt) ||
+			(view.StartedAt.Equal(latest.StartedAt) && view.RunID > latest.RunID)
+		if view.InvokingSessionID == m.session.ID && view.Status == workflowhost.StatusRunning && newer {
+			latest = view
+		}
+	}
+	return latest, latest.RunID != ""
+}
+
+func (v uiWorkflowViews) RunChanged(runID string) tea.Cmd {
+	return v.m.loadWorkflowRunView(runID)
+}
+
+// RunStarting settles a pending branch return: the run's marker lands on
+// the branch on screen, which the user has now chosen, as sending a
+// message does; returning to the old branch would leave the run's node
+// behind.
+func (v uiWorkflowViews) RunStarting() {
+	if v.m.pendingBranch != nil {
+		v.m.branchReturn = v.m.pendingBranch
+		v.m.pendingBranch = nil
+	}
+}

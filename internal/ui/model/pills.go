@@ -209,13 +209,15 @@ func (m *UI) pillsAreaHeight() int {
 	if m.pillsSession() == nil {
 		return 0
 	}
+	panelHeight := m.features.panelLines()
 	hasIncomplete := hasIncompleteTodos(m.pillsSession().Todos)
 	hasQueue := m.promptQueue > 0
-	if !hasIncomplete && !hasQueue {
-		return 0
+	hasPills := hasIncomplete || hasQueue
+	if !hasPills {
+		return panelHeight
 	}
 
-	pillsAreaHeight := pillHeightWithBorder
+	pillsAreaHeight := panelHeight + pillHeightWithBorder
 	if m.pillsExpanded {
 		switch m.effectiveFocusedSection() {
 		case pillSectionTodos:
@@ -247,9 +249,15 @@ func (m *UI) renderPills() {
 	contentWidth := max(width-paddingLeft, 0)
 
 	t := m.com.Styles
+	panel := m.features.renderPanels(contentWidth)
+
 	hasIncomplete := hasIncompleteTodos(m.pillsSession().Todos)
 	hasQueue := m.promptQueue > 0
+
 	if !hasIncomplete && !hasQueue {
+		if panel != "" {
+			m.pillsView = t.Pills.Area.MaxWidth(width).PaddingLeft(paddingLeft).Render(panel)
+		}
 		return
 	}
 
@@ -300,6 +308,9 @@ func (m *UI) renderPills() {
 	pillsArea := pillsRow
 	if expandedList != "" {
 		pillsArea = lipgloss.JoinVertical(lipgloss.Left, pillsRow, expandedList)
+	}
+	if panel != "" {
+		pillsArea = lipgloss.JoinVertical(lipgloss.Left, panel, pillsArea)
 	}
 
 	m.pillsView = t.Pills.Area.MaxWidth(width).PaddingLeft(paddingLeft).Render(pillsArea)

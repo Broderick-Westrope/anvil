@@ -1,0 +1,67 @@
+name: changes
+
+# Reports whether a pull request changes anything the code checks look at.
+# Only a pull request into the default branch can skip: pushes, schedules
+# and manual runs always count as code, so main and the nightly security
+# scan run in full. Stacked pull requests always run in full too, because
+# retargeting one to main changes what it merges without a new run.
+#
+# Callers skip work only when the output is exactly "false". If this
+# workflow fails, the output is empty and the checks run.
+on:
+  workflow_call:
+    outputs:
+      code:
+        description: '"false" only when every change is prose (see scripts/ci-code-changed.sh)'
+        value: ${{ jobs.classify.outputs.code }}
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    name: classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The PR's own commits are needed to find its merge base.
+          fetch-depth: 0
+          persist-credentials: false
+      - run: scripts/ci-code-changed-test.sh
+      - id: classify
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ] || [ "$BASE" != "$DEFAULT_BRANCH" ] ||
+            ! git cat-file -e HEAD^1:scripts/ci-code-changed.sh 2>/dev/null; then
+            # A base without the classifier (the PR that adds it) runs in full.
+            code=true
+          else
+            # A pull request checks out its merge commit: HEAD^1 is the base
+            # tip and HEAD^2 the PR's head. Both diffs must be prose. The
+            # merge result alone can look like prose when the PR carries code
+            # main already has, which would merge unchecked if main later
+            # reverted it.
+            #
+            # --no-renames lists both sides of a move, so moving code into
+            # docs/ still counts. --raw carries file modes, so a symlink or
+            # executable never counts as prose. The diffs are captured
+            # first so a failing git command fails this step.
+            merged=$(git diff --no-renames --raw HEAD^1 HEAD)
+            fork_point=$(git merge-base HEAD^1 HEAD^2)
+            own=$(git diff --no-renames --raw "$fork_point" HEAD^2)
+            # Classify with the base branch's copy of the classifier, so a PR
+            # can't loosen the rule that decides whether its own checks run.
+            classifier="$RUNNER_TEMP/ci-code-changed.sh"
+            git show HEAD^1:scripts/ci-code-changed.sh >"$classifier"
+            code=$(printf '%s\n%s\n' "$merged" "$own" | bash "$classifier")
+          fi
+          echo "Code changed: $code"
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

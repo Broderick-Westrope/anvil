@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -48,6 +49,18 @@ type CreateMessageParams struct {
 type Service interface {
 	pubsub.Subscriber[Message]
 	Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error)
+	// CreateAtLeaf creates the message only if the session's leaf is
+	// still leaf, checked in the same transaction, and returns
+	// ErrLeafMoved otherwise.
+	CreateAtLeaf(ctx context.Context, sessionID, leaf string, params CreateMessageParams) (Message, error)
+	// DeleteChildless deletes a message that has no children, and moves
+	// the session's leaf to its parent if the message was the leaf, in
+	// one transaction. It returns ErrHasChildren otherwise.
+	DeleteChildless(ctx context.Context, sessionID, id string) error
+	// AppendToLeaf creates the message as a child of the session's current
+	// leaf, read in the same transaction, whatever params.ParentMessageID
+	// says.
+	AppendToLeaf(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error)
 	Update(ctx context.Context, message Message) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
@@ -99,22 +112,54 @@ type pendingState struct {
 	// the buffer, so the next delta schedules a fresh one.
 	timer *time.Timer
 
-	// lastFlushed is the snapshot most recently written to SQL. Used
-	// as the baseline for terminal-state detection.
-	lastFlushed Message
+	// baseline is the projection of the snapshot most recently
+	// written to SQL that terminal-state detection needs. Used as the
+	// baseline for [shouldFlushNow].
+	baseline flushBaseline
 
 	// hasFlushed is false until the first successful write for this
-	// ID; until then lastFlushed is the zero value and must not be
+	// ID; until then baseline is the zero value and must not be
 	// treated as a real prior state.
 	hasFlushed bool
+}
+
+// flushBaseline is the compact projection of a flushed [Message] that
+// [shouldFlushNow] compares against. Pending state lives for as long
+// as the process does, so it retains this instead of the whole
+// Message: a finished stream would otherwise pin its parts — reasoning
+// text, tool inputs, tool results — on the heap forever.
+type flushBaseline struct {
+	toolCalls           []toolCallBaseline
+	reasoningFinishedAt int64
+}
+
+// toolCallBaseline is the part of a flushed [ToolCall] that
+// [shouldFlushNow] compares against.
+type toolCallBaseline struct {
+	finished  bool
+	startedAt int64
+}
+
+// newFlushBaseline projects the fields [shouldFlushNow] reads out of a
+// flushed message.
+func newFlushBaseline(m *Message) flushBaseline {
+	calls := m.ToolCalls()
+	baselines := make([]toolCallBaseline, len(calls))
+	for i, c := range calls {
+		baselines[i] = toolCallBaseline{finished: c.Finished, startedAt: c.StartedAt}
+	}
+	return flushBaseline{
+		toolCalls:           baselines,
+		reasoningFinishedAt: m.ReasoningContent().FinishedAt,
+	}
 }
 
 // isTerminal reports whether next is a structural change against the
 // last flushed snapshot. See [shouldFlushNow].
 func (p *pendingState) isTerminal(next *Message) bool {
-	var prev *Message
+	var prev *flushBaseline
 	if p.hasFlushed {
-		prev = &p.lastFlushed
+		prev = &p.baseline
 	}
 	return shouldFlushNow(prev, next)
 }
@@ -148,7 +193,7 @@ func (p *pendingState) endFlush(snap Message, err error) bool {
 		p.dirty = true
 		return false
 	}
-	p.lastFlushed = snap
+	p.baseline = newFlushBaseline(&snap)
 	p.hasFlushed = true
 	return snap.IsFinished() && !p.dirty
 }
@@ -205,23 +250,110 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	// Drop any pending coalesced state for this ID. We never want to
-	// flush back over a deleted row.
-	s.mu.Lock()
-	if p, ok := s.pending[id]; ok {
-		if p.timer != nil {
-			p.timer.Stop()
-		}
-		delete(s.pending, id)
-	}
-	s.mu.Unlock()
+	s.forget(id)
 	// Clone the message before publishing to avoid race conditions with
 	// concurrent modifications to the Parts slice.
 	s.Publish(pubsub.DeletedEvent, message.Clone())
 	return nil
 }
 
+// ErrHasChildren means DeleteChildless found the message has children.
+var ErrHasChildren = errors.New("message has children")
+
+func (s *service) DeleteChildless(ctx context.Context, sessionID, id string) error {
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	qtx := db.New(tx)
+	children, err := qtx.GetMessageChildren(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return fmt.Errorf("get children of %s: %w", id, err)
+	}
+	if len(children) > 0 {
+		return ErrHasChildren
+	}
+	dbMessage, err := qtx.GetMessage(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get message %s: %w", id, err)
+	}
+	if dbMessage.SessionID != sessionID {
+		return fmt.Errorf("delete message %s: belongs to session %s, not %s", id, dbMessage.SessionID, sessionID)
+	}
+	sess, err := qtx.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("get session %s: %w", sessionID, err)
+	}
+	if sess.LeafMessageID.String == id {
+		err = qtx.UpdateSessionLeaf(ctx, db.UpdateSessionLeafParams{ID: sessionID, LeafID: dbMessage.ParentMessageID})
+		if err != nil {
+			return fmt.Errorf("move leaf: %w", err)
+		}
+	}
+	err = qtx.DeleteMessage(ctx, id)
+	if err != nil {
+		return fmt.Errorf("delete message %s: %w", id, err)
+	}
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	message, err := s.fromDBItem(dbMessage)
+	if err != nil {
+		return err
+	}
+	s.forget(id)
+	s.Publish(pubsub.DeletedEvent, message.Clone())
+	return nil
+}
+
+// forget drops any pending coalesced state for a deleted message, so it
+// is never flushed back over the deleted row.
+func (s *service) forget(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.pending[id]; ok {
+		if p.timer != nil {
+			p.timer.Stop()
+		}
+		delete(s.pending, id)
+	}
+}
+
+// ErrLeafMoved means CreateAtLeaf found the session's leaf had moved.
+var ErrLeafMoved = errors.New("session leaf moved")
+
+// leafRule says how create treats the session's leaf before inserting.
+type leafRule int
+
+const (
+	// leafAny inserts under params.ParentMessageID whatever the leaf is.
+	leafAny leafRule = iota
+	// leafMustBeParent inserts only if the leaf is params.ParentMessageID.
+	leafMustBeParent
+	// leafIsParent inserts under the leaf, ignoring params.ParentMessageID.
+	leafIsParent
+)
+
 func (s *service) Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
+	return s.create(ctx, sessionID, leafAny, params)
+}
+
+func (s *service) CreateAtLeaf(ctx context.Context, sessionID, leaf string, params CreateMessageParams) (Message, error) {
+	params.ParentMessageID = leaf
+	return s.create(ctx, sessionID, leafMustBeParent, params)
+}
+
+func (s *service) AppendToLeaf(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
+	return s.create(ctx, sessionID, leafIsParent, params)
+}
+
+// create inserts the message and advances the session's leaf to it,
+// first checking or reading the leaf in the same transaction as rule
+// says.
+func (s *service) create(ctx context.Context, sessionID string, rule leafRule, params CreateMessageParams) (Message, error) {
 	if params.Role != Assistant && (params.MessageType == "" || params.MessageType == MessageTypeMessage) {
 		params.Parts = append(params.Parts, Finish{
 			Reason: "stop",
@@ -260,6 +392,18 @@ func (s *service) Create(ctx context.Context, sessionID string, params CreateMes
 	defer tx.Rollback() //nolint:errcheck
 
 	qtx := db.New(tx)
+	if rule != leafAny {
+		sess, err := qtx.GetSessionByID(ctx, sessionID)
+		if err != nil {
+			return Message{}, fmt.Errorf("get session %s: %w", sessionID, err)
+		}
+		if rule == leafMustBeParent && sess.LeafMessageID.String != params.ParentMessageID {
+			return Message{}, ErrLeafMoved
+		}
+		if rule == leafIsParent {
+			createParams.ParentMessageID = sess.LeafMessageID
+		}
+	}
 	dbMessage, err = qtx.CreateMessage(ctx, createParams)
 	if err != nil {
 		return Message{}, err
@@ -396,15 +540,16 @@ func (s *service) PendingCount() int {
 
 // flushOne drains a single message ID. When syncCaller is true the
 // caller is willing to wait through a concurrent in-flight flush so
-// that, on return, lastFlushed equals latest at the moment of return.
+// that, on return, the flushed state equals latest at the moment of
+// return.
 // When false (timer-fired path) we bail if another flusher is already
 // running; that flusher will pick up the trailing dirty bit.
 //
 // Order matters: a sync caller must wait for any in-flight flush to
 // drain even when the buffer is currently clean — that in-flight
 // write has not yet updated the SQL row, so returning early would
-// violate the contract that on success lastFlushed reflects the most
-// recent state.
+// violate the contract that on success the flushed state reflects the
+// most recent state.
 func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) error {
 	for {
 		s.mu.Lock()
@@ -440,15 +585,23 @@ func (s *service) flushOne(ctx context.Context, id string, syncCaller bool) erro
 		// If a delta arrived during the SQL write and we are a sync
 		// caller, the user expects that delta to land too.
 		wasDirty := p.dirty
+		if !wasDirty {
+			// Nothing left to write, so drop the snapshot. Entries
+			// survive non-terminal flushes and streams that never
+			// reach a terminal flush; holding latest here would pin
+			// those messages' parts on the heap.
+			p.latest = Message{}
+		}
 		s.mu.Unlock()
 
 		if err != nil {
 			return err
 		}
 
-		// Terminal events — message finished, tool call added or
-		// finished, reasoning ended — use the bounded must-deliver
-		// path so they never get dropped under channel contention.
+		// Terminal events — message finished, tool call added,
+		// finished or started, reasoning ended — use the bounded
+		// must-deliver path so they never get dropped under channel
+		// contention.
 		if isTerminal {
 			s.PublishMustDeliver(ctx, pubsub.UpdatedEvent, snap)
 		} else {
@@ -487,18 +640,19 @@ func (s *service) write(ctx context.Context, msg Message) error {
 // shouldFlushNow returns true when next represents a structural
 // change that must not be silently coalesced: the message just
 // finished, the tool-call set grew, a tool call transitioned to
-// finished, or reasoning just finished. prev is the last-flushed
-// snapshot (or nil if no write has landed yet).
-func shouldFlushNow(prev, next *Message) bool {
+// finished, a tool call's start time changed, or reasoning just
+// finished. prev is the last-flushed snapshot (or nil if no write has
+// landed yet).
+func shouldFlushNow(prev *flushBaseline, next *Message) bool {
 	if next.IsFinished() {
 		return true
 	}
 
-	var prevCalls []ToolCall
+	var prevCalls []toolCallBaseline
 	var prevReasoningFinishedAt int64
 	if prev != nil {
-		prevCalls = prev.ToolCalls()
-		prevReasoningFinishedAt = prev.ReasoningContent().FinishedAt
+		prevCalls = prev.toolCalls
+		prevReasoningFinishedAt = prev.reasoningFinishedAt
 	}
 	nextCalls := next.ToolCalls()
 	if len(nextCalls) != len(prevCalls) {
@@ -506,7 +660,12 @@ func shouldFlushNow(prev, next *Message) bool {
 	}
 	for i := range nextCalls {
 		// Bounds-safe: lengths are equal here.
-		if nextCalls[i].Finished != prevCalls[i].Finished {
+		if nextCalls[i].Finished != prevCalls[i].finished {
+			return true
+		}
+		// The UI times a running tool from StartedAt, so a start or a
+		// restart after a permission grant must not wait out the debounce.
+		if nextCalls[i].StartedAt != prevCalls[i].startedAt {
 			return true
 		}
 		// A tool call's input only matters once it has landed (Finished
@@ -674,6 +833,7 @@ const (
 	thinkingLevelChangeType partType = "thinking_level_change"
 	mcpToggleType           partType = "mcp_toggle"
 	workflowRunType         partType = "workflow_run"
+	injectionType           partType = "injection"
 )
 
 type partWrapper struct {
@@ -716,6 +876,8 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 			typ = mcpToggleType
 		case WorkflowRunContent:
 			typ = workflowRunType
+		case InjectionContent:
+			typ = injectionType
 		default:
 			return nil, fmt.Errorf("unknown part type: %T", part)
 		}
@@ -726,6 +888,13 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 		}
 	}
 	return json.Marshal(wrappedParts)
+}
+
+// rawPartWrapper is [partWrapper] for decoding: the payload stays encoded
+// until the type tag says what to decode it into.
+type rawPartWrapper struct {
+	Type partType        `json:"type"`
+	Data json.RawMessage `json:"data"`
 }
 
 // partDecoders decodes the data of each stored part type.
@@ -744,6 +913,7 @@ var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
 	thinkingLevelChangeType: decodePart[ThinkingLevelChangeContent],
 	mcpToggleType:           decodePart[MCPToggleContent],
 	workflowRunType:         decodePart[WorkflowRunContent],
+	injectionType:           decodePart[InjectionContent],
 }
 
 func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
@@ -755,33 +925,24 @@ func decodePart[T ContentPart](data json.RawMessage) (ContentPart, error) {
 }
 
 func unmarshalParts(data []byte) ([]ContentPart, error) {
-	temp := []json.RawMessage{}
-
-	if err := json.Unmarshal(data, &temp); err != nil {
+	// One pass gets every type tag and its still-encoded payload. Splitting
+	// into []json.RawMessage first would walk the same bytes twice.
+	var wrapped []rawPartWrapper
+	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, err
 	}
 
-	parts := make([]ContentPart, 0)
-
-	for _, rawPart := range temp {
-		var wrapper struct {
-			Type partType        `json:"type"`
-			Data json.RawMessage `json:"data"`
-		}
-
-		if err := json.Unmarshal(rawPart, &wrapper); err != nil {
-			return nil, err
-		}
-
-		decode, ok := partDecoders[wrapper.Type]
+	parts := make([]ContentPart, 0, len(wrapped))
+	for _, w := range wrapped {
+		decode, ok := partDecoders[w.Type]
 		if !ok {
 			// A newer Anvil sharing the database wrote a part this version
 			// doesn't know. Skipping it keeps the rest of the transcript
 			// readable rather than failing the whole session.
-			slog.Debug("Skipping unknown message part", "type", wrapper.Type)
+			slog.Debug("Skipping unknown message part", "type", w.Type)
 			continue
 		}
-		part, err := decode(wrapper.Data)
+		part, err := decode(w.Data)
 		if err != nil {
 			return nil, err
 		}

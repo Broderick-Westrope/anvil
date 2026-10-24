@@ -507,9 +507,13 @@ func TestRunFailureClosesOpenToolCall(t *testing.T) {
 			toolMsgs := listMessages(t, env, sess.ID, message.Tool)
 			require.Len(t, toolMsgs, 1)
 			require.Equal(t, assistant.ID, toolMsgs[0].ParentMessageID)
+			results := toolMsgs[0].ToolResults()
+			require.Len(t, results, 1)
+			require.NotZero(t, results[0].FinishedAt)
+			results[0].FinishedAt = 0
 			require.Equal(t, []message.ToolResult{{
 				ToolCallID: "call_0", Name: "work", Content: tc.wantResult, IsError: true,
-			}}, toolMsgs[0].ToolResults())
+			}}, results)
 
 			current, err := env.sessions.Get(t.Context(), sess.ID)
 			require.NoError(t, err)
@@ -730,6 +734,10 @@ func TestRunLogsOnlyRealProblems(t *testing.T) {
 			wantLogs:    []string{"Provider request failed, retrying"},
 			notWantLogs: []string{resetLog, flushLog},
 		},
+		"tool call": {
+			respond:     toolCallsThenStop("work", "call_0"),
+			notWantLogs: []string{"Failed to record tool call start", flushLog},
+		},
 		"failed stream": {
 			respond: func(int) ([]fantasy.StreamPart, error) {
 				return toolInputThenError("call_0", "work", errors.New("stream broke")), nil
@@ -801,4 +809,36 @@ func TestRunSendsBinaryAttachmentsAsFiles(t *testing.T) {
 	}
 	require.Equal(t, []fantasy.FilePart{{Filename: "shot.png", Data: []byte("png bytes"), MediaType: "image/png"}}, files)
 	require.Contains(t, textOf(last), "text attachment")
+}
+
+func TestWithCachedLastToolLeavesSharedToolsUntouched(t *testing.T) {
+	t.Parallel()
+
+	newTool := func(name string) fantasy.AgentTool {
+		return fantasy.NewAgentTool(name, "", func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		})
+	}
+	shared := []fantasy.AgentTool{newTool("view"), newTool("edit")}
+	opts := fantasy.ProviderOptions{anthropic.Name: &anthropic.ProviderCacheControlOptions{
+		CacheControl: anthropic.CacheControl{Type: "ephemeral"},
+	}}
+
+	var wg sync.WaitGroup
+	results := make([][]fantasy.AgentTool, 8)
+	for i := range results {
+		wg.Go(func() { results[i] = withCachedLastTool(shared, opts) })
+	}
+	wg.Wait()
+
+	for _, marked := range results {
+		require.Len(t, marked, 2)
+		require.Same(t, shared[0], marked[0])
+		require.Equal(t, opts, marked[1].ProviderOptions())
+		require.Equal(t, "edit", marked[1].Info().Name)
+	}
+	require.Empty(t, shared[1].ProviderOptions(), "the shared tool must not carry one turn's options")
+	_, isMarked := shared[1].(*cacheMarkedTool)
+	require.False(t, isMarked, "the caller's slice must not be modified")
+	require.Empty(t, withCachedLastTool(nil, opts))
 }

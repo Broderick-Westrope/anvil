@@ -41,7 +41,7 @@ func GetMCPTools(permissions permission.Service, cfg *config.ConfigStore, wd str
 // Tool is a tool from a MCP.
 type Tool struct {
 	mcpName         string
-	tool            *mcp.Tool
+	tool            *mcp.RegisteredTool
 	cfg             *config.ConfigStore
 	permissions     permission.Service
 	workingDir      string
@@ -57,10 +57,7 @@ func (m *Tool) ProviderOptions() fantasy.ProviderOptions {
 }
 
 func (m *Tool) Name() string {
-	if mcp.OAuthRenameEnabled() {
-		return mcp.OAuthToolName(m.mcpName, m.tool.Name)
-	}
-	return fmt.Sprintf("mcp_%s_%s", m.mcpName, m.tool.Name)
+	return mcp.ToolName(m.mcpName, m.tool.Name)
 }
 
 func (m *Tool) MCP() string {
@@ -72,32 +69,18 @@ func (m *Tool) MCPToolName() string {
 }
 
 func (m *Tool) Info() fantasy.ToolInfo {
-	parameters := make(map[string]any)
-	required := make([]string, 0)
-
-	if input, ok := m.tool.InputSchema.(map[string]any); ok {
-		if props, ok := input["properties"].(map[string]any); ok {
-			parameters = props
-		}
-		if req, ok := input["required"].([]any); ok {
-			// Convert []any -> []string when elements are strings
-			for _, v := range req {
-				if s, ok := v.(string); ok {
-					required = append(required, s)
-				}
-			}
-		} else if reqStr, ok := input["required"].([]string); ok {
-			// Handle case where it's already []string
-			required = reqStr
-		}
-	}
-
 	return fantasy.ToolInfo{
 		Name:        m.Name(),
 		Description: m.tool.Description,
-		Parameters:  parameters,
-		Required:    required,
+		Parameters:  m.tool.Parameters,
+		Required:    m.tool.Required,
 	}
+}
+
+// InputSchema returns the tool's input schema exactly as the server listed
+// it. Info keeps only its normalised properties and required list.
+func (m *Tool) InputSchema() any {
+	return m.tool.InputSchema
 }
 
 func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolResponse, error) {

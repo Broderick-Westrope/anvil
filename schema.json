@@ -184,6 +184,22 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "BranchSummaryOptions": {
+      "properties": {
+        "offer": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "description": "Whether rewinding asks which summarizer to use (ask), always uses the default summarizer without asking (always), or never summarizes (never)",
+          "default": "ask"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Completions": {
       "properties": {
         "max_depth": {
@@ -522,7 +538,17 @@
         },
         "lazy_description": {
           "type": "string",
-          "description": "Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"
+          "description": "Short description shown to the LLM; when set the server connects on first use and is reached through the MCP tool catalogue (not allowed with route direct)"
+        },
+        "route": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "catalogue",
+            "direct"
+          ],
+          "description": "How the server's tools reach the model: auto lists small connected servers directly and routes the rest through the catalogue",
+          "default": "auto"
         }
       },
       "additionalProperties": false,
@@ -745,9 +771,22 @@
           "type": "array",
           "description": "Glob patterns for tools that should render expanded instead of compact"
         },
+        "request_timeout": {
+          "type": "integer",
+          "description": "Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity, so slow but active streams are never killed. 0 disables it",
+          "default": 120,
+          "examples": [
+            300,
+            0
+          ]
+        },
         "background_jobs": {
           "$ref": "#/$defs/BackgroundJobsOptions",
           "description": "Background job behaviour"
+        },
+        "branch_summary": {
+          "$ref": "#/$defs/BranchSummaryOptions",
+          "description": "Summaries of the conversation branch left behind when rewinding"
         }
       },
       "additionalProperties": false,
@@ -1020,6 +1059,16 @@
           "type": "boolean",
           "description": "Enable transparent background for the TUI interface",
           "default": false
+        },
+        "mouse": {
+          "type": "boolean",
+          "description": "Enable terminal mouse capture for selection, clicks, and scrolling in the TUI. Disable to let the terminal emulator or tmux handle text selection and copy/paste",
+          "default": true
+        },
+        "diagrams": {
+          "type": "boolean",
+          "description": "Render Mermaid diagrams in assistant messages as images where the terminal supports it",
+          "default": true
         }
       },
       "additionalProperties": false,
@@ -1031,6 +1080,12 @@
           "type": "string"
         },
         "refresh_token": {
+          "type": "string"
+        },
+        "id_token": {
+          "type": "string"
+        },
+        "account_id": {
           "type": "string"
         },
         "expires_in": {

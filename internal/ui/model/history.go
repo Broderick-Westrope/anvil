@@ -3,9 +3,12 @@ package model
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
 
@@ -30,7 +33,8 @@ func (m *UI) historySessionID() string {
 	return ""
 }
 
-// loadPromptHistory loads user messages for history navigation.
+// loadPromptHistory loads user messages for history navigation. Both queries
+// stop at the 200 most recent entries; recall only steps back one at a time.
 func (m *UI) loadPromptHistory() tea.Cmd {
 	sessionID := m.historySessionID()
 	return func() tea.Msg {
@@ -48,8 +52,15 @@ func (m *UI) loadPromptHistory() tea.Cmd {
 			return promptHistoryLoadedMsg{sessionID: sessionID}
 		}
 
-		return promptHistoryLoadedMsg{messages: messages, sessionID: sessionID}
+		return promptHistoryLoadedMsg{messages: slices.DeleteFunc(messages, isWorkflowTurn), sessionID: sessionID}
 	}
+}
+
+// isWorkflowTurn reports whether msg is a turn a workflow script sent,
+// which isn't something you typed.
+func isWorkflowTurn(msg message.Message) bool {
+	_, _, ok := commands.ParseWorkflowTurnXML(strings.TrimSpace(msg.Content().Text))
+	return ok
 }
 
 // handleHistoryUp handles up arrow for history navigation.

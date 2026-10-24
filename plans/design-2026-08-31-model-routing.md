@@ -747,8 +747,9 @@ Currently `handleSelectModel` writes `config.ScopeGlobal`
 other session and every future session. That is the bug.
 
 **Do not add a `sessions` column.** The codebase already has a better,
-established pattern. `deriveLazyMCPState` (`internal/agent/lazy_mcp.go:25`)
-derives branch-scoped state by replaying message history, and — critically —
+established pattern. `deriveLazyMCPState` (ADR 0002; removed with
+`enable_mcp` by ADR 0008, so read it in git history) derived branch-scoped
+state by replaying message history, and — critically —
 Anvil *already writes* a `MessageTypeModelChange` breadcrumb on every large-model
 switch (`internal/ui/model/ui.go:2537-2560`). Nothing reads it. It is display-only
 today.
@@ -779,6 +780,26 @@ Two things to fix while in there:
   `provider/model` override is used — it rebuilds `SelectedModel` from catwalk
   defaults only. With Phase 0 assigning models to every agent, this silently
   becomes load-bearing. It should inherit non-model fields from `models.large`.
+
+**Upstream prior art (declined in the 2026-10 sync, item F5).** Crush
+`b82d7d05` restores the provider/model of a session's last assistant message
+when it is loaded or continued (TUI and `run --continue`). It was not ported
+because it writes `ScopeGlobal` (opening an old session changes the default
+for every later session and every other pane), writes only `provider`/`model`
+(reasoning effort, `think`, variant and `max_tokens` reset), and switches
+silently. Two pieces are worth reusing here:
+
+- **Availability guard.** Its `Config.IsModelAvailable(provider, model)`
+  rejects a disabled provider or a model gone from the catalog. Phase 1 needs
+  the same check before honouring a derived session model, falling back to
+  `models.large` when it fails.
+- **Coverage of `run --continue`.** It also restores in the non-interactive
+  continue path. Phase 1 step 3 covers this via `coordinator.Run`, but test it
+  explicitly.
+
+Sessions created before Phase 1 have no `MessageTypeModelChange` entry for
+their starting model. Falling back to the last assistant message's
+`Provider`/`Model` (what upstream reads) would cover them.
 
 ### Phase 2 — escalation without a router
 

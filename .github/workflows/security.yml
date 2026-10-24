@@ -15,7 +15,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    uses: ./.github/workflows/_changes.yml
+
+  # These scan the code, so a pull request that changes none skips them. A
+  # skipped job counts as passed, which keeps the required govulncheck
+  # check green. dependency-review still runs: it only reads manifest
+  # diffs and takes seconds.
   codeql:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -37,6 +46,8 @@ jobs:
       - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
 
   grype:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -57,6 +68,8 @@ jobs:
           sarif_file: ${{ steps.scan.outputs.sarif }}
 
   govulncheck:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       security-events: write

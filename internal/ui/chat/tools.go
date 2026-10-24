@@ -37,6 +37,16 @@ const responseContextHeight = 10
 // toolBodyLeftPaddingTotal represents the padding that should be applied to each tool body
 const toolBodyLeftPaddingTotal = 2
 
+// collapsedMaxLines returns the number of lines to display when content
+// is collapsed. If collapsing would hide only a single line, all lines
+// are shown instead.
+func collapsedMaxLines(totalLines int) int {
+	if totalLines <= responseContextHeight+1 {
+		return totalLines
+	}
+	return responseContextHeight
+}
+
 // ToolStatus represents the current state of a tool call.
 type ToolStatus int
 
@@ -60,6 +70,14 @@ type ToolMessageItem interface {
 	SetStatus(status ToolStatus)
 	Status() ToolStatus
 	HasResult() bool
+	// SetStepRunning records whether the step that made the call is still
+	// in flight. A call without a result only shows a live duration while
+	// its step runs; otherwise it was orphaned, such as by a crash.
+	SetStepRunning(running bool)
+	// TimerCandidate reports whether the call is running with a known
+	// start, so it needs refreshing each tick while its step is in flight
+	// (it shows a duration once it reaches the threshold).
+	TimerCandidate() bool
 }
 
 // Compactable is an interface for tool items that can render in a compacted mode.
@@ -107,11 +125,14 @@ type ToolRenderOpts struct {
 	IsSpinning      bool
 	Status          ToolStatus
 	NoTruncate      bool
-	// StartedAt is when the assistant message carrying the tool call was
-	// created; zero when unknown.
-	StartedAt time.Time
+	// MessageCreatedAt is when the assistant message carrying the tool call
+	// was created, in whole seconds; zero when unknown.
+	MessageCreatedAt time.Time
 	// Now is the render time, used for live elapsed counters.
 	Now time.Time
+	// Duration is how long the call ran, shown at the end of its header;
+	// zero shows nothing.
+	Duration time.Duration
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -165,6 +186,10 @@ type baseToolMessageItem struct {
 	hasCappedWidth bool
 	// isCompact indicates this tool should render in compact mode.
 	isCompact bool
+	// expandPatterns are the expanded_tools patterns, kept for a
+	// call_mcp_tool item: its inner name, which they match, is only known
+	// once its input has streamed in.
+	expandPatterns []string
 	// spinningFunc allows tools to override the default spinning logic.
 	// If nil, uses the default: !toolCall.Finished && !canceled.
 	spinningFunc SpinningFunc
@@ -179,7 +204,12 @@ type baseToolMessageItem struct {
 	expandedContent bool
 	noTruncate      bool
 	resultVersion   uint64
-	startedAt       time.Time
+	// messageCreatedAt is when the assistant message carrying the tool
+	// call was created.
+	messageCreatedAt time.Time
+	// stepRunning reports whether the step that made the call is still
+	// in flight.
+	stepRunning bool
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -230,6 +260,15 @@ func newBaseToolMessageItem(
 	return t
 }
 
+// ToolItemOptions configures how tool message items render.
+type ToolItemOptions struct {
+	// ExpandedPatterns lists the tools that render expanded by default.
+	ExpandedPatterns []string
+	// WorkingDir is the project directory. Bash commands that only cd into
+	// it before running have that prefix hidden.
+	WorkingDir string
+}
+
 // NewToolMessageItem creates a new [ToolMessageItem] based on the tool call name.
 //
 // It returns a specific tool message item type if implemented, otherwise it
@@ -241,12 +280,12 @@ func NewToolMessageItem(
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
-	expandedPatterns []string,
+	opts ToolItemOptions,
 ) ToolMessageItem {
 	var item ToolMessageItem
 	switch toolCall.Name {
 	case tools.BashToolName:
-		item = NewBashToolMessageItem(sty, toolCall, result, canceled)
+		item = NewBashToolMessageItem(sty, toolCall, result, canceled, opts.WorkingDir)
 	case tools.JobOutputToolName:
 		item = NewJobOutputToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobKillToolName:
@@ -287,6 +326,8 @@ func NewToolMessageItem(
 		item = NewReferencesToolMessageItem(sty, toolCall, result, canceled)
 	case tools.LSPRestartToolName:
 		item = NewLSPRestartToolMessageItem(sty, toolCall, result, canceled)
+	case tools.CallMCPToolToolName:
+		item = NewCatalogueCallMessageItem(sty, toolCall, result, canceled, opts.ExpandedPatterns)
 	default:
 		if IsDockerMCPTool(toolCall.Name) {
 			item = NewDockerMCPToolMessageItem(sty, toolCall, result, canceled)
@@ -302,7 +343,7 @@ func NewToolMessageItem(
 	case tools.TodosToolName, agent.TaskToolName, tools.AgenticFetchToolName:
 		// Keep current (expanded) behavior.
 	default:
-		compact := !config.IsToolExpanded(expandedPatterns, toolCall.Name)
+		compact := !config.IsToolExpanded(opts.ExpandedPatterns, expandName(toolCall))
 		if compactable, ok := item.(Compactable); ok {
 			compactable.SetCompact(compact)
 		}
@@ -339,41 +380,47 @@ func (t *baseToolMessageItem) ResultVersion() uint64 {
 	return t.resultVersion
 }
 
+// Result is the tool's result, or nil before it has one.
+func (t *baseToolMessageItem) Result() *message.ToolResult {
+	return t.result
+}
+
 // ID returns the unique identifier for this tool message item.
 func (t *baseToolMessageItem) ID() string {
 	return t.toolCall.ID
 }
 
-// StartAnimation starts the assistant message animation if it should be spinning.
-func (t *baseToolMessageItem) StartAnimation() tea.Cmd {
-	if !t.isSpinning() {
-		return nil
-	}
-	return t.anim.Start()
+// Spinning implements [Animatable].
+func (t *baseToolMessageItem) Spinning() bool {
+	return t.isSpinning()
 }
 
-// Animate progresses the assistant message animation if it should be spinning.
+// Advance implements [Animatable].
 //
 // Bumps the F6 list-cache version so the next draw re-renders this
-// item: a spinner tick mutates anim's internal frame counter, which
-// changes the rendered output but is invisible to the per-item
-// caches. Without the bump the list cache would serve the previously
-// rendered frame indefinitely and the spinner would appear frozen.
-// The ID gate keeps unrelated ticks (routed here by a future change
-// to chat.Animate's dispatch) from churning the cache.
-func (t *baseToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
+// item: a spinner frame mutates anim's internal counter, which changes
+// the rendered output but is invisible to the per-item caches. Without
+// the bump the list cache would serve the previously rendered frame
+// indefinitely and the spinner would appear frozen.
+func (t *baseToolMessageItem) Advance() bool {
 	if !t.isSpinning() {
-		return nil
+		return false
 	}
-	if msg.ID != t.toolCall.ID {
-		return nil
-	}
+	t.anim.Advance()
 	t.Bump()
-	return t.anim.Animate(msg)
+	return true
 }
 
 // RawRender implements [MessageItem].
 func (t *baseToolMessageItem) RawRender(width int) string {
+	content, height, toolItemWidth := t.renderContent(width)
+	return t.renderHighlighted(content, toolItemWidth, height)
+}
+
+// renderContent renders the tool, unhighlighted, for a list of width,
+// from the cache unless it is spinning. It returns the content, its
+// height, and the width it was laid out at.
+func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
 	toolItemWidth := width - MessageLeftPaddingTotal
 	if t.hasCappedWidth {
 		toolItemWidth = cappedMessageWidth(width)
@@ -382,17 +429,19 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 	content, height, ok := t.getCachedRender(toolItemWidth)
 	// if we are spinning or there is no cache rerender
 	if !ok || t.isSpinning() {
+		now := time.Now()
 		content = t.toolRenderer.RenderTool(t.sty, toolItemWidth, &ToolRenderOpts{
-			ToolCall:        t.toolCall,
-			Result:          t.result,
-			Anim:            t.anim,
-			ExpandedContent: t.expandedContent,
-			Compact:         t.isCompact,
-			IsSpinning:      t.isSpinning(),
-			Status:          t.computeStatus(),
-			NoTruncate:      t.noTruncate,
-			StartedAt:       t.startedAt,
-			Now:             time.Now(),
+			ToolCall:         t.toolCall,
+			Result:           t.result,
+			Anim:             t.anim,
+			ExpandedContent:  t.expandedContent,
+			Compact:          t.isCompact,
+			IsSpinning:       t.isSpinning(),
+			Status:           t.computeStatus(),
+			NoTruncate:       t.noTruncate,
+			MessageCreatedAt: t.messageCreatedAt,
+			Now:              now,
+			Duration:         t.timerDuration(now),
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -407,11 +456,17 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 		t.setCachedRender(content, toolItemWidth, height)
 	}
 
-	return t.renderHighlighted(content, toolItemWidth, height)
+	return content, height, toolItemWidth
 }
 
 // Render renders the tool message item at the given width.
 func (t *baseToolMessageItem) Render(width int) string {
+	return t.renderPrefixed(width, t.RawRender)
+}
+
+// renderPrefixed prefixes each line of raw's render with the focus bar,
+// so an item that embeds the tool and renders more can reuse it.
+func (t *baseToolMessageItem) renderPrefixed(width int, raw func(int) string) string {
 	// Cache the prefixed output keyed by (width, prefix variant).
 	// Bypass the cache while spinning (RawRender output is
 	// frame-dependent) or while a highlight range is active.
@@ -434,7 +489,7 @@ func (t *baseToolMessageItem) Render(width int) string {
 	} else {
 		prefix = t.sty.Messages.ToolCallBlurred.Render()
 	}
-	lines := strings.Split(t.RawRender(width), "\n")
+	lines := strings.Split(raw(width), "\n")
 	for i, ln := range lines {
 		lines[i] = prefix + ln
 	}
@@ -452,7 +507,11 @@ func (t *baseToolMessageItem) ToolCall() message.ToolCall {
 
 // SetToolCall sets the tool call associated with this message item.
 func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
+	before := expandName(t.toolCall)
 	t.toolCall = tc
+	if after := expandName(tc); t.expandPatterns != nil && after != before {
+		t.isCompact = !config.IsToolExpanded(t.expandPatterns, after)
+	}
 	t.clearCache()
 	t.Bump()
 }
@@ -465,31 +524,67 @@ func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.Bump()
 }
 
-// SetCallStartedAt records when the tool call started, for elapsed-time
-// displays.
-func (t *baseToolMessageItem) SetCallStartedAt(at time.Time) {
-	if t.startedAt.Equal(at) {
+// SetMessageCreatedAt records when the assistant message carrying the tool
+// call was created.
+func (t *baseToolMessageItem) SetMessageCreatedAt(at time.Time) {
+	if t.messageCreatedAt.Equal(at) {
 		return
 	}
-	t.startedAt = at
+	t.messageCreatedAt = at
 	t.clearCache()
 	t.Bump()
 }
 
-// SetToolCallStartedAt records the start time on tool items that track it.
-// unixSeconds is a message CreatedAt timestamp; zero leaves it unset.
-func SetToolCallStartedAt(item MessageItem, unixSeconds int64) {
+// SetToolMessageCreatedAt records when the tool call's assistant message
+// was created on tool items that track it. unixSeconds is a message
+// CreatedAt timestamp; zero leaves it unset.
+func SetToolMessageCreatedAt(item MessageItem, unixSeconds int64) {
 	if unixSeconds == 0 {
 		return
 	}
-	if st, ok := item.(interface{ SetCallStartedAt(time.Time) }); ok {
-		st.SetCallStartedAt(time.Unix(unixSeconds, 0))
+	if st, ok := item.(interface{ SetMessageCreatedAt(time.Time) }); ok {
+		st.SetMessageCreatedAt(time.Unix(unixSeconds, 0))
 	}
 }
 
 // MessageID returns the ID of the message containing this tool call.
 func (t *baseToolMessageItem) MessageID() string {
 	return t.messageID
+}
+
+// SetStepRunning implements [ToolMessageItem].
+func (t *baseToolMessageItem) SetStepRunning(running bool) {
+	if t.stepRunning == running {
+		return
+	}
+	t.stepRunning = running
+	t.clearCache()
+	t.Bump()
+}
+
+// TimerCandidate implements [ToolMessageItem]. It runs for every item on
+// every tick, so the cheap checks come before hasOwnTimer's JSON parse.
+func (t *baseToolMessageItem) TimerCandidate() bool {
+	return t.toolCall.StartedAt != 0 && t.computeStatus() == ToolStatusRunning && !t.hasOwnTimer()
+}
+
+// hasOwnTimer reports whether the tool shows its own elapsed time, so its
+// header gets no duration.
+func (t *baseToolMessageItem) hasOwnTimer() bool {
+	switch t.toolCall.Name {
+	case tools.AgenticFetchToolName, agent.TaskToolName:
+		return true
+	}
+	return IsJobOutputWait(t.toolCall)
+}
+
+// timerDuration returns the duration the header shows at now.
+func (t *baseToolMessageItem) timerDuration(now time.Time) time.Duration {
+	if t.hasOwnTimer() {
+		return 0
+	}
+	running := t.stepRunning && t.computeStatus() == ToolStatusRunning
+	return toolTimerDuration(t.toolCall, t.result, running, now)
 }
 
 // SetMessageID sets the ID of the message containing this tool call.
@@ -724,11 +819,35 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 	}
 
 	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
-		output = ansi.Truncate(output, width, "…")
-	} else if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
-		output = ansi.Hardwrap(output, width, false)
+		return sty.Tool.ParamMain.Render(ansi.Truncate(output, width, "…"))
+	}
+	if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
+		// Let Lip Gloss do the wrapping rather than wrapping and styling in
+		// separate steps. A parameter is often syntax highlighted, and a
+		// wrap falls wherever the width runs out, usually part-way through a
+		// coloured token. Lip Gloss carries the colours that are open at the
+		// break and re-opens them on the next line, on top of the parameter
+		// style. Hard-wrapping first and styling after would emit only the
+		// parameter colour there and drop the highlight; styling first and
+		// hard-wrapping after would emit nothing there and drop both.
+		return capLineWidths(sty.Tool.ParamMain.Width(width).Render(output), width)
 	}
 	return sty.Tool.ParamMain.Render(output)
+}
+
+// capLineWidths holds every line of s to width.
+//
+// Word wrapping keeps the space it broke on, so a word that ends exactly at
+// the edge leaves its line a column wider than the space it was given, and
+// the header spills past the pane. The space is invisible and sits before
+// the closing reset, out of reach of a plain trim, so the line is cut with
+// the escape sequences accounted for.
+func capLineWidths(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, width, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // toolHeader builds the tool header line: "● ToolName params..."
@@ -748,10 +867,14 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 	if nested {
 		nameStyle = sty.Tool.NameNested
 	}
+	var duration time.Duration
+	if opts != nil {
+		duration = opts.Duration
+	}
 	toolName := nameStyle.Render(name)
 	prefix := fmt.Sprintf("%s %s ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
-	remainingWidth := width - prefixWidth
+	suffix, remainingWidth := fitToolTimerSuffix(sty, duration, width, prefixWidth)
 	paramsStr := toolParamList(sty, params, remainingWidth, opts)
 
 	// When expanded, toolParamList may return multiple lines. Indent
@@ -762,9 +885,12 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 		for i := 1; i < len(lines); i++ {
 			lines[i] = indent + lines[i]
 		}
-		return prefix + strings.Join(lines, "\n")
+		return prefix + strings.Join(lines, "\n") + suffix
 	}
-	return prefix + paramsStr
+	if paramsStr == "" && suffix != "" {
+		prefix = strings.TrimSuffix(prefix, " ")
+	}
+	return prefix + paramsStr + suffix
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.
@@ -772,7 +898,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
 
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines) // Show all
 	}
@@ -793,12 +919,12 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		}
 	}
 
-	wasTruncated := len(lines) > responseContextHeight
+	wasTruncated := len(lines) > maxLines
 
 	if !expanded && wasTruncated {
 		out = append(out, sty.Tool.ContentTruncation.
 			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)))
 	}
 
 	return strings.Join(out, "\n")
@@ -809,7 +935,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	content = stringext.NormalizeSpace(content)
 
 	lines := strings.Split(content, "\n")
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}
@@ -1105,7 +1231,7 @@ func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent stri
 	lines := strings.Split(formatted, "\n")
 
 	// Truncate if needed.
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}
@@ -1159,7 +1285,7 @@ func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.
 	lines := strings.Split(formatted, "\n")
 
 	// Truncate if needed.
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}
@@ -1214,7 +1340,7 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	}
 
 	lines := strings.Split(rendered, "\n")
-	maxLines := responseContextHeight
+	maxLines := collapsedMaxLines(len(lines))
 	if expanded {
 		maxLines = len(lines)
 	}

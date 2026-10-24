@@ -217,6 +217,13 @@ read, and no second pass runs.
 Hooks are keyed by event name. Only `command` is required, and you can omit
 `matcher` to match all tools.
 
+MCP tools reached through the tool catalogue (see "Tool Routing" in
+[configuration](../configuration.md)) fire hooks under their own
+`mcp_<server>_<tool>` name and arguments, exactly as when they are listed
+directly. `call_mcp_tool` itself never fires a hook, so a `.*` matcher
+fires once per proxied call. `search_mcp_tools` and `describe_mcp_tool`
+fire under their own names.
+
 ## Building Hooks
 
 When a hook fires, Anvil:

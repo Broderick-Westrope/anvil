@@ -43,6 +43,9 @@ type dockerMCPAvailabilityCheckedMsg struct {
 }
 
 type Commands struct {
+	// mouse gives the list wheel scrolling and click selection.
+	mouse listMouse
+
 	com    *common.Common
 	keyMap struct {
 		Select,
@@ -73,7 +76,8 @@ type Commands struct {
 
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
-	workflow       *WorkflowControls
+	// featureEntries are the entries UI's features contribute.
+	featureEntries []*CommandItem
 
 	dockerMCPAvailable     *bool
 	dockerMCPCheckInFlight bool
@@ -161,6 +165,9 @@ func (c *Commands) ID() string {
 
 // HandleMsg implements [Dialog].
 func (c *Commands) HandleMsg(msg tea.Msg) Action {
+	if action, ok := c.mouse.handle(msg, c.list, nil, nil, func() Action { return c.HandleMsg(confirmKey) }); ok {
+		return action
+	}
 	switch msg := msg.(type) {
 	case dockerMCPAvailabilityCheckedMsg:
 		c.dockerMCPAvailable = &msg.available
@@ -234,11 +241,14 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 					}
 				}
 			}
+			prevValue := c.input.Value()
 			c.input, cmd = c.input.Update(msg)
 			value := c.input.Value()
-			c.list.SetFilter(value)
-			c.list.ScrollToTop()
-			c.list.SetSelected(0)
+			if value != prevValue {
+				c.list.SetFilter(value)
+				c.list.ScrollToTop()
+				c.list.SetSelected(0)
+			}
 			return ActionCmd{cmd}
 		}
 	}
@@ -322,7 +332,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	inputView := t.Dialog.InputPrompt.Render(c.input.View())
 	rc.AddPart(inputView)
 	listView := t.Dialog.List.Height(c.list.Height()).Render(c.list.Render())
-	rc.AddPart(listView)
+	rc.AddList(listView, t.Dialog.List, c.list.Width(), c.list.Height())
 	rc.Help = renderDialogHelp(t, &c.help, c, innerWidth)
 
 	if c.loading {
@@ -330,6 +340,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	}
 
 	view := rc.Render()
+	c.mouse.setArea(rc.ListBounds, centerRect(area, view))
 
 	cur := c.Cursor()
 	DrawCenterCursor(scr, area, view, cur)
@@ -419,10 +430,7 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 				Arguments: cmd.Arguments,
 				Skills:    cmd.Skills,
 				Location:  cmd.Location,
-				CommandID: cmd.ID,
-				Source:    cmd.Source,
-				Workflow:  cmd.Workflow,
-				Problems:  cmd.Problems,
+				Command:   cmd,
 			}
 			title := name
 			if cmd.ArgumentHint != "" {
@@ -501,7 +509,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	// Only show toggle compact mode command if window width is larger than compact breakpoint (120)
 	if c.windowWidth >= sidebarCompactModeBreakpoint && c.hasSession {
-		commands = append(commands, NewCommandItem(c.com.Styles, "toggle_sidebar", "Toggle Sidebar", "", ActionToggleCompactMode{}))
+		commands = append(commands, NewCommandItem(c.com.Styles, "toggle_sidebar", "Toggle Sidebar", "ctrl+b", ActionToggleCompactMode{}))
 	}
 	if c.hasSession {
 		cfgPrime := c.com.Config()
@@ -576,6 +584,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
+	// Add mouse support toggle.
+	mouseLabel := "Disable Mouse"
+	if cfg != nil && cfg.Options != nil && cfg.Options.TUI != nil && cfg.Options.TUI.Mouse != nil && !*cfg.Options.TUI.Mouse {
+		mouseLabel = "Enable Mouse"
+	}
+	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_mouse", mouseLabel, "", ActionToggleMouseSupport{}))
+
 	// Add Anthropic auth mode cycle when the Anthropic provider is configured.
 	if cfg != nil {
 		if anthropicCfg, ok := cfg.Providers.Get("anthropic"); ok {
@@ -592,17 +607,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 	}
 
-	if w := c.workflow; w != nil {
-		pause := NewCommandItem(c.com.Styles, "workflow_pause", "Pause Workflow /"+w.Command, w.Keys.Pause,
-			ActionWorkflowControl{RunID: w.RunID, Control: WorkflowPause})
-		if w.Paused {
-			pause = NewCommandItem(c.com.Styles, "workflow_pause", "Resume Workflow /"+w.Command, w.Keys.Pause,
-				ActionWorkflowControl{RunID: w.RunID, Control: WorkflowResume})
-		}
-		commands = append(commands, pause,
-			NewCommandItem(c.com.Styles, "workflow_abort", "Abort Workflow /"+w.Command, w.Keys.Abort,
-				ActionWorkflowControl{RunID: w.RunID, Control: WorkflowAbort}))
-	}
+	commands = append(commands, c.featureEntries...)
 
 	commands = append(commands,
 		NewCommandItem(c.com.Styles, "browse_skills", "Browse Skills", "", ActionOpenDialog{SkillPickerID}),
@@ -641,26 +646,10 @@ func nextBouncerMode(mode permission.BouncerMode) permission.BouncerMode {
 	}
 }
 
-// WorkflowControls describes the running workflow run the palette's
-// pause, resume and abort entries act on.
-type WorkflowControls struct {
-	RunID   string
-	Command string
-	Paused  bool
-	// Keys are the shortcuts shown beside each control.
-	Keys WorkflowKeys
-}
-
-// WorkflowKeys are the help keys of the workflow control bindings, so the
-// palette shows whatever they are bound to.
-type WorkflowKeys struct {
-	Pause, Abort string
-}
-
-// SetWorkflowControls shows controls for a running workflow run, or hides
-// them when w is nil.
-func (c *Commands) SetWorkflowControls(w *WorkflowControls) {
-	c.workflow = w
+// SetFeatureEntries shows the entries UI's features contribute, in
+// order, among the system commands.
+func (c *Commands) SetFeatureEntries(items []*CommandItem) {
+	c.featureEntries = items
 	c.setCommandItems(c.selected)
 }
 

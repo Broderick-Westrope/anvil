@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -614,7 +615,10 @@ func TestPauseInsideExclusiveStillReleasesTheHold(t *testing.T) {
 	close(release)
 	require.Eventually(t, func() bool { return h.backend.releases() == 1 }, 5*time.Second, time.Millisecond,
 		"a paused run kept its sessions held")
-	require.Contains(t, h.recorder.primitives(workflow.PhaseCompleted), "workflow.release")
+	// The release is recorded after it happens, so wait for the record too.
+	require.Eventually(t, func() bool {
+		return slices.Contains(h.recorder.primitives(workflow.PhaseCompleted), "workflow.release")
+	}, 5*time.Second, time.Millisecond, "the release was never recorded as completed")
 	require.Empty(t, h.backend.bashCmds()[1:], "bash ran while paused")
 	run.Resume()
 	require.Equal(t, "two", <-ran)

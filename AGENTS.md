@@ -27,13 +27,10 @@ internal/
     agent.go                       SessionAgent: runs LLM conversations per session
     coordinator.go                 Coordinator: manages named agents ("coder", "task")
     hooked_tool.go                 Decorator that runs PreToolUse hooks before tool execution
-    lazy_mcp.go                    Lazy MCP state derivation and tool filtering
     prompts.go                     Loads Go-template system prompts
     cacheusage/                    Prompt-cache usage: async step_usage recorder, normalisation, fingerprints
     templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
     tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
-      enable_mcp.go                enable_mcp tool for agent-side lazy MCP activation
-      lazy_mcp_state.go            Thread-safe enabled set for lazy MCPs (per-Run)
       mcp/                         MCP client integration
   hooks/                           Hook engine: runs user shell commands on hook events
     hooks.go                       Decision types, aggregation logic, event constants
@@ -46,6 +43,8 @@ internal/
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
+  mermaid/                         Exports diagrams as HTML pages; layout and pixels come from pele-go's raster module
+  mermaidbench/                    Test-only latency and memory harness comparing two builds of the pipeline
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -128,16 +127,41 @@ Terms with a specific meaning in this codebase are defined in
   the coordinator level. Hooks run before permission checks. See
   `docs/hooks/README.md` for the user-facing protocol.
 - **Lazy MCPs**: MCP servers with `lazy_description` set in `anvil.json`
-  don't connect at startup, and their tools are excluded from the LLM
-  context until explicitly enabled; the first enable connects them. The
-  `enable_mcp` built-in tool lets the agent activate
-  them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
-  Enabled state is branch-scoped — derived from message history
-  (`deriveLazyMCPState` in `internal/agent/lazy_mcp.go`) so it persists
-  across restarts and survives compaction. `PrepareStep` filters the tool
-  list on every turn. The `LazyMCPState` type in
-  `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
-  See `docs/adr/0002-lazy-mcp-state-from-messages.md`.
+  don't connect at startup (`mcp.StateDeferred`). They go through the MCP
+  tool catalogue (below) and connect on their first search, or when a
+  human presses Enter on them in the MCP palette. `ValidateMCPRoutes`
+  rejects `lazy_description` combined with `route: "direct"`: a lazy
+  server has no tools when the tool list is fixed at startup. A lazy
+  server disabled in config at startup is missing from the route map; if
+  it's re-enabled and connected from the palette before a restart, it's
+  listed directly like any unrouted server.
+  Nothing tracks per-branch enable state; old sessions' `mcp_toggle`
+  messages still decode but nothing reads them. See
+  `docs/adr/0008-remove-lazy-loading.md` and
+  `plans/completed/design-2026-10-24-remove-lazy-direct-mcp.md`.
+- **MCP tool catalogue**: each MCP server resolves once per process to a
+  route, `direct` (in the tool list) or `catalogue`, from the snapshot
+  `mcp.Initialize` records before closing `initDone`
+  (`mcp.StartupSnapshot`, `deriveMCPRoutes` in
+  `internal/agent/mcp_routes.go`). Under `route: auto` a server is direct
+  only when connected at startup with sent tools under 12,000 bytes
+  (`mcp.SentToolBytes`). Catalogue servers are never built into any tool
+  list: `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool`
+  (`internal/agent/tools/catalogue.go`) reach them through a per-agent
+  resolver, and `agentMCPTools` (`internal/agent/mcp_tools.go`) builds
+  both the listed tools and the resolved ones, so access and wrapping
+  rules can't drift. `call_mcp_tool` validates arguments with
+  `jsonschema-go`, then runs the wrapped inner tool under the outer call
+  ID, so permissions, hooks and timers see `mcp_<server>_<tool>`. A call
+  to a catalogue tool by its direct name is forwarded to `call_mcp_tool`
+  by `repairToolCall` (`internal/agent/catalogue_repair.go`), which must
+  stay on the `AgentStreamCall` in `turn.go`: fantasy's `Stream` ignores
+  an agent-level repair function. The
+  route map never changes mid-process; never let a connect, renewal or
+  reload change it. The registry (`mcp.RegisteredTool`) holds each tool's
+  parameters normalised once on a private copy, because fantasy normalises
+  `Info().Parameters` in place. See `docs/adr/0007-mcp-tool-catalogue.md`
+  and `plans/completed/design-2026-10-23-mcp-tool-catalogue.md`.
 - **LSP memory management**: auto-configured gopls runs with `-remote=auto`
   so concurrent Anvil processes share one gopls daemon
   (`applyGoplsDaemonDefaults` in `internal/lsp/manager.go`); user-configured
@@ -145,6 +169,15 @@ Terms with a specific meaning in this codebase are defined in
   `lsp_idle_timeout` minutes of inactivity (default 15, `0` disables) and
   restart on demand. Any code path that reads a client must call
   `Manager.Touch(name)` so active clients are never reaped.
+- **Memory across instances**: people run many Anvil instances at once,
+  so anything a feature holds per instance is multiplied. Share it through
+  the first of these that meets a measured need, and say in the design
+  why earlier steps don't: (1) load on first use and release when idle;
+  (2) let the OS share it (memory-map read-only data; on-disk caches only
+  cut load time and peaks); (3) use the resource's own sharing mode, built
+  in the resource when we own it; (4) a shared process Anvil manages,
+  which doesn't exist yet and needs its own ADR. See
+  `docs/adr/0005-cross-instance-sharing.md`.
 - **Herdr reporting**: inside a Herdr pane the interactive TUI reports
   `idle`/`working`/`blocked` and names its tab via the `herdr` CLI
   (`internal/herdr`, wired in `internal/cmd/root.go`). The UI snapshots
@@ -153,6 +186,41 @@ Terms with a specific meaning in this codebase are defined in
   behaviour and the isolated-session test recipe live in
   `plans/completed/design-2026-10-08-herdr-integration.md`; never test
   against the user's default Herdr session.
+- **Tool call timers**: each `message.ToolCall` records `StartedAt` and each
+  `message.ToolResult` records `FinishedAt` (Unix ms, display only;
+  `ToAIMessage` drops them). The per-turn `timedTool` wrapper in
+  `internal/agent/turn.go` wraps every tool outside its hooks, sets the
+  start when `Run` begins, and restarts it through
+  `permission.WithPromptObserver` when a human closes the call's prompt. The
+  coordinator's `runningSteps` set (`Coordinator.IsStepRunning`) says
+  whether a result-less call is still running or was orphaned. The UI shows
+  the duration once it reaches 10s (`internal/ui/chat/tool_timer.go`,
+  refreshed by the elapsed tick in `internal/ui/model/tool_timer.go`).
+  Design: `plans/completed/design-2026-10-18-tool-call-timer.md`.
+- **Branch summaries**: rewinding past an assistant reply, or away from
+  an earlier branch summary to anywhere but its parent, offers a
+  summarizer agent (frontmatter `branch_summarizer: true`; the built-in
+  is `templates/agents/branch-summarizer.md`) that summarises the branch
+  left behind. `internal/agent/branchsummary` holds the pure parts: the
+  abandoned range, the ledger built from tool calls, the serialised
+  prompt (redacted, budgeted, with tags content can't forge) and the
+  stored text. `coordinator.SummarizeBranch` runs the agent with
+  read-only tools in an agent-tool child session and stores a
+  `branch_summary` message under the rewind target with
+  `messages.CreateAtLeaf`, which checks the leaf in the same transaction.
+  `internal/app/branchsummaries.Service` owns runs (one per root session)
+  and reserves the session synchronously when one starts, so a message
+  sent meanwhile queues behind it. The TUI feature
+  (`internal/ui/model/branch_summary.go`) renders only the service's
+  events, showing the run as a live agent item. The built-in prompt has
+  an evaluation set in `internal/agent/testdata/branch_summary_eval`
+  (made-up conversations modelled on real failures, each with required
+  facts, forbidden claims and an optional length bound). It runs live
+  against your configured model with
+  `ANVIL_BRANCH_SUMMARY_EVAL=1 go test ./internal/agent -run
+  TestBranchSummaryEval -v`; run it whenever you change the prompt or
+  the serialisation. Design:
+  `plans/completed/design-2026-10-20-branch-summaries.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
   normalised token counts, prices and hashed request fingerprints. The
@@ -163,6 +231,19 @@ Terms with a specific meaning in this codebase are defined in
   SQL in the `anvil-cache-triage` skill
   (`.agents/skills/anvil-cache-triage/references/classify.sql`), not in
   Go. Rows older than 90 days are pruned at startup.
+- **Subagent task calls**: each `task` call (`internal/agent/subagent_call.go`)
+  holds a lease on its subagent's child session (`subagent_lease.go`) for
+  its whole life, so a resume of a running subagent is rejected, not
+  queued. Failures are classified in order (`subagent_retry.go`); up to two
+  transient ones resume the same child with a `harness` injection. The
+  orchestrator resumes a subagent with `task({resume: subagent_id})`, and a
+  human steers or cancels one from its drill-in view; both arrive as
+  `subagent_injection` messages, delivered at step boundaries. Identity
+  and call links live in the `subagents` and `subagent_calls` tables.
+  Session cost only grows, through `AddCost`, `UpdateTitleAndUsage` and
+  `RollUpChildCost`; `Session.Save` never writes it. See
+  `docs/adr/0009-session-cost-only-grows.md` and
+  `plans/completed/design-2026-10-18-subagent-resume-and-steering.md`.
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
   JavaScript script (see `plans/completed/design-2026-10-10-workflows.md`).
   `internal/workflow` is the engine: it parses `requires()` without running
@@ -196,12 +277,104 @@ Terms with a specific meaning in this codebase are defined in
   forks). Every session a run makes is a child of the invoking session
   recording its run, creating event and kind (`session.WorkflowOwner`);
   `Session.Conversational` tells a builder the user talks to from a
-  subagent (ADR 0004). The invoking session stays
-  the user's: scripts can only `fork()` it (`message.Service.CopyBranch`).
+  subagent (ADR 0010). The invoking session stays the user's: scripts can
+  only `fork()` it (`message.Service.CopyBranch`).
   `workflowhost.RunView` rebuilds what the node and its drill-in show from
   the database; the UI reloads it on every run event (`EventChanged` is
   published after each event is recorded) and every few seconds while a
   running run is on screen, since announcements can be dropped.
+- **Mermaid diagrams**: when an assistant message finishes, each top-level
+  ```` ```mermaid ```` fence becomes its own chat node
+  (`chat.NewAssistantMessageItems`, spliced in by
+  `Chat.SyncAssistantSegments`); the head keeps the message ID and the
+  rest are `<id>#<n>`. `graphicsFeature` (`internal/ui/model/graphics.go`
+  for its cache and messages, `mermaid_render.go` for the worker) renders
+  them on one goroutine with `github.com/Broderick-Westrope/pele-go/raster`
+  (pele-go, a Go port of Pele, for SVG, resvg in wazero for pixels; see
+  `docs/adr/0004-mermaid-rendering.md` and `docs/adr/0006-pele-go.md`)
+  and sends Kitty graphics with Unicode placeholders. Items get the renderer through their constructors
+  as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
+  code block shows while pending, without Kitty support, or (with a note)
+  after a failure. When the view moves, the chat tells the renderer which
+  diagrams are on or within a screen of it (`Chat.SetDiagrams`,
+  `chat.DiagramRenderer.InView`), which renders them ahead and never
+  evicts them while they stay there. An image arriving re-renders
+  only diagram items (`Chat.InvalidateDiagrams`), which keeps the scroll
+  position. The terminal holds the pixels; Anvil keeps none once sent, and
+  deletes the least recently drawn images out of view past 128 MB (a wide
+  diagram on a HiDPI screen is ~17 MB). resvg loads on the
+  first diagram and drops after 20 seconds idle. Its compiled
+  code goes in wazero's compilation cache under the user cache dir
+  (`anvil/wasm`), shared by every process, so only the first load after
+  an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).
+  `Y` copies a diagram as a PNG: since Anvil keeps no pixels, the worker
+  renders it again (`diagramJobCopy`) at twice its layout size (within
+  `raster.MaxPixels`) on an opaque background, then writes it to the
+  clipboard itself, so copies land in order. `writeClipboardImage`
+  writes natively on macOS and Windows and through `wl-copy` or `xclip`
+  on other Unix desktops (the native X11 clipboard can't do large
+  transfers), giving up after 5 seconds. `imageClipboardReady` refuses
+  a copy that can't land before anything renders, and it's refused when
+  `SSH_CONNECTION` or `SSH_TTY` is set, since the clipboard isn't the
+  user's and OSC 52 carries only text. Colours come from
+  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a
+  restart: `ConfigStore.DiagramsEnabled` reads the startup snapshot,
+  and both the UI (a nil renderer means no split) and the system prompt
+  line gate on it. Design:
+  `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  measurements and resvg workarounds:
+  `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
+- **Tool images**: a tool result carrying image data (`view`, MCP) is
+  drawn as the Output item of its tool drill-in
+  (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any
+  text the tool returned with it, through the
+  same `graphicsFeature` cache as diagrams: each cache key names its
+  producer (Mermaid or bitmap), and bitmaps decode on the worker without
+  loading the Mermaid engines (`internal/ui/model/tool_image.go`). They
+  draw at actual size, shrunk to the drill-in's width, 297 rows and
+  16 Mpx once padded to whole cells, never enlarged; a source over
+  8192 px a side, 32 Mpx, or 128 MB of what its decoder holds at once
+  (`decodeBytesPerPixel`: progressive JPEG and lossless WebP hold far
+  more than their pixels) isn't decoded. Only the drill-in on
+  top holds a full-size image (diagram or bitmap): `UI.Update` tells
+  features which chat is on top after every message, keys included
+  (`drillInFeature.DrillInChanged`), and the cache frees the old one at
+  once. Drill-in items ask through a handle bound to their chat
+  (`graphicsFeature.For`) that queues nothing while it's covered, and a
+  generation in full-size keys keeps late results and deletes from an
+  earlier opening off the current image. `o` writes the result's bytes
+  to the diagram export dir and opens them in the OS viewer, even when
+  Anvil can't draw them, but only when the bytes sniff as a raster type
+  that can't carry scripts (`imageExts`). `Y` copies it through the
+  diagram copy path (`diagramJobCopy`, same SSH and clipboard checks): a
+  PNG's own bytes, anything else decoded within the same limits
+  (`decodeBitmap`) and encoded as PNG. The cache exists whatever
+  `options.tui.diagrams` says. Design:
+  `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
+- **Opening a tool's file**: in a drill-in of a built-in tool whose call
+  has a `file_path` (`fileTools` in `internal/ui/chat/tool_file.go`; an
+  MCP tool's may not be local), `o` opens the file in the OS default app,
+  `e` opens it in `$EDITOR` (at `view`'s offset), and `r` shows it in the
+  file manager, from any item. The drill-in's items share one
+  `chat.toolFile`, which re-parses the input only when it changes, since
+  it's asked on every render. When the call returned an image, `o` opens
+  that image instead, from every item. That rule is `toolFile.keys`: item
+  keys and the header hints read it directly, and the help reads it
+  through `chat.FileKeys`. The header drops hints from the right when they
+  don't fit. `fileOpenFeature` (`internal/ui/model/file_open.go`) refuses
+  UNC and device paths in any slash as the model wrote them, before
+  anything touches them (`isNetworkPath`), joins relative ones like the
+  tools (`filepathext.SmartJoin`), and follows symlinks. The model chose
+  the path and may have written the file, so `o` opens only passive types
+  whose bytes sniff as that type (`openTypes`, an allowlist like
+  `imageExts`: text, source and raster images; HTML content under a text
+  name is refused too), never an executable file; `e` opens anything as
+  text. `r` runs `revealCommands`, each with its own timeout: `open -R` on
+  macOS, and on Windows `explorer /select,"<path>"` as a raw command line
+  (`setRawCmdLine`), since Explorer parses its own. On Linux it makes the
+  FileManager1 D-Bus call, falling back to a detached `xdg-open` on the
+  file's directory. They open at most the directory, so `r` needs no
+  allowlist.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
@@ -218,7 +391,8 @@ Terms with a specific meaning in this codebase are defined in
 - **Lint**: `task lint` (check) or `task lint:fix`. golangci-lint is pinned
   as a Go tool in its own modfile, so nothing needs installing; bump it with
   `go get -tool -modfile=tools/golangci-lint.mod
-  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version>`.
+  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version>`, and
+  update the `version:` in `.github/workflows/_lint.yml` to match.
 - **Format**: `task fmt` (`gofumpt -w .`)
 - **Modernize**: `task modernize` (runs `modernize` which makes code
   simplifications)
@@ -240,6 +414,13 @@ and `lint` on Ubuntu, macOS and Windows, `mutation`, and `govulncheck`.
 Never bypass a failing check, merge with `--admin`, or change the ruleset
 to get a PR in.
 
+A PR into `main` that changes only Markdown at the repo root or under
+`plans/` or `docs/` passes `build` and `lint` without running them, and
+skips CodeQL, Grype and `govulncheck`. `scripts/ci-code-changed.sh` decides this, and
+`.github/workflows/_changes.yml` runs it; anything it doesn't recognise
+counts as code. If something starts embedding or testing one of those
+Markdown files, narrow the classifier in the same PR.
+
 `govulncheck` fails when our code calls a function with a known
 vulnerability, including in the Go standard library. It can start failing
 on a PR that didn't cause it, when a new advisory is published. Fix it by
@@ -260,6 +441,17 @@ Go's coverage tool never instruments them, so gremlins reports them NOT
 COVERED however well they are tested (`scripts/mutation-const/mutationconst`).
 Pin such values and conditions with a test anyway; there's no need to
 rewrite a switch as an `if` chain to make them reachable.
+
+Two patterns produce mutants that are hard to kill, so avoid them in new
+code:
+
+- Capacity hints in `make` (`make(map[K]V, len(x)+1)`). Changing the
+  arithmetic changes nothing observable, so no test can catch it. Leave
+  the hint out unless a benchmark shows it matters.
+- Output built by ranging over a map. Go randomises map order, so a
+  `continue` mutated to `break` is only caught on some runs, and anything
+  that reaches a model request also breaks prompt caching. Sort the keys
+  first.
 
 Some mutants can't be killed because they don't change behaviour, such as
 a boundary flip that both sides of the comparison handle the same. Only
@@ -330,6 +522,11 @@ credentials, such as the Claude CLI's.
   `docs:`, `sec:`, etc).
 - Try to keep commits to one line, not including your attribution. Only use
   multi-line commits when additional context is truly necessary.
+- Land a feature's docs in the PR that ships it, not a follow-up: move its
+  design doc (and any plans) from `plans/` to `plans/completed/`, update
+  every link to them, and make the `AGENTS.md`, `GLOSSARY.md` and ADR
+  changes there too. Earlier designs were moved after they shipped; don't
+  copy that.
 
 ## Working on the TUI (UI)
 

@@ -372,7 +372,7 @@ func TestPermissionNotificationReachesSubagentUnderADrillIn(t *testing.T) {
 
 	u, _ := newJobsTestUI(nil)
 	sub := NewChat(u.com)
-	tool := chat.NewToolMessageItem(u.com.Styles, "sub-a", message.ToolCall{ID: "tc1", Name: "bash", Input: "{}"}, nil, false, nil)
+	tool := chat.NewToolMessageItem(u.com.Styles, "sub-a", message.ToolCall{ID: "tc1", Name: "bash", Input: "{}"}, nil, false, chat.ToolItemOptions{})
 	sub.SetMessages(tool)
 	u.drillStack = []drillInEntry{{sessionID: "child", chat: sub}, {chat: NewChat(u.com)}}
 
@@ -560,7 +560,7 @@ func TestASubagentStartedInADrilledInSessionCanBeOpenedLive(t *testing.T) {
 	call := message.ToolCall{ID: "agent1", Name: agent.TaskToolName, Input: `{"prompt":"look"}`, Finished: true}
 	// The root chat holds a copy of the same tool call from another
 	// message, as a fork would; it must not take the subagent's session.
-	u.chat.SetMessages(chat.NewToolMessageItem(u.com.Styles, "copied-msg", call, nil, false, nil))
+	u.chat.SetMessages(chat.NewToolMessageItem(u.com.Styles, "copied-msg", call, nil, false, chat.ToolItemOptions{}))
 	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
 		ID: "builder-msg", Role: message.Assistant, SessionID: "builder", Parts: []message.ContentPart{call},
 	}})

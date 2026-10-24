@@ -12,8 +12,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -108,6 +110,9 @@ type Workspace interface {
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]message.Message, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	MoveLeaf(ctx context.Context, sessionID, leafMessageID string) error
+	// WriteMetadataEntry creates a metadata message under the session's
+	// current leaf, whatever params.ParentMessageID says, and advances the
+	// leaf to it.
 	WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error
 
 	// Agent
@@ -115,12 +120,51 @@ type Workspace interface {
 	AgentCancel(sessionID string)
 	AgentIsBusy() bool
 	AgentIsSessionBusy(sessionID string) bool
+	// AgentIsStepRunning reports whether the step that created the
+	// assistant message is still in flight, so its result-less tool calls
+	// are running rather than orphaned.
+	AgentIsStepRunning(assistantMessageID string) bool
 	AgentModel() AgentModel
 	AgentIsReady() bool
 	AgentQueuedPrompts(sessionID string) int
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
+	// AgentSteerSubagent sends a human message to the subagent running in
+	// childSessionID; with interrupt it also cuts off its current attempt.
+	AgentSteerSubagent(childSessionID, text string, interrupt bool) error
+	// AgentCancelSubagent cancels the task call running in childSessionID.
+	AgentCancelSubagent(childSessionID string) bool
+	// AgentSubagentRunning reports whether a task call is running in
+	// childSessionID.
+	AgentSubagentRunning(childSessionID string) bool
+	// GetSubagentCall returns the stored link of the task call callID. It
+	// fails with sql.ErrNoRows for calls made before links were stored.
+	GetSubagentCall(ctx context.Context, callID string) (session.SubagentCall, error)
+	// AgentTakeReturnedSteers returns, and forgets, steers that task calls
+	// working for rootSessionID ended without delivering.
+	AgentTakeReturnedSteers(rootSessionID string) []agent.SubagentSteersReturned
+	// AgentSubagentPendingSteers lists steers sent to childSessionID's
+	// subagent that it hasn't read yet.
+	AgentSubagentPendingSteers(childSessionID string) []string
 	AgentSummarize(ctx context.Context, sessionID string) error
+	// AgentStartBranchSummary starts summarizing the branch the user
+	// rewound from, in the background, and returns the run's ID. Its
+	// progress arrives as branchsummaries events. The session is reserved
+	// before it returns, so messages sent afterwards queue behind it.
+	AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error)
+	// AgentCancelBranchSummary cancels the session's running summary.
+	AgentCancelBranchSummary(sessionID string)
+	// AgentBranchSummaryRunning reports whether the session has a summary
+	// running.
+	AgentBranchSummaryRunning(sessionID string) bool
+	// AgentDiscardBranchSummary deletes an unused branch summary.
+	AgentDiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
+	// AgentBranchSummarizers lists the agents that can summarize branches,
+	// the built-in first.
+	AgentBranchSummarizers() []string
+	// AgentBranchWorthSummarizing reports whether rewinding from fromLeaf
+	// to target leaves anything a summary could say.
+	AgentBranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error)
 	AgentRegenerateTitle(ctx context.Context, sessionID string) error
 	// AgentPause stops new top-level runs from being admitted and waits up
 	// to budget for active ones to finish. On success the caller must call
@@ -185,12 +229,20 @@ type Workspace interface {
 	// WorkflowRunView loads what a workflow run looks like to the user,
 	// reporting false when there's no such run.
 	WorkflowRunView(ctx context.Context, runID string) (workflowhost.RunView, bool, error)
-	// WorkflowMissing loads a workflow script and lists the requirements
-	// it declares that don't exist.
-	WorkflowMissing(scriptPath string) ([]string, error)
+
+	// Commands
+
+	// AnnotateCommands returns cmds with what stops each one running added
+	// to its problems: the requirements a workflow script declares that
+	// don't exist, or why it doesn't load. Commands that already have
+	// problems aren't checked again, and nothing is added while workflows
+	// are unavailable. It loads scripts, so call it from a command.
+	AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand
 
 	// Config (read-only data)
 	Config() *config.Config
+	// DiagramsEnabled reports options.tui.diagrams as it was at startup.
+	DiagramsEnabled() bool
 	WorkingDir() string
 	Resolver() config.VariableResolver
 
@@ -224,6 +276,9 @@ type Workspace interface {
 	MCPRefreshPrompts(ctx context.Context, name string)
 	MCPRefreshResources(ctx context.Context, name string)
 	RefreshMCPTools(ctx context.Context, name string)
+	// MCPRoutes returns how each MCP server's tools reach the model, in
+	// name order, and false until MCP initialisation has finished.
+	MCPRoutes() ([]agenttools.MCPRouteInfo, bool)
 	ReadMCPResource(ctx context.Context, name, uri string) ([]MCPResourceContents, error)
 	GetMCPPrompt(clientID, promptID string, args map[string]string) (string, error)
 	EnableDockerMCP(ctx context.Context) error

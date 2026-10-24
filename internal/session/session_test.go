@@ -4,9 +4,11 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/db"
 	"github.com/Broderick-Westrope/anvil/internal/jobstore"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/stretchr/testify/require"
 )
 
@@ -479,6 +481,31 @@ func TestDeleteRemovesBackgroundJobsAndLogs(t *testing.T) {
 	for _, p := range keptLogs {
 		require.FileExists(t, p)
 	}
+}
+
+func TestRefresh(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+	sessions := NewService(db.New(conn), conn)
+	created, err := sessions.Create(t.Context(), "test", "/tmp/project")
+	require.NoError(t, err)
+	events := sessions.Subscribe(t.Context())
+
+	require.NoError(t, sessions.Refresh(t.Context(), created.ID))
+	select {
+	case ev := <-events:
+		require.Equal(t, pubsub.UpdatedEvent, ev.Type)
+		require.Equal(t, created.ID, ev.Payload.ID)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Refresh published nothing")
+	}
+
+	require.Error(t, sessions.Refresh(t.Context(), "missing"))
 }
 
 // A workflow's session is never seen, even by the event announcing it,

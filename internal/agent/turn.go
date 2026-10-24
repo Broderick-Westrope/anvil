@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
 )
@@ -25,15 +27,14 @@ import (
 // leaf it writes to, the assistant message of the current step, and the
 // usage capture. Its methods are the fantasy stream callbacks.
 type turn struct {
-	a              *sessionAgent
-	call           SessionAgentCall
-	largeModel     Model
-	providerCfg    config.ProviderConfig
-	promptPrefix   string
-	lazyMCPToolMap map[string]string
-	lazyState      *tools.LazyMCPState
-	injected       *injectedMessages
-	runID          string
+	a            *sessionAgent
+	call         SessionAgentCall
+	largeModel   Model
+	providerCfg  config.ProviderConfig
+	promptPrefix string
+	mcpListing   mcpListing
+	injected     *injectedMessages
+	runID        string
 	// parentSessionID is set for subagent sessions, not for sessions the
 	// user talks to such as a workflow's builder.
 	parentSessionID string
@@ -66,6 +67,46 @@ type turn struct {
 	sanitized   map[string]bool
 
 	shouldSummarize bool
+
+	// uncharged is the usage the provider reported for the current step,
+	// until onStepFinish saves it to the session. A step cut off before
+	// then, such as by an interrupt during its tools, is charged on the
+	// way out instead.
+	uncharged *stepCharge
+	// persistErr is the persistence failure that stopped the turn. Fantasy
+	// ignores OnStepFinish's error, so the turn keeps it and stops itself.
+	persistErr error
+}
+
+// stepCharge is usage a provider reported for one step.
+type stepCharge struct {
+	usage fantasy.Usage
+	meta  fantasy.ProviderMetadata
+}
+
+func (t *turn) persistFailure() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.persistErr
+}
+
+// chargeUnfinishedStep saves the usage of a step that ended before
+// onStepFinish could, so cost the provider billed is never lost.
+func (t *turn) chargeUnfinishedStep() {
+	t.mu.Lock()
+	charge := t.uncharged
+	t.uncharged = nil
+	t.mu.Unlock()
+	if charge == nil || usageIsZero(charge.usage) {
+		return
+	}
+	sess, err := t.a.sessions.Get(t.persistCtx, t.call.SessionID)
+	if err == nil {
+		err = t.a.saveSessionUsage(t.persistCtx, t.largeModel, &sess, charge.usage, t.a.openrouterCost(charge.meta), false)
+	}
+	if err != nil {
+		slog.Warn("Failed to charge an unfinished step", "session_id", t.call.SessionID, "error", err)
+	}
 }
 
 func (t *turn) currentLeaf() string {
@@ -86,23 +127,94 @@ func (t *turn) sessionTitle() string {
 	return t.session.Title
 }
 
-// newAgent builds the model agent for this turn. Lazy MCP tools that
-// aren't enabled are left out, along with their server instructions.
+// newAgent builds the model agent for this turn, with the listed MCP
+// servers' instructions in its system prompt.
 func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fantasy.Agent {
-	agentTools = filterLazyMCPTools(agentTools, t.lazyMCPToolMap, t.lazyState)
-	if s := mcpInstructions(t.lazyMCPToolMap, t.lazyState); s != "" {
+	if s := mcpInstructions(t.mcpListing); s != "" {
 		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
-	}
-	if len(agentTools) > 0 {
-		// Add Anthropic caching to the last tool.
-		agentTools[len(agentTools)-1].SetProviderOptions(t.a.getCacheControlOptions())
 	}
 	return fantasy.NewAgent(
 		t.largeModel.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
-		fantasy.WithTools(agentTools...),
+		fantasy.WithTools(withCachedLastTool(t.timed(agentTools), t.a.getCacheControlOptions())...),
 		fantasy.WithUserAgent(userAgent),
 	)
+}
+
+// withCachedLastTool returns a copy of agentTools whose last tool carries
+// opts, which marks the end of the cached prefix for Anthropic. Tool
+// instances are shared by every session of an agent, including ones that
+// run at once (such as parallel workflow subagents), so the options go on
+// a per-turn wrapper rather than on the shared tool.
+func withCachedLastTool(agentTools []fantasy.AgentTool, opts fantasy.ProviderOptions) []fantasy.AgentTool {
+	if len(agentTools) == 0 {
+		return agentTools
+	}
+	marked := slices.Clone(agentTools)
+	last := len(marked) - 1
+	marked[last] = &cacheMarkedTool{AgentTool: marked[last], opts: opts}
+	return marked
+}
+
+// cacheMarkedTool is one turn's view of a shared tool with its own
+// provider options.
+type cacheMarkedTool struct {
+	fantasy.AgentTool
+	opts fantasy.ProviderOptions
+}
+
+func (c *cacheMarkedTool) ProviderOptions() fantasy.ProviderOptions { return c.opts }
+
+func (c *cacheMarkedTool) SetProviderOptions(opts fantasy.ProviderOptions) { c.opts = opts }
+
+// endStep marks the current step as no longer in flight. prepareStep calls
+// it before starting the next step, and the run when it ends.
+func (t *turn) endStep() {
+	if t.assistant != nil {
+		t.a.runningSteps.Del(t.assistant.ID)
+	}
+}
+
+// timed returns a copy of agentTools whose tools record on this turn when
+// they start running. Like cacheMarkedTool, the wrapper is per turn so the
+// shared tool instances carry no per-turn state.
+func (t *turn) timed(agentTools []fantasy.AgentTool) []fantasy.AgentTool {
+	timed := make([]fantasy.AgentTool, len(agentTools))
+	for i, tool := range agentTools {
+		timed[i] = &timedTool{AgentTool: tool, turn: t}
+	}
+	return timed
+}
+
+// timedTool is one turn's view of a shared tool that records when each of
+// its calls starts running, and restarts that clock when a human answers a
+// permission prompt the call raised, so the wait isn't counted. It wraps
+// the hooks wrapper, so time spent in hooks counts towards the call.
+type timedTool struct {
+	fantasy.AgentTool
+	turn *turn
+}
+
+func (tt *timedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	tt.turn.toolStarted(call.ID, time.Now())
+	ctx = permission.WithPromptObserver(ctx, call.ID, func(at time.Time) {
+		tt.turn.toolStarted(call.ID, at)
+	})
+	return tt.AgentTool.Run(ctx, call)
+}
+
+// toolStarted records that the tool call began running at at. Parallel
+// tools call it from their own goroutines, so it holds the turn lock.
+func (t *turn) toolStarted(toolCallID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.assistant.MarkToolCallStarted(toolCallID, at) {
+		return
+	}
+	// Use persistCtx so a start that races cancellation is still recorded.
+	if err := t.a.messages.Update(t.persistCtx, *t.assistant); err != nil {
+		slog.Warn("Failed to record tool call start", "tool_call_id", toolCallID, "error", err)
+	}
 }
 
 // start adds the message this turn begins from to msgs and moves the leaf
@@ -157,6 +269,9 @@ func (t *turn) streamCall(history []fantasy.Message, files []fantasy.FilePart) f
 		TopK:             call.TopK,
 		FrequencyPenalty: call.FrequencyPenalty,
 		PrepareStep:      t.prepareStep,
+		// Set on the call: fantasy's Stream doesn't apply an agent-level
+		// repair function.
+		RepairToolCall: repairToolCall(t.mcpListing),
 		OnReasoningStart: func(_ string, reasoning fantasy.ReasoningContent) error {
 			t.assistant.AppendReasoningContent(reasoning.Text)
 			return t.a.messages.Update(t.genCtx, *t.assistant)
@@ -181,6 +296,7 @@ func (t *turn) streamCall(history []fantasy.Message, files []fantasy.FilePart) f
 		OnToolResult: t.onToolResult,
 		OnStepFinish: t.onStepFinish,
 		StopWhen: []fantasy.StopCondition{
+			func([]fantasy.StepResult) bool { return t.persistFailure() != nil },
 			t.contextNearlyFull,
 			func(steps []fantasy.StepResult) bool {
 				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
@@ -196,9 +312,8 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 		prepared.Messages[i].ProviderOptions = nil
 	}
 
-	// Use latest tools (updated by SetTools when MCP tools change),
-	// filtering out lazy MCP tools that haven't been enabled.
-	prepared.Tools = filterLazyMCPTools(a.tools.Copy(), t.lazyMCPToolMap, t.lazyState)
+	// Use latest tools (updated by SetTools when MCP tools change).
+	prepared.Tools = withCachedLastTool(t.timed(a.tools.Copy()), a.getCacheControlOptions())
 
 	if a.jobEvents != nil {
 		noticeMsg, deliverErr := a.deliverJobEvents(callContext, t.call.SessionID, t.currentLeaf())
@@ -211,6 +326,9 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 			t.injected.add(options.Messages, aiMessages...)
 			prepared.Messages = append(prepared.Messages, aiMessages...)
 		}
+	}
+	if err := t.deliverSteers(callContext, options.Messages, &prepared); err != nil {
+		return callContext, prepared, err
 	}
 
 	prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, t.largeModel)
@@ -229,10 +347,12 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 		ParentMessageID: t.currentLeaf(),
 	})
 	if err != nil {
-		return callContext, prepared, err
+		return callContext, prepared, localPersistence(callContext, err)
 	}
 	t.call.state.assistantIDs = append(t.call.state.assistantIDs, assistantMsg.ID)
 	t.setLeaf(assistantMsg.ID)
+	t.endStep()
+	a.runningSteps.Set(assistantMsg.ID, struct{}{})
 	// The capture starts after the message is created so
 	// request_started_at is as close to the provider request as
 	// PrepareStep allows.
@@ -253,6 +373,35 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 	callContext = context.WithValue(callContext, ownerKey{}, struct{}{})
 	t.assistant = &assistantMsg
 	return callContext, prepared, nil
+}
+
+// deliverSteers persists the human steers pending for a subagent run as
+// one subagent_injection message and adds it to the step. Steers that
+// can't be persisted stay pending, so the call hands them back.
+func (t *turn) deliverSteers(ctx context.Context, stepMessages []fantasy.Message, prepared *fantasy.PrepareStepResult) error {
+	if t.call.steering == nil {
+		return nil
+	}
+	steers := t.call.steering.takePending()
+	if len(steers) == 0 {
+		return nil
+	}
+	msg, err := t.a.messages.Create(ctx, t.call.SessionID, message.CreateMessageParams{
+		Role:            message.User,
+		MessageType:     message.MessageTypeSubagentInjection,
+		Parts:           message.InjectionParts(steers),
+		ParentMessageID: t.currentLeaf(),
+	})
+	if err != nil {
+		t.call.steering.restore(steers)
+		return localPersistence(ctx, fmt.Errorf("deliver steer: %w", err))
+	}
+	t.call.steering.recordDelivered(steers...)
+	t.setLeaf(msg.ID)
+	aiMessages := msg.ToAIMessage()
+	t.injected.add(stepMessages, aiMessages...)
+	prepared.Messages = append(prepared.Messages, aiMessages...)
+	return nil
 }
 
 // addCacheControl marks the last system message and the last two messages
@@ -345,6 +494,7 @@ func (t *turn) onRetry(err *fantasy.ProviderError, delay time.Duration) {
 func (t *turn) onStreamFinish(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
 	finished := time.Now()
 	t.mu.Lock()
+	t.uncharged = &stepCharge{usage: usage, meta: meta}
 	if t.capture == nil {
 		t.mu.Unlock()
 		return nil
@@ -377,14 +527,32 @@ func (t *turn) onToolCall(tc fantasy.ToolCallContent) error {
 	return t.a.messages.Update(t.persistCtx, *t.assistant)
 }
 
+// interruptedToolResult answers tool calls that interrupt+steer cut off.
+const interruptedToolResult = "Interrupted by user"
+
+// cutOffByInterrupt reports whether result is a tool that failed only
+// because interrupt+steer cancelled it. Errors a tool returned on its own,
+// including a nested task call's result, are kept as they are.
+func cutOffByInterrupt(ctx context.Context, result fantasy.ToolResultContent) bool {
+	if !errors.Is(context.Cause(ctx), errSubagentInterrupted) {
+		return false
+	}
+	out, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result)
+	return ok && errors.Is(out.Error, context.Canceled)
+}
+
 func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 	toolResult := t.a.convertToToolResult(result)
+	toolResult.FinishedAt = time.Now().UnixMilli()
 	t.sanitizedMu.Lock()
 	wasSanitized := t.sanitized[result.ToolCallID]
 	t.sanitizedMu.Unlock()
 	if wasSanitized {
 		toolResult.Content = "Tool call failed: arguments were not valid JSON. Please check your tool call format and try again."
 		toolResult.IsError = true
+	}
+	if cutOffByInterrupt(t.genCtx, result) {
+		toolResult.Content = interruptedToolResult
 	}
 	// Hold the lock across the entire read→create→update sequence.
 	// OnToolResult may be called from parallel tool-execution goroutines;
@@ -445,15 +613,28 @@ func (t *turn) onStepFinish(stepResult fantasy.StepResult) error {
 
 	updatedSession, err := t.a.sessions.Get(t.genCtx, t.call.SessionID)
 	if err != nil {
-		return err
+		return t.failPersist(err)
 	}
 	usage, estimated := fallbackStepUsage(t.stepMessages, stepResult)
-	t.a.updateSessionUsage(t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated)
-	if _, err := t.a.sessions.Save(t.genCtx, updatedSession); err != nil {
-		return err
+	if err := t.a.saveSessionUsage(t.genCtx, t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated); err != nil {
+		return t.failPersist(err)
 	}
+	t.uncharged = nil
 	t.session = updatedSession
-	return t.a.messages.Update(t.genCtx, *t.assistant)
+	if err := t.a.messages.Update(t.genCtx, *t.assistant); err != nil {
+		return t.failPersist(err)
+	}
+	return nil
+}
+
+// failPersist records err from onStepFinish so the turn stops and reports
+// it. The caller must hold t.mu.
+func (t *turn) failPersist(err error) error {
+	err = localPersistence(t.genCtx, err)
+	if t.persistErr == nil {
+		t.persistErr = err
+	}
+	return err
 }
 
 func stopsTurn(stepResult fantasy.StepResult) bool {
@@ -511,6 +692,9 @@ func (t *turn) recordFailure(err error) error {
 	if isCancelErr {
 		content = "Error: user cancelled assistant tool calling"
 	}
+	if errors.Is(context.Cause(t.genCtx), errSubagentInterrupted) {
+		content = interruptedToolResult
+	}
 	for _, tc := range t.assistant.ToolCalls() {
 		if !tc.Finished {
 			tc.Finished = true
@@ -530,6 +714,7 @@ func (t *turn) recordFailure(err error) error {
 				Name:       tc.Name,
 				Content:    content,
 				IsError:    true,
+				FinishedAt: time.Now().UnixMilli(),
 			}},
 			ParentMessageID: t.currentLeaf(),
 		})
@@ -559,8 +744,14 @@ func failureFinish(err error) (reason message.FinishReason, title, detail string
 	const defaultTitle = "Provider Error"
 	var fantasyErr *fantasy.Error
 	var providerErr *fantasy.ProviderError
+	var timeoutErr *requestTimeoutError
 	if errors.Is(err, context.Canceled) {
 		return message.FinishReasonCanceled, "User canceled request", ""
+	}
+	// Before the provider branches, so our own deadline is never reported
+	// as a provider error.
+	if errors.As(err, &timeoutErr) {
+		return message.FinishReasonError, "Request timed out", timeoutErr.userMessage()
 	}
 	if errors.As(err, &providerErr) {
 		return message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message

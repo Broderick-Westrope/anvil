@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
@@ -24,7 +25,13 @@ type model struct {
 	anim   *anim.Anim
 }
 
-func (m model) Init() tea.Cmd  { return m.anim.Start() }
+type tickMsg struct{}
+
+func tick() tea.Cmd {
+	return tea.Tick(anim.FrameInterval(), func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+func (m model) Init() tea.Cmd  { return tick() }
 func (m model) View() tea.View { return tea.NewView(m.anim.Render()) }
 
 // Update implements tea.Model.
@@ -36,9 +43,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel()
 			return m, tea.Quit
 		}
-	case anim.StepMsg:
-		cmd := m.anim.Animate(msg)
-		return m, cmd
+	case tickMsg:
+		m.anim.Advance()
+		return m, tick()
 	}
 	return m, nil
 }

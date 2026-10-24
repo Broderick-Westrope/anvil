@@ -29,11 +29,12 @@ import (
 //     a change is never applied.
 //   - options.project_directory: a reload keeps the existing directory,
 //     so the raw configured values are compared.
-//   - options.tui: only compact_mode and transparent are captured at UI
-//     construction. diff_mode and completions are read live, so they are
-//     not compared. The in-app toggles apply compact_mode and transparent
-//     live and record that in the startup snapshot, as Docker MCP
-//     enablement does for mcp.
+//   - options.tui: only compact_mode, transparent and diagrams are captured
+//     at startup (diagrams through ConfigStore.DiagramsEnabled, which both
+//     the UI and the system prompt read). diff_mode and completions are
+//     read live, so they are not compared. The in-app toggles apply
+//     compact_mode and transparent live and record that in the startup
+//     snapshot, as Docker MCP enablement does for mcp.
 func RestartRequired(startup, cur *Config, startupB, curB *TrustedBouncer, startupRaw, curRaw string) []string {
 	if startup == nil || cur == nil {
 		return nil
@@ -103,16 +104,18 @@ func bouncerConnection(b *Bouncer) Bouncer {
 type tuiRestart struct {
 	compactMode bool
 	transparent bool
+	diagrams    bool
 }
 
 func tuiRestartSettings(c *Config) tuiRestart {
 	if c.Options == nil || c.Options.TUI == nil {
-		return tuiRestart{}
+		return tuiRestart{diagrams: true}
 	}
 	tui := c.Options.TUI
 	return tuiRestart{
 		compactMode: tui.CompactMode,
 		transparent: tui.Transparent != nil && *tui.Transparent,
+		diagrams:    tui.DiagramsEnabled(),
 	}
 }
 

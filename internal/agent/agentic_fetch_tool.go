@@ -118,7 +118,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				tools.NewGlobTool(tmpDir, c.cfg.Config().Tools.Glob),
 				tools.NewGrepTool(tmpDir, c.cfg.Config().Tools.Grep),
 				tools.NewSourcegraphTool(client),
-				tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, nil, nil, tmpDir),
+				tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, nil, nil, nil, tmpDir),
 			}
 
 			// Sub-agent tools run without hook interception. The top-level
@@ -128,6 +128,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 
 			agent := NewSessionAgent(SessionAgentOptions{
 				admission:            c.admission,
+				runningSteps:         c.runningSteps,
 				IsSubAgent:           true,
 				LargeModel:           fetchModel,
 				SmallModel:           smallModel,

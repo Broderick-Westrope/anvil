@@ -92,6 +92,14 @@ type SessionAgentCall struct {
 	// instead of a user prompt.
 	wake bool
 
+	// Injections, when set, start the run instead of a user prompt: they
+	// are persisted as one subagent_injection message, and Prompt becomes
+	// their rendered text.
+	Injections []message.InjectionContent
+	// steering, when set, supplies human steers to deliver at each step
+	// boundary of a subagent run.
+	steering *subagentLease
+
 	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
 	// fails with an authentication error (HTTP 401). The callback should
 	// refresh credentials and return nil on success, in which case
@@ -105,8 +113,7 @@ type SessionAgent interface {
 	SetModels(large Model, small Model)
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
-	SetLazyMCPToolMap(m map[string]string)
-	SetConnectFn(fn tools.ConnectFn)
+	SetMCPListing(listing mcpListing)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
 	CancelAll()
@@ -123,6 +130,11 @@ type SessionAgent interface {
 	RunWake(ctx context.Context, call SessionAgentCall, eligible func() bool) (*fantasy.AgentResult, error)
 	IsSummarizing(sessionID string) bool
 	Model() Model
+	// RequestOverhead is the size, in characters, of what every request
+	// this agent sends carries besides the conversation: its system
+	// prompt, with the MCP instructions a run adds, and the schemas of the
+	// tools its model sees.
+	RequestOverhead() int
 }
 
 type Model struct {
@@ -138,8 +150,10 @@ type sessionAgent struct {
 	systemPromptPrefix *csync.Value[string]
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
-	lazyMCPToolMap     *csync.Map[string, string]
-	connectFn          *csync.Value[tools.ConnectFn]
+	mcpListing         *csync.Value[mcpListing]
+	// runningSteps holds the assistant message IDs of steps in flight.
+	// The coordinator shares one set between all its agents.
+	runningSteps *csync.Map[string, struct{}]
 
 	depth                int
 	isSubAgent           bool
@@ -202,6 +216,7 @@ func (a *sessionAgent) WaitBackgroundJobs() {
 
 type SessionAgentOptions struct {
 	admission            *admission
+	runningSteps         *csync.Map[string, struct{}]
 	LargeModel           Model
 	SmallModel           Model
 	SystemPromptPrefix   string
@@ -233,7 +248,11 @@ func NewSessionAgent(
 	if opts.admission == nil {
 		opts.admission = newAdmission(context.Background())
 	}
+	if opts.runningSteps == nil {
+		opts.runningSteps = csync.NewMap[string, struct{}]()
+	}
 	return &sessionAgent{
+		runningSteps:         opts.runningSteps,
 		largeModel:           csync.NewValue(opts.LargeModel),
 		smallModel:           csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
@@ -244,8 +263,7 @@ func NewSessionAgent(
 		messages:             opts.Messages,
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
-		lazyMCPToolMap:       csync.NewMap[string, string](),
-		connectFn:            csync.NewValue[tools.ConnectFn](nil),
+		mcpListing:           csync.NewValue(mcpListing{}),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
@@ -264,6 +282,9 @@ func NewSessionAgent(
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+	if len(call.Injections) > 0 {
+		call.Prompt = message.RenderInjections(call.Injections)
+	}
 	if call.Prompt == "" && !message.ContainsTextAttachment(call.Attachments) {
 		return nil, ErrEmptyPrompt
 	}
@@ -295,15 +316,15 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
 	agentTools := a.tools.Copy()
 	t := &turn{
-		a:              a,
-		call:           call,
-		largeModel:     a.largeModel.Get(),
-		providerCfg:    a.providerConfig.Get(),
-		promptPrefix:   a.systemPromptPrefix.Get(),
-		lazyMCPToolMap: a.lazyMCPToolMap.Copy(),
-		injected:       newInjectedMessages(),
-		runID:          uuid.NewString(),
-		sanitized:      make(map[string]bool),
+		a:            a,
+		call:         call,
+		largeModel:   a.largeModel.Get(),
+		providerCfg:  a.providerConfig.Get(),
+		promptPrefix: a.systemPromptPrefix.Get(),
+		mcpListing:   a.mcpListing.Get(),
+		injected:     newInjectedMessages(),
+		runID:        uuid.NewString(),
+		sanitized:    make(map[string]bool),
 	}
 
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
@@ -321,22 +342,10 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		t.parentSessionID = currentSession.ParentSessionID
 	}
 
-	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
+	msgs, _, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return a.abortSetup(ctx, fmt.Errorf("failed to get session messages: %w", err))
 	}
-
-	// Derive the lazy MCP state from conversation history and inject
-	// into the context so tool handlers can query it.
-	initialEnabled := deriveLazyMCPState(raw)
-	t.lazyState = tools.NewLazyMCPState(initialEnabled)
-	ctx = tools.WithLazyMCPState(ctx, t.lazyState)
-
-	// Reconnect replayed-enabled deferred servers. This runs at Run
-	// start (not session load) so browsing history never triggers
-	// connections. Failures are non-fatal: the server is downgraded
-	// to not-enabled for this run.
-	reconnectDeferredServers(ctx, a.connectFn.Get(), initialEnabled, t.lazyState)
 
 	agent := t.newAgent(agentTools, a.systemPrompt.Get())
 
@@ -383,13 +392,23 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			defer a.lastTurn.Del(call.SessionID)
 		}
 	}
+	// Deferred so that no exit, including a panic recovered upstream,
+	// leaves the last step looking in flight and its calls timing forever.
+	defer t.endStep()
 	result, err := agent.Stream(ctx, t.streamCall(history, files))
+	if err == nil {
+		// Fantasy ignores OnStepFinish's error, so a failed step save
+		// surfaces here.
+		err = t.persistFailure()
+	}
 	if err != nil {
 		if t.assistant == nil {
 			return result, err
 		}
-		if recordErr := t.recordFailure(err); recordErr != nil {
-			return nil, recordErr
+		recordErr := t.recordFailure(err)
+		t.chargeUnfinishedStep()
+		if recordErr != nil {
+			return nil, localPersistence(t.persistCtx, recordErr)
 		}
 		return nil, err
 	}
@@ -449,6 +468,9 @@ func (a *sessionAgent) summarizeAndResume(ctx context.Context, call SessionAgent
 	if !interrupted {
 		return nil
 	}
+	// The injections were persisted by the interrupted turn; the
+	// continuation starts from its own prompt.
+	call.Injections = nil
 	if call.wake {
 		call.wake = false
 		call.Prompt = "The previous session was interrupted because it got too long while handling background job updates. Continue from the summary."
@@ -558,8 +580,30 @@ func (a *sessionAgent) abortSetup(ctx context.Context, err error) (*fantasy.Agen
 	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
 		owner.handoffOnError = true
 	}
-	return nil, err
+	return nil, localPersistence(ctx, err)
 }
+
+// localPersistence marks err from a database write or read made with ctx
+// as a failure of local persistence, so a task call doesn't retry it. A
+// failure that only happened because ctx was cancelled, such as by an
+// interrupt, isn't one.
+func localPersistence(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return err
+	}
+	return persistenceError{err}
+}
+
+// persistenceError marks err as a failure of local persistence, without
+// changing its message.
+type persistenceError struct{ err error }
+
+func (e persistenceError) Error() string        { return e.err.Error() }
+func (e persistenceError) Unwrap() error        { return e.err }
+func (e persistenceError) Is(target error) bool { return target == errLocalPersistence }
 
 func (a *sessionAgent) reportIdleWhenDone(ctx context.Context, sessionID string) {
 	if a.onIdle == nil {
@@ -584,7 +628,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	}
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
+		return localPersistence(ctx, fmt.Errorf("failed to get session: %w", err))
 	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
@@ -597,7 +641,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	call := a.newSideCall(usageKindSummary, sessionID, parentID, largeModel)
 	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return err
+		return localPersistence(ctx, err)
 	}
 	if len(msgs) == 0 {
 		// Nothing to summarize.
@@ -640,7 +684,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		MessageType:     message.MessageTypeCompaction,
 	})
 	if err != nil {
-		return err
+		return localPersistence(ctx, err)
 	}
 
 	call.messageID = compactionMsg.ID
@@ -676,10 +720,8 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	// silently losing all compacted history.
 	err = a.messages.Update(persistCtx, compactionMsg)
 	if err != nil {
-		return err
+		return localPersistence(persistCtx, err)
 	}
-
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
 
 	// Update session usage. The leaf already points to the compaction
 	// message (advanced atomically by Create() above).
@@ -687,9 +729,16 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	currentSession.CompletionTokens = summaryCompletionTokens(usage, compactionMsg)
 	currentSession.PromptTokens = 0
 	currentSession.EstimatedUsage = usageIsZero(usage)
-	_, err = a.sessions.Save(genCtx, currentSession)
+	// The summary is finished and billed, so it's recorded even if the
+	// user cancels now.
+	_, err = a.sessions.Save(persistCtx, currentSession)
 	if err != nil {
-		return err
+		return localPersistence(persistCtx, err)
+	}
+	cost := usageCost(largeModel, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
+	err = a.sessions.AddCost(persistCtx, sessionID, cost)
+	if err != nil {
+		return localPersistence(persistCtx, err)
 	}
 
 	a.reportIdleWhenDone(ctx, sessionID)
@@ -740,6 +789,18 @@ func sessionHeaders(sessionID string) map[string]string {
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall, parentMessageID string) (message.Message, error) {
+	if len(call.Injections) > 0 {
+		msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
+			Role:            message.User,
+			MessageType:     message.MessageTypeSubagentInjection,
+			Parts:           message.InjectionParts(call.Injections),
+			ParentMessageID: parentMessageID,
+		})
+		if err != nil {
+			return message.Message{}, fmt.Errorf("failed to create injection message: %w", err)
+		}
+		return msg, nil
+	}
 	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
@@ -768,24 +829,9 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			),
 		))
 	}
-	// Collect all tool call IDs present in assistant messages and all tool
-	// result IDs present in tool messages. This lets us detect both orphaned
-	// tool results (result without a call) and orphaned tool calls (call
-	// without a result).
-	knownToolCallIDs := make(map[string]struct{})
-	knownToolResultIDs := make(map[string]struct{})
-	for _, m := range msgs {
-		switch m.Role {
-		case message.Assistant:
-			for _, tc := range m.ToolCalls() {
-				knownToolCallIDs[tc.ID] = struct{}{}
-			}
-		case message.Tool:
-			for _, tr := range m.ToolResults() {
-				knownToolResultIDs[tr.ToolCallID] = struct{}{}
-			}
-		}
-	}
+	// Tool results are emitted right after the assistant message that
+	// requested them, not at their stored position; see toolResultIndex.
+	results := newToolResultIndex(msgs)
 
 	for _, m := range msgs {
 		// Skip empty messages, and assistant messages without content or
@@ -795,13 +841,11 @@ If not, please feel free to ignore. Again do not mention this message to the use
 		}
 		switch m.Role {
 		case message.Tool:
-			if msg, ok := filterOrphanedToolResults(m, knownToolCallIDs); ok {
-				history = append(history, msg)
-			}
+			// Tool results are emitted right after their assistant message.
 		case message.Assistant:
 			history = append(history, m.ToAIMessage()...)
-			if msg, ok := syntheticToolResultsForOrphanedCalls(m, knownToolResultIDs); ok {
-				history = append(history, msg)
+			if len(m.ToolCalls()) > 0 {
+				history = append(history, results.take(m))
 			}
 		default:
 			history = append(history, m.ToAIMessage()...)
@@ -849,70 +893,88 @@ func filterFileParts(parts []fantasy.MessagePart) []fantasy.MessagePart {
 	return filtered
 }
 
-// filterOrphanedToolResults converts a tool message to a fantasy.Message,
-// dropping any tool result parts whose tool_call_id has no matching tool call
-// in the known set. An orphaned result causes API validation to fail on every
-// subsequent turn, permanently locking the session. Returns the filtered
-// message and true if at least one valid part remains.
-func filterOrphanedToolResults(m message.Message, knownToolCallIDs map[string]struct{}) (fantasy.Message, bool) {
-	aiMsgs := m.ToAIMessage()
-	if len(aiMsgs) == 0 {
-		return fantasy.Message{}, false
-	}
-	var validParts []fantasy.MessagePart
-	for _, part := range aiMsgs[0].Content {
-		tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
-		if !ok {
-			validParts = append(validParts, part)
-			continue
+// toolResultIndex holds a transcript's tool results by the ID of the call
+// they answer. Messages can be written to a session concurrently (e.g.
+// resuming while a tool is still running), which interleaves user messages
+// between a tool call and its result, or stores a result before its call.
+// LLM APIs require every tool call to be followed by its results before any
+// other message, and strict-adjacency providers (e.g. Kimi, DeepSeek)
+// reject the request otherwise, permanently locking the session. So results
+// are re-emitted next to the assistant message that requested them.
+type toolResultIndex map[string][]fantasy.MessagePart
+
+// newToolResultIndex indexes the tool results in msgs, dropping any result
+// whose call is not in msgs: an orphaned result fails API validation on
+// every later turn.
+func newToolResultIndex(msgs []message.Message) toolResultIndex {
+	knownCalls := make(map[string]struct{})
+	var toolMsgs []fantasy.Message
+	for _, m := range msgs {
+		switch m.Role {
+		case message.Assistant:
+			for _, tc := range m.ToolCalls() {
+				knownCalls[tc.ID] = struct{}{}
+			}
+		case message.Tool:
+			toolMsgs = append(toolMsgs, m.ToAIMessage()...)
 		}
-		if _, known := knownToolCallIDs[tr.ToolCallID]; known {
-			validParts = append(validParts, part)
-		} else {
-			slog.Warn("Dropping orphaned tool result with no matching tool call",
-				"tool_call_id", tr.ToolCallID,
-			)
+	}
+	index := make(toolResultIndex)
+	for _, aiMsg := range toolMsgs {
+		for _, part := range aiMsg.Content {
+			tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
+			_, known := knownCalls[tr.ToolCallID]
+			switch {
+			case !ok:
+				// Tool-role ToAIMessage only emits ToolResultParts today;
+				// log so unexpected parts do not vanish silently.
+				slog.Warn(
+					"Dropping unexpected non-tool-result part from tool message",
+					"part_type", fmt.Sprintf("%T", part),
+				)
+			case !known:
+				slog.Warn(
+					"Dropping orphaned tool result with no matching tool call",
+					"tool_call_id", tr.ToolCallID,
+				)
+			default:
+				index[tr.ToolCallID] = append(index[tr.ToolCallID], part)
+			}
 		}
 	}
-	if len(validParts) == 0 {
-		return fantasy.Message{}, false
-	}
-	msg := aiMsgs[0]
-	msg.Content = validParts
-	return msg, true
+	return index
 }
 
-// syntheticToolResultsForOrphanedCalls returns a tool message containing
-// synthetic tool results for any tool calls in the assistant message that
-// have no matching result in knownToolResultIDs. LLM APIs require every
-// tool_use to be immediately followed by a tool_result; an interrupted
-// session can leave orphaned tool_use blocks that permanently lock the
-// conversation. Returns the message and true if any synthetic results were
-// produced.
-func syntheticToolResultsForOrphanedCalls(m message.Message, knownToolResultIDs map[string]struct{}) (fantasy.Message, bool) {
-	var syntheticParts []fantasy.MessagePart
+// take builds the tool message that must immediately follow the assistant
+// message m, removing its results from the index so a result stored in a
+// message that also holds results for other assistants' calls is emitted
+// exactly once. Tool calls without any stored result (e.g. an interrupted
+// session) receive a synthetic error response so the conversation keeps
+// working.
+func (idx toolResultIndex) take(m message.Message) fantasy.Message {
+	content := make([]fantasy.MessagePart, 0, len(m.ToolCalls()))
 	for _, tc := range m.ToolCalls() {
-		if _, hasResult := knownToolResultIDs[tc.ID]; hasResult {
+		parts := idx[tc.ID]
+		delete(idx, tc.ID)
+		if len(parts) > 0 {
+			content = append(content, parts...)
 			continue
 		}
 		slog.Warn("Injecting synthetic tool result for orphaned tool call",
 			"tool_call_id", tc.ID,
 			"tool_name", tc.Name,
 		)
-		syntheticParts = append(syntheticParts, fantasy.ToolResultPart{
+		content = append(content, fantasy.ToolResultPart{
 			ToolCallID: tc.ID,
 			Output: fantasy.ToolResultOutputContentError{
 				Error: errors.New("tool call was interrupted and did not produce a result, you may retry this call if the result is still needed"),
 			},
 		})
 	}
-	if len(syntheticParts) == 0 {
-		return fantasy.Message{}, false
-	}
 	return fantasy.Message{
 		Role:    fantasy.MessageRoleTool,
-		Content: syntheticParts,
-	}, true
+		Content: content,
+	}
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Session) (filtered, raw []message.Message, err error) {
@@ -1089,7 +1151,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 
 	// Calculate usage and cost.
 	cost := usageCost(model, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
-	promptTokens := resp.TotalUsage.InputTokens + resp.TotalUsage.CacheCreationTokens
+	promptTokens := contextTokens(resp.TotalUsage)
 	completionTokens := resp.TotalUsage.OutputTokens
 
 	// Atomically update only title and usage fields to avoid overriding other
@@ -1148,20 +1210,44 @@ func usageCost(model Model, usage fantasy.Usage, overrideCost *float64, estimate
 		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
 }
 
-func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
+// updateSessionUsage applies usage to session in memory and returns the
+// cost it added.
+func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) float64 {
 	if !usageIsZero(usage) {
 		session.EstimatedUsage = estimated
 	}
-
-	session.Cost += usageCost(model, usage, overrideCost, estimated)
+	cost := usageCost(model, usage, overrideCost, estimated)
+	session.Cost += cost
 	updateSessionTokenCounters(session, usage)
+	return cost
+}
+
+// saveSessionUsage applies usage to sess and saves it. Cost is added
+// separately, because Save never writes it.
+func (a *sessionAgent) saveSessionUsage(ctx context.Context, model Model, sess *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) error {
+	cost := a.updateSessionUsage(model, sess, usage, overrideCost, estimated)
+	if _, err := a.sessions.Save(ctx, *sess); err != nil {
+		return err
+	}
+	return a.sessions.AddCost(ctx, sess.ID, cost)
+}
+
+// contextTokens returns the size of the prompt the provider processed for
+// a step. Providers with prompt caching (Anthropic, Bedrock, Vercel) report
+// the prompt as three disjoint buckets: tokens served from cache, tokens
+// newly written to the cache, and the uncached remainder. All three occupy
+// the context window, so all three count. Providers without cache writes
+// leave CacheCreationTokens at zero, and the OpenAI-style providers already
+// subtract cached tokens from InputTokens, so nothing is counted twice.
+func contextTokens(usage fantasy.Usage) int64 {
+	return usage.InputTokens + usage.CacheReadTokens + usage.CacheCreationTokens
 }
 
 func updateSessionTokenCounters(session *session.Session, usage fantasy.Usage) {
 	if usage.OutputTokens != 0 {
 		session.CompletionTokens = usage.OutputTokens
 	}
-	if promptTokens := usage.InputTokens + usage.CacheReadTokens; promptTokens != 0 {
+	if promptTokens := contextTokens(usage); promptTokens != 0 {
 		session.PromptTokens = promptTokens
 	}
 }
@@ -1223,12 +1309,29 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 	a.tools.SetSlice(tools)
 }
 
-func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
-	a.lazyMCPToolMap.Reset(m)
+func (a *sessionAgent) SetMCPListing(listing mcpListing) {
+	a.mcpListing.Set(listing)
 }
 
-func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
-	a.connectFn.Set(fn)
+func (a *sessionAgent) RequestOverhead() int {
+	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(a.mcpListing.Get()))
+	for _, tool := range a.tools.Copy() {
+		info := tool.Info()
+		schema, err := json.Marshal(struct {
+			Name        string   `json:"name"`
+			Description string   `json:"description"`
+			Parameters  any      `json:"parameters"`
+			Required    []string `json:"required"`
+		}{info.Name, info.Description, info.Parameters, info.Required})
+		if err != nil {
+			// Unencodable parameters can't be sent either; count what is
+			// known.
+			size += len(info.Name) + len(info.Description)
+			continue
+		}
+		size += len(schema)
+	}
+	return size
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
@@ -1269,7 +1372,7 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 			} else {
 				content := r.Text
 				if content == "" {
-					content = fmt.Sprintf("Loaded %s content", r.MediaType)
+					content = message.MediaPlaceholder(r.MediaType)
 				}
 				baseResult.Content = content
 				baseResult.Data = r.Data

@@ -66,6 +66,7 @@ type (
 	ActionNewSession                  struct{}
 	ActionToggleHelp                  struct{}
 	ActionToggleCompactMode           struct{}
+	ActionToggleMouseSupport          struct{}
 	ActionToggleThinking              struct{}
 	ActionTogglePills                 struct{}
 	ActionExternalEditor              struct{}
@@ -100,12 +101,12 @@ type (
 		Skills    []string          // Skill names to preload.
 		Location  string            // Path to the command's COMMAND.md.
 		Args      map[string]string // Actual argument values
-		// CommandID, Source, Workflow and Problems describe a workflow
-		// command; Workflow is empty for prompt commands.
-		CommandID string
-		Source    string
-		Workflow  string
-		Problems  []string
+		// Command is the whole command when the palette runs it, so a
+		// feature that runs commands sees what the slash path sees. It is
+		// zero for actions built elsewhere, which no feature claims, and
+		// rides along when the arguments dialog sends the palette's action
+		// back. The fields above are what upstream's prompt path reads.
+		Command commands.CustomCommand
 	}
 	// ActionRunMCPPrompt is a message to run a custom command.
 	ActionRunMCPPrompt struct {
@@ -165,11 +166,6 @@ type (
 		Instructions string
 		Source       string
 	}
-	// ActionToggleLazyMCP is dispatched when a lazy MCP is toggled.
-	ActionToggleLazyMCP struct {
-		ServerName string
-		Enabled    bool
-	}
 	// ActionHardToggleMCP is dispatched to enable or disable an MCP server.
 	ActionHardToggleMCP struct {
 		ServerName string
@@ -196,7 +192,12 @@ type (
 		Role            message.MessageRole
 		Source          message.Message
 	}
-	ActionReturnToPreBranch struct{}
+	// ActionReturnToPreBranch returns to the conversation before the last
+	// branch. Pending is set when nothing has been sent since the branch,
+	// so the draft the branch replaced comes back too.
+	ActionReturnToPreBranch struct {
+		Pending bool
+	}
 )
 
 // Messages for API key input dialog.
@@ -226,6 +227,23 @@ type (
 	// ActionOAuthErrored is sent when the device flow encounters an error.
 	ActionOAuthErrored struct {
 		Error error
+	}
+
+	// ActionCloseOAuth closes the OAuth dialog and runs the given cleanup
+	// command, cancelling any in-flight authorization so a dismissed
+	// dialog does not leave a poller or loopback listener running.
+	ActionCloseOAuth struct {
+		Cmd tea.Cmd
+	}
+
+	// ActionSelectAuthMethod is sent when the user picks how to
+	// authenticate a provider that supports both an account sign-in and an
+	// API key.
+	ActionSelectAuthMethod struct {
+		Provider  catwalk.Provider
+		Model     config.SelectedModel
+		ModelType config.SelectedModelType
+		UseOAuth  bool
 	}
 )
 

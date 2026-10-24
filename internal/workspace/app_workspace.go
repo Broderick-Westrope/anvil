@@ -12,9 +12,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/lsp"
 	"github.com/Broderick-Westrope/anvil/internal/mcpauth"
@@ -23,7 +25,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
-	"github.com/Broderick-Westrope/anvil/internal/workflow"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -146,22 +147,18 @@ func (w *AppWorkspace) MoveLeaf(ctx context.Context, sessionID, leafMessageID st
 	return w.app.Sessions.MoveLeaf(ctx, sessionID, leafMessageID)
 }
 
-// WriteMetadataEntry creates a metadata message and advances the leaf.
-// It's written through the session's queue, after work in flight, onto the
-// session's leaf at that point, so it can't land beside something written
-// meanwhile (a turn, or a workflow's marker) on a side branch. params'
-// ParentMessageID must be empty; it's decided here.
+// WriteMetadataEntry creates a metadata message under the session's
+// current leaf, read in the same transaction, and advances the leaf to it.
+// It's written through the session's queue, after work in flight, so it
+// can't land beside something written meanwhile (a turn, or a workflow's
+// marker) on a side branch. params' ParentMessageID must be empty; it's
+// decided here.
 func (w *AppWorkspace) WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error {
 	if params.ParentMessageID != "" {
 		return errors.New("metadata entries go on the session's current leaf; leave ParentMessageID empty")
 	}
 	write := func(ctx context.Context) error {
-		s, err := w.app.Sessions.Get(ctx, sessionID)
-		if err != nil {
-			return err
-		}
-		params.ParentMessageID = s.LeafMessageID
-		_, err = w.app.Messages.Create(ctx, sessionID, params)
+		_, err := w.app.Messages.AppendToLeaf(ctx, sessionID, params)
 		return err
 	}
 	if w.app.AgentCoordinator == nil {
@@ -207,6 +204,13 @@ func (w *AppWorkspace) AgentIsSessionBusy(sessionID string) bool {
 	return w.app.AgentCoordinator.IsSessionBusy(sessionID)
 }
 
+func (w *AppWorkspace) AgentIsStepRunning(assistantMessageID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.IsStepRunning(assistantMessageID)
+}
+
 func (w *AppWorkspace) AgentModel() AgentModel {
 	if w.app.AgentCoordinator == nil {
 		return AgentModel{}
@@ -236,6 +240,45 @@ func (w *AppWorkspace) AgentQueuedPromptsList(sessionID string) []string {
 	return w.app.AgentCoordinator.QueuedPromptsList(sessionID)
 }
 
+func (w *AppWorkspace) AgentSteerSubagent(childSessionID, text string, interrupt bool) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.SteerSubagent(childSessionID, text, interrupt)
+}
+
+func (w *AppWorkspace) AgentCancelSubagent(childSessionID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.CancelSubagent(childSessionID)
+}
+
+func (w *AppWorkspace) AgentSubagentRunning(childSessionID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.SubagentRunning(childSessionID)
+}
+
+func (w *AppWorkspace) AgentSubagentPendingSteers(childSessionID string) []string {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.SubagentPendingSteers(childSessionID)
+}
+
+func (w *AppWorkspace) GetSubagentCall(ctx context.Context, callID string) (session.SubagentCall, error) {
+	return w.app.Sessions.GetSubagentCall(ctx, callID)
+}
+
+func (w *AppWorkspace) AgentTakeReturnedSteers(rootSessionID string) []agent.SubagentSteersReturned {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.TakeReturnedSteers(rootSessionID)
+}
+
 func (w *AppWorkspace) AgentClearQueue(sessionID string) {
 	if w.app.AgentCoordinator != nil {
 		w.app.AgentCoordinator.ClearQueue(sessionID)
@@ -247,6 +290,39 @@ func (w *AppWorkspace) AgentSummarize(ctx context.Context, sessionID string) err
 		return errors.New("agent coordinator not initialized")
 	}
 	return w.app.AgentCoordinator.Summarize(ctx, sessionID)
+}
+
+func (w *AppWorkspace) AgentBranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error) {
+	if w.app.AgentCoordinator == nil {
+		return false, errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.BranchWorthSummarizing(ctx, fromLeaf, target)
+}
+
+func (w *AppWorkspace) AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error) {
+	return w.app.BranchSummaries.Start(req)
+}
+
+func (w *AppWorkspace) AgentCancelBranchSummary(sessionID string) {
+	w.app.BranchSummaries.Cancel(sessionID)
+}
+
+func (w *AppWorkspace) AgentBranchSummaryRunning(sessionID string) bool {
+	return w.app.BranchSummaries.Running(sessionID)
+}
+
+func (w *AppWorkspace) AgentDiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.DiscardBranchSummary(ctx, sessionID, summaryID)
+}
+
+func (w *AppWorkspace) AgentBranchSummarizers() []string {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.BranchSummarizers()
 }
 
 func (w *AppWorkspace) AgentRegenerateTitle(ctx context.Context, sessionID string) error {
@@ -394,6 +470,10 @@ func (w *AppWorkspace) Config() *config.Config {
 	return w.store.Config()
 }
 
+func (w *AppWorkspace) DiagramsEnabled() bool {
+	return w.store.DiagramsEnabled()
+}
+
 func (w *AppWorkspace) WorkingDir() string {
 	return w.store.WorkingDir()
 }
@@ -516,6 +596,13 @@ func (w *AppWorkspace) MCPRefreshResources(ctx context.Context, name string) {
 
 func (w *AppWorkspace) RefreshMCPTools(ctx context.Context, name string) {
 	mcptools.RefreshTools(ctx, w.store, name)
+}
+
+func (w *AppWorkspace) MCPRoutes() ([]agenttools.MCPRouteInfo, bool) {
+	if w.app.AgentCoordinator == nil {
+		return nil, false
+	}
+	return w.app.AgentCoordinator.MCPRoutes()
 }
 
 func (w *AppWorkspace) ReadMCPResource(ctx context.Context, name, uri string) ([]MCPResourceContents, error) {
@@ -703,13 +790,20 @@ func (w *AppWorkspace) WorkflowRunView(ctx context.Context, runID string) (workf
 	return w.app.Workflows.RunView(ctx, runID)
 }
 
-func (w *AppWorkspace) WorkflowMissing(scriptPath string) ([]string, error) {
+func (w *AppWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
+	out := slices.Clone(cmds)
 	if w.app.Workflows == nil {
-		return nil, ErrWorkflowsUnavailable
+		return out
 	}
-	script, err := workflow.Load(scriptPath)
-	if err != nil {
-		return nil, err
+	for i, cmd := range out {
+		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
+			continue
+		}
+		problems, err := w.app.Workflows.Check(cmd.Workflow)
+		if err != nil {
+			problems = []string{err.Error()}
+		}
+		out[i].Problems = problems
 	}
-	return script.Missing(w.app.Workflows.Catalog()), nil
+	return out
 }

@@ -25,6 +25,8 @@ cost.
 
 ### 1. Job end-state knowledge is restated and re-parsed (Strong)
 
+**Status (2026-10-12):** Open.
+
 - **Flags:** Growing switch, Duplicated concept, Information leakage
 - **Evidence:**
   - The five `End*` reasons (`shell/background.go:424-430`) are switched on
@@ -52,6 +54,8 @@ cost.
   events carry structure to the TUI instead of prose.
 
 ### 2. The tool preamble is hand-rolled with drift (Strong)
+
+**Status (2026-10-12):** Partly done. #88 added `requestPermission` (used by bash, fetch, download and view) and #92 fixed the missing `ToolCallID`s. The session guard, tracked writes and the remaining permission call sites are still hand-rolled.
 
 - **Flags:** Duplicated concept, Two ways to do one task, Data clumps
 - **Evidence:**
@@ -81,6 +85,8 @@ cost.
 
 ### 3. Six copies of the HTTP client setup (Worth exploring)
 
+**Status (2026-10-12):** Open.
+
 - **Flags:** Duplicated concept
 - **Evidence:** the same transport clone in `fetch.go`, `download.go`,
   `sourcegraph.go`, `web_search.go`, `web_fetch.go` and
@@ -89,6 +95,8 @@ cost.
 - **Direction:** one constructor taking the timeout.
 
 ### 4. `skillContentRe` is defined twice and has drifted (Strong, small)
+
+**Status (2026-10-12):** Done in #94.
 
 - **Flags:** Information leakage
 - **Evidence:** `skills/format.go:10` captures the body and is anchored by
@@ -99,6 +107,8 @@ cost.
 
 ### 5. The message part registry is four hand-synced lists (Worth exploring)
 
+**Status (2026-10-12):** Partly done. #85 made `unmarshalParts` a table; `marshalParts` is still a switch.
+
 - **Flags:** Hand-synced state, Growing switch
 - **Evidence:** 13 `partType` constants (`message.go`), a 13-case
   `marshalParts` switch, the decoder table #85 adds for `unmarshalParts`,
@@ -108,6 +118,8 @@ cost.
   read. `message.go` is upstream, so weigh sync cost.
 
 ### 6. `shell/background.go` mixes six concerns (Speculative)
+
+**Status (2026-10-12):** Open.
 
 - **Flags:** God module, Hand-synced state
 - **Evidence:** 1,282 lines covering output buffering, job state and

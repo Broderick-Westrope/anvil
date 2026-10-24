@@ -4,10 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -38,10 +39,8 @@ func connectMCPServers(t *testing.T, instructions map[string]string, lazy ...str
 		ts := httptest.NewServer(sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server { return server }, nil))
 		t.Cleanup(ts.Close)
 		m := config.MCPConfig{Type: config.MCPHttp, URL: ts.URL}
-		for _, l := range lazy {
-			if l == name {
-				m.LazyDescription = "Lazy " + name
-			}
+		if slices.Contains(lazy, name) {
+			m.LazyDescription = "Lazy " + name
 		}
 		cfg.Config().MCP[name] = m
 		require.NoError(t, mcp.InitializeSingle(t.Context(), name, cfg, nil))
@@ -57,42 +56,34 @@ func TestMCPInstructions(t *testing.T) {
 	// Names sort so every skipped server comes before an included one; a
 	// loop that stopped at the first skipped server would drop the rest.
 	connectMCPServers(t, map[string]string{
-		"test-instr-c-lazy":  "Use lazy.",
-		"test-instr-d-quiet": "",
-		"test-instr-e-plain": "Use plain.",
-		"test-instr-f-other": "Use other.",
-	}, "test-instr-c-lazy")
+		"test-instr-c-catalogue": "Use catalogue.",
+		"test-instr-d-quiet":     "",
+		"test-instr-e-plain":     "Use plain.",
+		"test-instr-f-other":     "Use other.",
+	})
 	mcp.SetStateWithErrorForTest("test-instr-a-broken", mcp.StateError, context.DeadlineExceeded)
 	t.Cleanup(func() { mcp.DeleteStateForTest("test-instr-a-broken") })
 	mcp.SetStateForTest("test-instr-b-deferred", mcp.StateDeferred)
 	t.Cleanup(func() { mcp.DeleteStateForTest("test-instr-b-deferred") })
 
-	lazyMap := map[string]string{"mcp_test-instr-c-lazy_ping": "test-instr-c-lazy"}
+	catalogue := map[string]bool{"test-instr-c-catalogue": true}
 	tests := map[string]struct {
-		lazyMap map[string]string
-		enabled []string
+		listing mcpListing
 		want    string
 	}{
-		"no lazy tools": {
-			want: "Use lazy.\n\nUse plain.\n\nUse other.\n\n",
-		},
-		"lazy server not enabled": {
-			lazyMap: lazyMap,
+		"every connected server": {want: "Use catalogue.\n\nUse plain.\n\nUse other.\n\n"},
+		"a catalogue server": {
+			listing: mcpListing{catalogue: catalogue},
 			want:    "Use plain.\n\nUse other.\n\n",
 		},
-		"lazy server enabled": {
-			lazyMap: lazyMap,
-			enabled: []string{"test-instr-c-lazy"},
-			want:    "Use lazy.\n\nUse plain.\n\nUse other.\n\n",
+		"a catalogue server a workflow named": {
+			listing: mcpListing{catalogue: catalogue, named: catalogue},
+			want:    "Use catalogue.\n\nUse plain.\n\nUse other.\n\n",
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			state := tools.NewLazyMCPState(nil)
-			for _, server := range tc.enabled {
-				state.Enable(server)
-			}
-			require.Equal(t, tc.want, mcpInstructions(tc.lazyMap, state))
+			require.Equal(t, tc.want, mcpInstructions(tc.listing))
 		})
 	}
 }
@@ -132,4 +123,16 @@ func TestRunLeavesSystemPromptWithoutMCPInstructions(t *testing.T) {
 	calls := model.recorded()
 	require.Len(t, calls, 1)
 	require.Equal(t, "system", textOf(calls[0].Prompt[0]))
+}
+
+// Not parallel: connectMCPServers registers global MCP state.
+func TestRequestOverhead_CountsMCPInstructions(t *testing.T) {
+	prompt := strings.Repeat("s", 100)
+	bare := NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt}).RequestOverhead()
+
+	connectMCPServers(t, map[string]string{"test-overhead-instr": strings.Repeat("i", 300)})
+
+	// mcpInstructions ends each server's instructions with a blank line.
+	require.Equal(t, bare+len(strings.Repeat("i", 300)+"\n\n"), NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt}).RequestOverhead(),
+		"a connected server's instructions are sent with every request")
 }

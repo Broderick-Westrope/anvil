@@ -24,6 +24,12 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.addSessionCostStmt, err = db.PrepareContext(ctx, addSessionCost); err != nil {
+		return nil, fmt.Errorf("error preparing query AddSessionCost: %w", err)
+	}
+	if q.addSubagentCallCostStmt, err = db.PrepareContext(ctx, addSubagentCallCost); err != nil {
+		return nil, fmt.Errorf("error preparing query AddSubagentCallCost: %w", err)
+	}
 	if q.claimBackgroundJobEventsStmt, err = db.PrepareContext(ctx, claimBackgroundJobEvents); err != nil {
 		return nil, fmt.Errorf("error preparing query ClaimBackgroundJobEvents: %w", err)
 	}
@@ -50,6 +56,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.createSessionStmt, err = db.PrepareContext(ctx, createSession); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateSession: %w", err)
+	}
+	if q.createSubagentStmt, err = db.PrepareContext(ctx, createSubagent); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateSubagent: %w", err)
+	}
+	if q.createSubagentCallStmt, err = db.PrepareContext(ctx, createSubagentCall); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateSubagentCall: %w", err)
 	}
 	if q.createWorkflowRunStmt, err = db.PrepareContext(ctx, createWorkflowRun); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateWorkflowRun: %w", err)
@@ -90,6 +102,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.finalizeBackgroundJobStmt, err = db.PrepareContext(ctx, finalizeBackgroundJob); err != nil {
 		return nil, fmt.Errorf("error preparing query FinalizeBackgroundJob: %w", err)
 	}
+	if q.finishSubagentCallStmt, err = db.PrepareContext(ctx, finishSubagentCall); err != nil {
+		return nil, fmt.Errorf("error preparing query FinishSubagentCall: %w", err)
+	}
 	if q.finishWorkflowRunStmt, err = db.PrepareContext(ctx, finishWorkflowRun); err != nil {
 		return nil, fmt.Errorf("error preparing query FinishWorkflowRun: %w", err)
 	}
@@ -128,6 +143,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getSessionByIDStmt, err = db.PrepareContext(ctx, getSessionByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionByID: %w", err)
+	}
+	if q.getSubagentStmt, err = db.PrepareContext(ctx, getSubagent); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSubagent: %w", err)
+	}
+	if q.getSubagentByHandleStmt, err = db.PrepareContext(ctx, getSubagentByHandle); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSubagentByHandle: %w", err)
+	}
+	if q.getSubagentCallStmt, err = db.PrepareContext(ctx, getSubagentCall); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSubagentCall: %w", err)
 	}
 	if q.getWorkflowApprovalStmt, err = db.PrepareContext(ctx, getWorkflowApproval); err != nil {
 		return nil, fmt.Errorf("error preparing query GetWorkflowApproval: %w", err)
@@ -210,6 +234,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markBackgroundJobsInterruptedStmt, err = db.PrepareContext(ctx, markBackgroundJobsInterrupted); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkBackgroundJobsInterrupted: %w", err)
 	}
+	if q.markChildCostRolledUpStmt, err = db.PrepareContext(ctx, markChildCostRolledUp); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkChildCostRolledUp: %w", err)
+	}
 	if q.markWorkflowRunInterruptedStmt, err = db.PrepareContext(ctx, markWorkflowRunInterrupted); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkWorkflowRunInterrupted: %w", err)
 	}
@@ -233,6 +260,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.setWorkflowRunPausedStmt, err = db.PrepareContext(ctx, setWorkflowRunPaused); err != nil {
 		return nil, fmt.Errorf("error preparing query SetWorkflowRunPaused: %w", err)
+	}
+	if q.subagentHandleExistsStmt, err = db.PrepareContext(ctx, subagentHandleExists); err != nil {
+		return nil, fmt.Errorf("error preparing query SubagentHandleExists: %w", err)
 	}
 	if q.touchAnvilInstanceStmt, err = db.PrepareContext(ctx, touchAnvilInstance); err != nil {
 		return nil, fmt.Errorf("error preparing query TouchAnvilInstance: %w", err)
@@ -269,6 +299,16 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.addSessionCostStmt != nil {
+		if cerr := q.addSessionCostStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addSessionCostStmt: %w", cerr)
+		}
+	}
+	if q.addSubagentCallCostStmt != nil {
+		if cerr := q.addSubagentCallCostStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addSubagentCallCostStmt: %w", cerr)
+		}
+	}
 	if q.claimBackgroundJobEventsStmt != nil {
 		if cerr := q.claimBackgroundJobEventsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing claimBackgroundJobEventsStmt: %w", cerr)
@@ -312,6 +352,16 @@ func (q *Queries) Close() error {
 	if q.createSessionStmt != nil {
 		if cerr := q.createSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createSessionStmt: %w", cerr)
+		}
+	}
+	if q.createSubagentStmt != nil {
+		if cerr := q.createSubagentStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createSubagentStmt: %w", cerr)
+		}
+	}
+	if q.createSubagentCallStmt != nil {
+		if cerr := q.createSubagentCallStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createSubagentCallStmt: %w", cerr)
 		}
 	}
 	if q.createWorkflowRunStmt != nil {
@@ -379,6 +429,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing finalizeBackgroundJobStmt: %w", cerr)
 		}
 	}
+	if q.finishSubagentCallStmt != nil {
+		if cerr := q.finishSubagentCallStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing finishSubagentCallStmt: %w", cerr)
+		}
+	}
 	if q.finishWorkflowRunStmt != nil {
 		if cerr := q.finishWorkflowRunStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing finishWorkflowRunStmt: %w", cerr)
@@ -442,6 +497,21 @@ func (q *Queries) Close() error {
 	if q.getSessionByIDStmt != nil {
 		if cerr := q.getSessionByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSessionByIDStmt: %w", cerr)
+		}
+	}
+	if q.getSubagentStmt != nil {
+		if cerr := q.getSubagentStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSubagentStmt: %w", cerr)
+		}
+	}
+	if q.getSubagentByHandleStmt != nil {
+		if cerr := q.getSubagentByHandleStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSubagentByHandleStmt: %w", cerr)
+		}
+	}
+	if q.getSubagentCallStmt != nil {
+		if cerr := q.getSubagentCallStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSubagentCallStmt: %w", cerr)
 		}
 	}
 	if q.getWorkflowApprovalStmt != nil {
@@ -579,6 +649,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markBackgroundJobsInterruptedStmt: %w", cerr)
 		}
 	}
+	if q.markChildCostRolledUpStmt != nil {
+		if cerr := q.markChildCostRolledUpStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markChildCostRolledUpStmt: %w", cerr)
+		}
+	}
 	if q.markWorkflowRunInterruptedStmt != nil {
 		if cerr := q.markWorkflowRunInterruptedStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing markWorkflowRunInterruptedStmt: %w", cerr)
@@ -617,6 +692,11 @@ func (q *Queries) Close() error {
 	if q.setWorkflowRunPausedStmt != nil {
 		if cerr := q.setWorkflowRunPausedStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing setWorkflowRunPausedStmt: %w", cerr)
+		}
+	}
+	if q.subagentHandleExistsStmt != nil {
+		if cerr := q.subagentHandleExistsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing subagentHandleExistsStmt: %w", cerr)
 		}
 	}
 	if q.touchAnvilInstanceStmt != nil {
@@ -708,6 +788,8 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                          DBTX
 	tx                                          *sql.Tx
+	addSessionCostStmt                          *sql.Stmt
+	addSubagentCallCostStmt                     *sql.Stmt
 	claimBackgroundJobEventsStmt                *sql.Stmt
 	copyMessageStmt                             *sql.Stmt
 	countRunningBackgroundJobsBySessionStmt     *sql.Stmt
@@ -717,6 +799,8 @@ type Queries struct {
 	createBackgroundJobEventStmt                *sql.Stmt
 	createMessageStmt                           *sql.Stmt
 	createSessionStmt                           *sql.Stmt
+	createSubagentStmt                          *sql.Stmt
+	createSubagentCallStmt                      *sql.Stmt
 	createWorkflowRunStmt                       *sql.Stmt
 	deleteAnvilInstanceStmt                     *sql.Stmt
 	deleteBackgroundJobStmt                     *sql.Stmt
@@ -730,6 +814,7 @@ type Queries struct {
 	deleteSessionMessagesStmt                   *sql.Stmt
 	deleteStepUsageBeforeStmt                   *sql.Stmt
 	finalizeBackgroundJobStmt                   *sql.Stmt
+	finishSubagentCallStmt                      *sql.Stmt
 	finishWorkflowRunStmt                       *sql.Stmt
 	getAllSessionMessagesStmt                   *sql.Stmt
 	getBackgroundJobStmt                        *sql.Stmt
@@ -743,6 +828,9 @@ type Queries struct {
 	getMessageStmt                              *sql.Stmt
 	getMessageChildrenStmt                      *sql.Stmt
 	getSessionByIDStmt                          *sql.Stmt
+	getSubagentStmt                             *sql.Stmt
+	getSubagentByHandleStmt                     *sql.Stmt
+	getSubagentCallStmt                         *sql.Stmt
 	getWorkflowApprovalStmt                     *sql.Stmt
 	getWorkflowRunStmt                          *sql.Stmt
 	insertPermissionDecisionStmt                *sql.Stmt
@@ -770,6 +858,7 @@ type Queries struct {
 	listWorkflowViewEventsStmt                  *sql.Stmt
 	markBackgroundJobLogExpiredStmt             *sql.Stmt
 	markBackgroundJobsInterruptedStmt           *sql.Stmt
+	markChildCostRolledUpStmt                   *sql.Stmt
 	markWorkflowRunInterruptedStmt              *sql.Stmt
 	recordFileReadStmt                          *sql.Stmt
 	releaseBackgroundJobEventStmt               *sql.Stmt
@@ -778,6 +867,7 @@ type Queries struct {
 	setSessionWorkflowOwnerStmt                 *sql.Stmt
 	setWorkflowRunMarkerStmt                    *sql.Stmt
 	setWorkflowRunPausedStmt                    *sql.Stmt
+	subagentHandleExistsStmt                    *sql.Stmt
 	touchAnvilInstanceStmt                      *sql.Stmt
 	transferBackgroundJobsStmt                  *sql.Stmt
 	updateMessageStmt                           *sql.Stmt
@@ -794,6 +884,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                                      tx,
 		tx:                                      tx,
+		addSessionCostStmt:                      q.addSessionCostStmt,
+		addSubagentCallCostStmt:                 q.addSubagentCallCostStmt,
 		claimBackgroundJobEventsStmt:            q.claimBackgroundJobEventsStmt,
 		copyMessageStmt:                         q.copyMessageStmt,
 		countRunningBackgroundJobsBySessionStmt: q.countRunningBackgroundJobsBySessionStmt,
@@ -803,6 +895,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,
 		createMessageStmt:                           q.createMessageStmt,
 		createSessionStmt:                           q.createSessionStmt,
+		createSubagentStmt:                          q.createSubagentStmt,
+		createSubagentCallStmt:                      q.createSubagentCallStmt,
 		createWorkflowRunStmt:                       q.createWorkflowRunStmt,
 		deleteAnvilInstanceStmt:                     q.deleteAnvilInstanceStmt,
 		deleteBackgroundJobStmt:                     q.deleteBackgroundJobStmt,
@@ -816,6 +910,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteSessionMessagesStmt:                   q.deleteSessionMessagesStmt,
 		deleteStepUsageBeforeStmt:                   q.deleteStepUsageBeforeStmt,
 		finalizeBackgroundJobStmt:                   q.finalizeBackgroundJobStmt,
+		finishSubagentCallStmt:                      q.finishSubagentCallStmt,
 		finishWorkflowRunStmt:                       q.finishWorkflowRunStmt,
 		getAllSessionMessagesStmt:                   q.getAllSessionMessagesStmt,
 		getBackgroundJobStmt:                        q.getBackgroundJobStmt,
@@ -829,6 +924,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getMessageStmt:                              q.getMessageStmt,
 		getMessageChildrenStmt:                      q.getMessageChildrenStmt,
 		getSessionByIDStmt:                          q.getSessionByIDStmt,
+		getSubagentStmt:                             q.getSubagentStmt,
+		getSubagentByHandleStmt:                     q.getSubagentByHandleStmt,
+		getSubagentCallStmt:                         q.getSubagentCallStmt,
 		getWorkflowApprovalStmt:                     q.getWorkflowApprovalStmt,
 		getWorkflowRunStmt:                          q.getWorkflowRunStmt,
 		insertPermissionDecisionStmt:                q.insertPermissionDecisionStmt,
@@ -856,6 +954,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listWorkflowViewEventsStmt:                  q.listWorkflowViewEventsStmt,
 		markBackgroundJobLogExpiredStmt:             q.markBackgroundJobLogExpiredStmt,
 		markBackgroundJobsInterruptedStmt:           q.markBackgroundJobsInterruptedStmt,
+		markChildCostRolledUpStmt:                   q.markChildCostRolledUpStmt,
 		markWorkflowRunInterruptedStmt:              q.markWorkflowRunInterruptedStmt,
 		recordFileReadStmt:                          q.recordFileReadStmt,
 		releaseBackgroundJobEventStmt:               q.releaseBackgroundJobEventStmt,
@@ -864,6 +963,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		setSessionWorkflowOwnerStmt:                 q.setSessionWorkflowOwnerStmt,
 		setWorkflowRunMarkerStmt:                    q.setWorkflowRunMarkerStmt,
 		setWorkflowRunPausedStmt:                    q.setWorkflowRunPausedStmt,
+		subagentHandleExistsStmt:                    q.subagentHandleExistsStmt,
 		touchAnvilInstanceStmt:                      q.touchAnvilInstanceStmt,
 		transferBackgroundJobsStmt:                  q.transferBackgroundJobsStmt,
 		updateMessageStmt:                           q.updateMessageStmt,

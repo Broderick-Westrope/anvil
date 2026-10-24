@@ -27,16 +27,17 @@ func NewAnvilInfoTool(
 	allSkills []*skills.Skill,
 	activeSkills []*skills.Skill,
 	skillTracker *skills.Tracker,
+	mcpRoutes MCPRoutesFunc,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		AnvilInfoToolName,
 		anvilInfoDescription,
 		func(ctx context.Context, _ AnvilInfoParams, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			return fantasy.NewTextResponse(buildAnvilInfo(cfg, lspManager, allSkills, activeSkills, skillTracker)), nil
+			return fantasy.NewTextResponse(buildAnvilInfo(cfg, lspManager, allSkills, activeSkills, skillTracker, mcpRoutes)), nil
 		})
 }
 
-func buildAnvilInfo(cfg *config.ConfigStore, lspManager *lsp.Manager, allSkills []*skills.Skill, activeSkills []*skills.Skill, skillTracker *skills.Tracker) string {
+func buildAnvilInfo(cfg *config.ConfigStore, lspManager *lsp.Manager, allSkills []*skills.Skill, activeSkills []*skills.Skill, skillTracker *skills.Tracker, mcpRoutes MCPRoutesFunc) string {
 	var b strings.Builder
 
 	writeConfigFiles(&b, cfg)
@@ -45,6 +46,7 @@ func buildAnvilInfo(cfg *config.ConfigStore, lspManager *lsp.Manager, allSkills 
 	writeProviders(&b, cfg)
 	writeLSP(&b, lspManager, cfg)
 	writeMCP(&b, mcp.GetStates(), cfg)
+	writeMCPRoutes(&b, mcpRoutes)
 	writeSkills(&b, allSkills, activeSkills, skillTracker, cfg)
 	writeHooks(&b, cfg)
 	writePermissions(&b, cfg)
@@ -226,8 +228,6 @@ func writeMCP(b *strings.Builder, states map[string]mcp.ClientInfo, cfg *config.
 				} else {
 					fmt.Fprintf(b, "%s = error\n", e.name)
 				}
-			case mcp.StateLazy:
-				fmt.Fprintf(b, "%s = lazy (connected but not enabled)\n", e.name)
 			default:
 				fmt.Fprintf(b, "%s = %s\n", e.name, e.state)
 			}
@@ -241,6 +241,27 @@ func writeMCP(b *strings.Builder, states map[string]mcp.ClientInfo, cfg *config.
 		runtimeNames[name] = true
 	}
 	writeConfiguredServers(b, "[mcp_configured]", cfg.Config().MCP, runtimeNames, func(c config.MCPConfig) bool { return c.Disabled })
+}
+
+// writeMCPRoutes writes how each server's tools reach the model and why.
+// Nothing is written without a route source or routed servers.
+func writeMCPRoutes(b *strings.Builder, mcpRoutes MCPRoutesFunc) {
+	if mcpRoutes == nil {
+		return
+	}
+	routes, ready := mcpRoutes()
+	if ready && len(routes) == 0 {
+		return
+	}
+	b.WriteString("[mcp_routes]\n")
+	if !ready {
+		b.WriteString("pending (MCP servers are still starting)\n\n")
+		return
+	}
+	for _, route := range routes {
+		fmt.Fprintf(b, "%s = %s\n", route.Server, route)
+	}
+	b.WriteString("\n")
 }
 
 // writeConfiguredServers writes the servers in configured that aren't

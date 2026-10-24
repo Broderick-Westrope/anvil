@@ -146,6 +146,9 @@ type Styles struct {
 	// Background
 	Background color.Color
 
+	// Diagram is the palette Mermaid diagrams are drawn with.
+	Diagram DiagramPalette
+
 	// Logo
 	Logo struct {
 		TitleColorA        color.Color
@@ -216,7 +219,6 @@ type Styles struct {
 		BusyIcon        lipgloss.Style // Busy/starting status icon
 		ErrorIcon       lipgloss.Style // Error status icon
 		OnlineIcon      lipgloss.Style // Online/ready status icon
-		LazyIcon        lipgloss.Style // Lazy/connected but not enabled status icon
 		AdditionalText  lipgloss.Style // "None" and "…and N more" text
 		CapabilityCount lipgloss.Style // "N tools" / "N prompts" / "N resources"
 		RowTitleBase    lipgloss.Style // Base style applied over row titles in common.Status
@@ -460,6 +462,12 @@ type Styles struct {
 			Spinner lipgloss.Style // Loading spinner while validating the key
 		}
 
+		AuthMethod struct {
+			Prompt      lipgloss.Style // "How would you like to authenticate?" question line
+			CardBlurred lipgloss.Style // Unselected choice card frame and label
+			CardFocused lipgloss.Style // Selected choice card frame and label
+		}
+
 		OAuth struct {
 			Spinner      lipgloss.Style // Loading spinner
 			Instructions lipgloss.Style // Emphasized instruction text
@@ -536,14 +544,7 @@ type Styles struct {
 	}
 
 	// Attachments styles
-	Attachments struct {
-		Normal   lipgloss.Style
-		Image    lipgloss.Style
-		Text     lipgloss.Style
-		Skill    lipgloss.Style
-		Remove   lipgloss.Style
-		Deleting lipgloss.Style
-	}
+	Attachments AttachmentStyles
 
 	// Pills styles for todo/queue pills
 	Pills struct {
@@ -603,6 +604,19 @@ func (s *Styles) ChromaTheme() chroma.StyleEntries {
 		chroma.GenericSubheading:   chromaStyle(rules.Chroma.GenericSubheading),
 		chroma.Background:          chromaStyle(rules.Chroma.Background),
 	}
+}
+
+// AttachmentStyles are the styles for one attachment chip row. They are
+// passed to the attachments renderer as a unit so adding a style does not
+// mean touching every construction site.
+type AttachmentStyles struct {
+	Normal   lipgloss.Style
+	Image    lipgloss.Style
+	Text     lipgloss.Style
+	Skill    lipgloss.Style
+	Remove   lipgloss.Style
+	Deleting lipgloss.Style
+	More     lipgloss.Style // "N more…" hint for chips that didn't fit
 }
 
 // DialogHelpStyles returns the styles for dialog help.

@@ -180,9 +180,27 @@ func (s *Service) Subscribe(ctx context.Context) <-chan pubsub.Event[Event] {
 	return s.events.Subscribe(ctx)
 }
 
-// Catalog reports which skills and agents exist, for checking a script's
+// catalog reports which skills and agents exist, for checking a script's
 // requirements.
-func (s *Service) Catalog() workflow.Catalog { return catalog{s.deps.Coordinator} }
+func (s *Service) catalog() workflow.Catalog { return catalog{s.deps.Coordinator} }
+
+// Check loads the script at path and lists what stops it running: its own
+// problems, then the skills and agents it requires that don't exist. It
+// returns an error when the script doesn't load. Start makes the same
+// check, so a script that passes here can still be refused if it changes.
+func (s *Service) Check(path string) ([]string, error) {
+	_, problems, err := s.check(path)
+	return problems, err
+}
+
+func (s *Service) check(path string) (*workflow.Script, []string, error) {
+	script, err := workflow.Load(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	problems := append(slices.Clone(script.Problems), script.Missing(s.catalog())...)
+	return script, problems, nil
+}
 
 // Start validates the invocation and runs it in the background: approval
 // first if needed, then the script. It returns an error only for problems
@@ -191,15 +209,12 @@ func (s *Service) Start(ctx context.Context, inv Invocation) error {
 	if inv.SessionID == "" {
 		return errors.New("workflow needs a session")
 	}
-	script, err := workflow.Load(inv.ScriptPath)
+	script, problems, err := s.check(inv.ScriptPath)
 	if err != nil {
 		return err
 	}
-	if len(script.Problems) > 0 {
-		return fmt.Errorf("workflow %s can't run: %s", inv.CommandName, strings.Join(script.Problems, "; "))
-	}
-	if missing := script.Missing(s.Catalog()); len(missing) > 0 {
-		return fmt.Errorf("workflow %s can't run: %s", inv.CommandName, strings.Join(missing, "; "))
+	if len(problems) > 0 {
+		return fmt.Errorf("workflow %s can't run: %s", inv.CommandName, strings.Join(problems, "; "))
 	}
 	s.mu.Lock()
 	if s.stopping {

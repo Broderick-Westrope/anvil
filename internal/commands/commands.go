@@ -68,9 +68,14 @@ type CustomCommand struct {
 	// Location is the path to the command's COMMAND.md, so the agent can
 	// resolve the files it bundles.
 	Location string
-	// Workflow is the absolute path to the command's workflow script, empty
-	// for prompt commands. A workflow command's body isn't injected.
+	// Workflow is the absolute path to the command's workflow script. It
+	// is empty for prompt commands, and for a workflow command whose path
+	// can't be used, which then has a problem saying why. A workflow
+	// command's body isn't injected.
 	Workflow string
+	// DeclaresWorkflow is set when the command's frontmatter names a
+	// workflow, whether or not its script can be used. Ask IsWorkflow.
+	DeclaresWorkflow bool
 	// Problems are faults found while loading, such as a workflow script
 	// that is missing or doesn't parse. A command with problems still
 	// loads so it can be shown as broken, but it won't run.
@@ -93,6 +98,12 @@ func (c *CustomCommand) DisplayDescription() string {
 		return c.Description
 	}
 	return strings.TrimSpace(c.Description + " (broken)")
+}
+
+// IsWorkflow reports whether the command is a workflow command, even one
+// whose script can't be used. Such a command never runs as a prompt.
+func (c *CustomCommand) IsWorkflow() bool {
+	return c.DeclaresWorkflow || c.Workflow != ""
 }
 
 // ItemName returns the logical command name for collision detection.
@@ -369,6 +380,7 @@ func loadCommand(path, prefix string) (CustomCommand, error) {
 		cmd.Arguments = extractArgNames(body)
 		return cmd, nil
 	}
+	cmd.DeclaresWorkflow = true
 	// A workflow script is only parsed here, never run: discovery must not
 	// execute code from a command it found on disk.
 	if filepath.IsAbs(fm.Workflow) || !filepath.IsLocal(fm.Workflow) {

@@ -79,7 +79,7 @@ func (w *WorkflowTurnMessageItem) RawRender(width int) string {
 		body = strings.TrimSuffix(rendered, "\n")
 	}
 
-	header := w.sty.Messages.WorkflowTag.Render("Workflow") + w.sty.Messages.WorkflowTitle.Render(w.command)
+	header := w.sty.Messages.WorkflowTag.Render("Workflow") + " " + w.sty.Messages.WorkflowTitle.Render(w.command)
 	content = header + "\n\n" + body
 	height = lipgloss.Height(content)
 	w.setCachedRender(content, cappedWidth, height)

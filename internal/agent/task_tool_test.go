@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -28,6 +29,8 @@ func TestTaskTool(t *testing.T) {
 	c.agentConfigs["fixer"] = helperCfg
 	c.agentConfigs["explorer"] = helperCfg
 	c.agentMDs["fixer"] = prompt.AgentMD{Name: "fixer", DelegatesTo: []string{"explorer"}}
+	c.agentConfigs["summarizer"] = helperCfg
+	c.agentMDs["summarizer"] = prompt.AgentMD{Name: "summarizer", BranchSummarizer: true}
 	// The orchestrator may delegate to anyone, even with an agent file
 	// that lists no delegates.
 	c.agentMDs[config.AgentOrchestrator] = prompt.AgentMD{Name: config.AgentOrchestrator}
@@ -67,6 +70,11 @@ func TestTaskTool(t *testing.T) {
 		"unknown subagent type": {
 			params: TaskParams{Prompt: "p", SubagentType: "nope"},
 			want:   `unknown subagent_type "nope"; valid types: explorer, fixer, helper`,
+		},
+		"branch summarizer": {
+			depth:  3,
+			params: TaskParams{Prompt: "p", SubagentType: "summarizer"},
+			want:   `agent "summarizer" summarizes branches and can't be delegated to`,
 		},
 		"specialist delegating outside delegates_to": {
 			caller: "fixer",
@@ -142,7 +150,7 @@ func TestTaskTool(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tt.want, resp.Content)
+			require.Equal(t, tt.want, withoutSubagentID(resp.Content))
 			if tt.wantLog != "" {
 				require.Contains(t, logs.String(), tt.wantLog)
 			}
@@ -151,4 +159,11 @@ func TestTaskTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+var subagentIDFooter = regexp.MustCompile(`\n\nsubagent_id: \S+$`)
+
+// withoutSubagentID strips the handle every task result ends with.
+func withoutSubagentID(content string) string {
+	return subagentIDFooter.ReplaceAllString(content, "")
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 )
 
@@ -29,9 +31,9 @@ func TestRunSubAgentChildSessionLifecycle(t *testing.T) {
 		"success hands jobs back with the output": {
 			wantContent: "done", wantCostUp: true, wantHandedOn: true,
 		},
-		"run failure still hands jobs back": {
+		"run failure still hands jobs back and rolls its cost up": {
 			runErr: errors.New("provider down"), wantContent: "Failed to generate response: provider down",
-			wantIsError: true, wantHandedOn: true,
+			wantCostUp: true, wantIsError: true, wantHandedOn: true,
 		},
 	}
 	for name, tc := range tests {
@@ -45,11 +47,7 @@ func TestRunSubAgentChildSessionLifecycle(t *testing.T) {
 			agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
 				require.Equal(t, setupID, call.SessionID, "setup runs before the turn, on the child session")
 				startTestJob(t, call.SessionID, "sleep 30", shell.OriginExplicit)
-				child, err := env.sessions.Get(t.Context(), call.SessionID)
-				require.NoError(t, err)
-				child.Cost = 1.5
-				_, err = env.sessions.Save(t.Context(), child)
-				require.NoError(t, err)
+				require.NoError(t, env.sessions.AddCost(t.Context(), call.SessionID, 1.5))
 				if tc.runErr != nil {
 					return nil, tc.runErr
 				}
@@ -126,7 +124,8 @@ func TestRunSubAgentLogsWhatItCannotReturn(t *testing.T) {
 		coord := newTestCoordinator(t, env, providerID, config.ProviderConfig{ID: providerID})
 		parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 		require.NoError(t, err)
-		agent := newMockAgent(providerID, 4096, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			require.NoError(t, env.sessions.AddCost(t.Context(), call.SessionID, 0.1))
 			require.NoError(t, env.sessions.Delete(t.Context(), parent.ID))
 			return agentResultWithText("done"), nil
 		})
@@ -138,6 +137,40 @@ func TestRunSubAgentLogsWhatItCannotReturn(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, resp.IsError)
 		require.Equal(t, "done", resp.Content)
-		require.Contains(t, logs.String(), "Failed to update parent session cost")
+		require.Contains(t, logs.String(), "Failed to roll up subagent cost")
 	})
+}
+
+// These watch the default logger, so they don't run in parallel.
+func TestSubagentCallsLogNothingWhenAllGoesWell(t *testing.T) {
+	logs := captureLogs(t)
+	c, _, parent := newSubagentCallCoordinator(t)
+	agent := newMockAgent(testProvider, 1000, func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error) {
+		return agentResultWithText("done"), nil
+	})
+	_, err := c.runSubAgent(t.Context(), fixerParams(parent.ID, "call-1", agent))
+	require.NoError(t, err)
+	require.NotContains(t, logs.String(), "Failed to record the end of a task call")
+
+	for i := range maxReturnedSteers {
+		c.handBackSteers("root", fmt.Sprintf("child-%d", i), []message.InjectionContent{{Text: "x"}}, nil)
+	}
+	require.NotContains(t, logs.String(), "Dropping returned subagent steers", "a full queue drops nothing")
+}
+
+func TestChargingACutOffStepLogsNothingWhenItWorks(t *testing.T) {
+	logs := captureLogs(t)
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Priced", t.TempDir())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	tool := fantasy.NewAgentTool("work", "Test tool.",
+		func(ctx context.Context, _ struct{}, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			cancel()
+			<-ctx.Done()
+			return fantasy.ToolResponse{}, ctx.Err()
+		})
+	_, err = pricedAgent(env, env.sessions, &billedToolModel{}, tool).Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "start", NonInteractive: true})
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotContains(t, logs.String(), "Failed to charge an unfinished step")
 }

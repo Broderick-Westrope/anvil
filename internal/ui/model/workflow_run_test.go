@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -398,11 +399,10 @@ func TestWorkflowControlKeysActOnTheRunInView(t *testing.T) {
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
 	require.Equal(t, []string{"pause:run-1", "resume:run-1", "abort:run-1"}, f.ws.controls)
 
-	controls := f.u.workflowControls()
-	require.Equal(t, &dialog.WorkflowControls{
-		RunID: "run-1", Command: "demo", Paused: true,
-		Keys: dialog.WorkflowKeys{Pause: "ctrl+x", Abort: "alt+x"},
-	}, controls)
+	target, ok := uiWorkflowViews{f.u}.TargetRun()
+	require.True(t, ok, "the palette's controls act on the run in view")
+	require.Equal(t, "run-1", target.RunID)
+	require.True(t, target.Paused)
 }
 
 func TestWorkflowControlKeysIgnoreAFinishedRun(t *testing.T) {
@@ -416,7 +416,8 @@ func TestWorkflowControlKeysIgnoreAFinishedRun(t *testing.T) {
 
 	f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 	require.Empty(t, f.ws.controls)
-	require.Nil(t, f.u.workflowControls())
+	_, ok := uiWorkflowViews{f.u}.TargetRun()
+	require.False(t, ok, "the palette offers no controls either")
 }
 
 func TestADrilledInBuilderMakesRoomForTheEditor(t *testing.T) {
@@ -605,7 +606,7 @@ func TestPaletteCommandsArentRunFromABuilder(t *testing.T) {
 	f.drillIntoBuilder(t)
 	actions := []dialog.Action{
 		dialog.ActionRunCustomCommand{Name: "review", Content: "Review it"},
-		dialog.ActionRunCustomCommand{Name: "demo", Workflow: "/proj/demo/workflow.js"},
+		dialog.ActionRunCustomCommand{Name: "demo", Command: commands.CustomCommand{ID: "project:demo", Name: "demo", Workflow: "/proj/demo/workflow.js"}},
 		dialog.ActionRunMCPPrompt{PromptID: "summarise"},
 	}
 	for _, action := range actions {
@@ -630,7 +631,6 @@ func TestPaletteActionsOnTheUsersSessionArentRunFromABuilder(t *testing.T) {
 		dialog.ActionSummarize{SessionID: "sess-1"},
 		dialog.ActionRenameSession{},
 		dialog.ActionRegenerateTitle{},
-		dialog.ActionToggleLazyMCP{ServerName: "s", Enabled: true},
 	} {
 		f := newWorkflowFixture(t)
 		f.drillIntoBuilder(t)
@@ -639,7 +639,6 @@ func TestPaletteActionsOnTheUsersSessionArentRunFromABuilder(t *testing.T) {
 		require.Len(t, infos, 1, "%#v", action)
 		require.Contains(t, infos[0].Msg, "acts on your own session", "%#v", action)
 		require.False(t, f.u.dialog.HasDialogs())
-		require.Empty(t, f.u.enabledLazyMCPs, "%#v", action)
 	}
 }
 

@@ -1,9 +1,11 @@
 package chat
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -373,4 +375,29 @@ func TestFormatStatsLine(t *testing.T) {
 		require.NotContains(t, plain, "tools")
 		require.NotContains(t, plain, "tokens")
 	})
+}
+
+func TestResumedAgentIsNamedFromItsHandle(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		params agent.TaskParams
+		want   string
+	}{
+		"explicit type":             {params: agent.TaskParams{SubagentType: "fixer", Description: "Fix"}, want: "Fixer: Fix"},
+		"resume without type":       {params: agent.TaskParams{Resume: "devils-advocate-41e2", Description: "Go on"}, want: "Devils Advocate: Go on"},
+		"resume with explicit type": {params: agent.TaskParams{Resume: "fixer-41e2", SubagentType: "explorer", Description: "Go on"}, want: "Explorer: Go on"},
+		"handle without suffix":     {params: agent.TaskParams{Resume: "fixer", Description: "Go on"}, want: "Agent: Go on"},
+		"neither type nor handle":   {params: agent.TaskParams{Description: "Go on"}, want: "Agent: Go on"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			input, err := json.Marshal(tc.params)
+			require.NoError(t, err)
+			sty := styles.TokyoNight()
+			item := NewAgentToolMessageItem(&sty, message.ToolCall{ID: "c", Name: agent.TaskToolName, Input: string(input)}, nil, false)
+			require.Equal(t, tc.want, item.AgentDrillInLabel())
+		})
+	}
 }

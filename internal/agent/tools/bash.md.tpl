@@ -11,7 +11,7 @@ Common shell builtins and core utils available on Windows.
 2. Security Check: Banned commands ({{ .BannedCommands }}) return error - explain to user. Safe read-only commands execute without prompts
 3. Command Execution: Execute with proper quoting, capture output
 4. Auto-Background: Commands exceeding 1 minute (default) automatically move to background and return shell ID; for commands known to be slow whose result you need before continuing, raise the threshold up to 600 seconds via `auto_background_after`
-5. Output Processing: Truncate if exceeds {{ .MaxOutputLength }} characters
+5. Output Processing: Truncate if exceeds {{ .MaxOutputLength }} characters. The truncation marker names a file holding the complete output - read it with the view tool when the omitted middle matters
 6. Return Result: Include errors, metadata with <cwd></cwd> tags
 </execution_steps>
 
@@ -51,10 +51,10 @@ Common shell builtins and core utils available on Windows.
 <ci_checks>
 After pushing to a branch that has a pull request (including right after `gh pr create`), watch CI in the background:
 - Start one watcher straight away with run_in_background=true:
-  `for i in $(seq 1 30); do gh pr checks <pr> --json name --jq length 2>/dev/null | grep -q '^[1-9]' && break; sleep 10; done; gh pr checks <pr> --watch --fail-fast --interval 30`
-  The loop waits for checks to register; right after a push `gh pr checks` fails with "no checks reported".
+  `for i in $(seq 1 30); do gh pr checks <pr> --json name --jq length 2>/dev/null | grep -q '^[1-9]' && break; sleep 10; done; n=0; while :; do gh pr checks <pr> --watch --fail-fast --interval 30 && exit 0; s=$(gh pr checks <pr> --json bucket --jq 'map(.bucket) | if any(.=="fail") then "fail" elif any(.=="pending") then "pending" else "pass" end' 2>/dev/null) || s=error; case $s in fail) exit 1;; pass) exit 0;; pending) n=0;; *) n=$((n+1)); [ $n -ge 5 ] && echo "CI watcher: GitHub unreachable after $n retries" >&2 && exit 2; sleep 30;; esac; done`
+  The first loop waits for checks to register; right after a push `gh pr checks` fails with "no checks reported". The second keeps the watch alive: `--watch` exits 1 on any network error, the same code as a failed check, so the watcher asks GitHub once which it was and resumes watching while checks are pending.
 - Whenever you read the watcher with job_output, set tail_lines=20 or less. `--watch` reprints the whole checks table on every refresh, so everything before the last table is repeats.
-- Keep working on anything else that remains while it runs. You are notified when it exits: exit 0 means every check passed, non-zero means a check failed or the watch broke.
+- Keep working on anything else that remains while it runs. You are notified when it exits: exit 0 means every check passed, 1 means a check failed, and 2 means GitHub stayed unreachable, so start a new watcher once the network is back.
 {{- if .WakeOnJobEvents }}
 - When nothing else is left, end your turn instead of waiting so the user can keep talking to you. Say CI is still running, give the job ID, and say you'll pick up the result when it finishes. Don't block on it with job_output wait=true unless the user asked you to wait for CI.
 - The result reaches you either in a new turn started for you when the watcher exits while the session is idle, or alongside the user's next message. On a pass, report it in one line.

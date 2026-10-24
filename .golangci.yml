@@ -114,9 +114,6 @@ linters:
       - path: internal/ui/dialog/commands\.go
         text: 'func `(\(\*Commands\)\.defaultCommands|\(\*Commands\)\.HandleMsg)`'
         linters: [gocognit]
-      - path: internal/ui/dialog/mcp_palette\.go
-        text: 'func `(\(\*MCPPalette\)\.handleNavKey)`'
-        linters: [gocognit]
       - path: internal/ui/dialog/models\.go
         text: 'func `(\(\*Models\)\.setProviderItems)`'
         linters: [gocognit]
@@ -130,7 +127,7 @@ linters:
         text: 'func `(\(\*UI\)\.modelInfo)`'
         linters: [gocognit]
       - path: internal/ui/model/ui\.go
-        text: 'func `(\(\*UI\)\.appendSessionMessageToChat|\(\*UI\)\.deriveEnabledLazyMCPs|\(\*UI\)\.Draw|\(\*UI\)\.FullHelp|\(\*UI\)\.handleChildSessionMessage|\(\*UI\)\.handleDialogMsg|\(\*UI\)\.handleKeyPressMsg|\(\*UI\)\.loadNestedToolCalls|\(\*UI\)\.update|\(\*UI\)\.updateSessionMessageToChat)`'
+        text: 'func `(\(\*UI\)\.appendSessionMessageToChat|\(\*UI\)\.Draw|\(\*UI\)\.FullHelp|\(\*UI\)\.handleChildSessionMessage|\(\*UI\)\.handleDialogMsg|\(\*UI\)\.handleKeyPressMsg|\(\*UI\)\.loadNestedToolCalls|\(\*UI\)\.update|\(\*UI\)\.updateSessionMessageToChat)`'
         linters: [gocognit]
       # Upstream-shaped TUI leaf code that stays over the gocognit limit on
       # purpose. See docs/adr/0003-ui-complexity.md before changing these.

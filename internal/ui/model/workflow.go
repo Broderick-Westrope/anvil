@@ -10,11 +10,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
-	"github.com/Broderick-Westrope/anvil/internal/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -23,88 +24,148 @@ const workflowResultMaxWidth = 80
 
 // A workflow run shows as its node in the session that started it, and as
 // its run view when drilled into (workflow_run.go). Everything they show
-// is loaded from the database. What's handled here is what needs the user
-// now: approvals and questions as dialogs, warnings and finishes as
+// is loaded from the database. The workflow feature handles what needs the
+// user now: approvals and questions as dialogs, warnings and finishes as
 // reports, and the pause and abort controls.
 
-// startWorkflowCommand runs a workflow command. A workflow never sends
-// its command body: the script gets the raw arguments instead.
-func (m *UI) startWorkflowCommand(name string, cmd commands.CustomCommand, raw string) tea.Cmd {
+// workflowWorkspace is what the workflow feature asks of the workspace.
+type workflowWorkspace interface {
+	AgentIsReady() bool
+	WorkflowStart(ctx context.Context, inv workflowhost.Invocation) error
+	WorkflowRespond(requestID, answer string) error
+	WorkflowPause(runID string) error
+	WorkflowResume(runID string) error
+	WorkflowAbort(runID string) error
+}
+
+// workflowViews is what the workflow feature asks of the run nodes and run
+// views UI draws.
+type workflowViews interface {
+	// TargetRun is the running run the controls act on, if any.
+	TargetRun() (workflowhost.RunView, bool)
+	// RunChanged returns the command that reloads a run's node and view.
+	RunChanged(runID string) tea.Cmd
+	// RunStarting settles the editor's state for a run about to start in
+	// the root session, as sending a message would.
+	RunStarting()
+}
+
+// workflowFeature shows what workflow runs need from the user: their
+// requests as dialogs, their outcomes as reports, and their controls as
+// keys and palette entries.
+type workflowFeature struct {
+	host featureHost
+	// com is for styles and dialog constructors only; workspace calls go
+	// through ws.
+	com      *common.Common
+	ws       workflowWorkspace
+	views    workflowViews
+	requests workflowRequests
+	// live is the run each invoking session last heard from, until it
+	// finishes. A finish of another run means the live one's finish was
+	// lost; a late finish of an earlier run leaves the live one alone.
+	live map[string]string
+}
+
+var (
+	_ commandFeature = (*workflowFeature)(nil)
+	_ paletteFeature = (*workflowFeature)(nil)
+)
+
+func newWorkflowFeature(host featureHost, com *common.Common, ws workflowWorkspace, views workflowViews) *workflowFeature {
+	return &workflowFeature{host: host, com: com, ws: ws, views: views, live: map[string]string{}}
+}
+
+func (w *workflowFeature) Observe(tea.Msg) tea.Cmd { return nil }
+
+// HandleMsg handles workflow events. Every event of a run also reloads
+// its node and view.
+func (w *workflowFeature) HandleMsg(msg tea.Msg) (tea.Cmd, bool) {
+	ev, ok := msg.(pubsub.Event[workflowhost.Event])
+	if !ok {
+		return nil, false
+	}
+	var cmds []tea.Cmd
+	if ev.Payload.Kind != workflowhost.EventChanged {
+		cmds = append(cmds, w.handleEvent(ev.Payload))
+	}
+	if ev.Payload.RunID != "" {
+		cmds = append(cmds, w.views.RunChanged(ev.Payload.RunID))
+	}
+	return tea.Batch(cmds...), true
+}
+
+// RunCommand runs a workflow command. A workflow never sends its command
+// body: the script gets the raw arguments instead.
+func (w *workflowFeature) RunCommand(cmd commands.CustomCommand, raw string) (tea.Cmd, bool) {
+	if !cmd.IsWorkflow() {
+		return nil, false
+	}
+	name := cmd.SlashName()
 	if len(cmd.Problems) > 0 {
-		return util.ReportError(fmt.Errorf("workflow /%s can't run: %s", name, strings.Join(cmd.Problems, "; ")))
+		return util.ReportError(fmt.Errorf("workflow /%s can't run: %s", name, strings.Join(cmd.Problems, "; "))), true
 	}
-	if m.reloading {
-		return util.ReportWarn(reloadInProgressMsg)
+	if w.host.Reloading() {
+		return util.ReportWarn(reloadInProgressMsg), true
 	}
-	if !m.com.Workspace.AgentIsReady() {
-		return util.ReportError(errors.New("orchestrator agent is not initialized"))
+	if !w.ws.AgentIsReady() {
+		return util.ReportError(errors.New("orchestrator agent is not initialized")), true
 	}
-	loadCmd, err := m.ensureSession()
+	sessionID, loadCmd, err := w.host.EnsureSession()
 	if err != nil {
-		return util.ReportError(err)
+		return util.ReportError(err), true
 	}
-	if !m.hasSession() {
-		return tea.Batch(loadCmd, util.ReportError(errors.New("workflow needs a session")))
+	if sessionID == "" {
+		return tea.Batch(loadCmd, util.ReportError(errors.New("workflow needs a session"))), true
 	}
-	// The run's marker lands on the branch on screen, which the user has
-	// now chosen, as sending a message does; returning to the old branch
-	// would leave the run's node behind.
-	if m.pendingBranch != nil {
-		m.branchReturn = m.pendingBranch
-		m.pendingBranch = nil
-	}
+	w.views.RunStarting()
 	inv := workflowhost.Invocation{
 		CommandID:   cmd.ID,
 		CommandName: name,
 		Source:      cmd.Source,
 		ScriptPath:  cmd.Workflow,
-		SessionID:   m.session.ID,
+		SessionID:   sessionID,
 		Raw:         raw,
 	}
-	ws := m.com.Workspace
+	ws := w.ws
 	return tea.Batch(loadCmd, func() tea.Msg {
 		if err := ws.WorkflowStart(context.Background(), inv); err != nil {
 			return util.NewErrorMsg(err)
 		}
 		return nil
-	})
+	}), true
 }
 
-// handleWorkflowAction handles the dialog actions that drive workflows.
-func (m *UI) handleWorkflowAction(action dialog.Action) tea.Cmd {
+// HandleAction handles the dialog actions that drive workflows.
+func (w *workflowFeature) HandleAction(action dialog.Action) (tea.Cmd, bool) {
+	dialogs := w.host.Dialogs()
 	switch action := action.(type) {
-	case dialog.ActionRunCustomCommand:
-		m.dialog.CloseDialog(dialog.CommandsID)
-		return m.startWorkflowCommand(action.Name, commands.CustomCommand{
-			ID: action.CommandID, Source: action.Source, Workflow: action.Workflow, Problems: action.Problems,
-		}, "")
 	case dialog.ActionWorkflowRespond:
-		m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
-		req := m.workflowRequests[action.RequestID]
-		delete(m.workflowRequests, action.RequestID)
+		dialogs.CloseDialog(dialog.WorkflowRequestDialogID(action.RequestID))
+		// An untracked request comes back zero, and nothing is kept for
+		// it.
+		req := w.requests.take(action.RequestID)
 		// A request whose answer didn't arrive stays unanswered, so its
 		// republish opens it again rather than leaving the run waiting.
-		if err := m.com.Workspace.WorkflowRespond(action.RequestID, action.Answer); err != nil {
-			return util.ReportError(err)
+		if err := w.ws.WorkflowRespond(action.RequestID, action.Answer); err != nil {
+			return util.ReportError(err), true
 		}
-		if m.workflowAnswered == nil {
-			m.workflowAnswered = map[string]bool{}
-		}
-		m.workflowAnswered[action.RequestID] = true
+		w.requests.answer(req)
 		if req.Kind == workflowhost.EventAsk {
-			return util.ReportInfo(fmt.Sprintf("Workflow /%s asked: %s → %s", req.Command, chat.FirstLine(req.Question), chat.FirstLine(action.Answer)))
+			return util.ReportInfo(fmt.Sprintf("Workflow /%s asked: %s → %s", req.Command, chat.FirstLine(req.Question), chat.FirstLine(action.Answer))), true
 		}
+		return nil, true
 	case dialog.ActionWorkflowControl:
-		m.dialog.CloseDialog(dialog.CommandsID)
-		return m.controlWorkflow(action.RunID, action.Control)
+		dialogs.CloseDialog(dialog.CommandsID)
+		return w.control(action.RunID, action.Control), true
 	}
-	return nil
+	return nil, false
 }
 
-// controlWorkflow pauses, resumes or aborts a run. Pausing and resuming
-// write to the database, so it runs as a command, off Update.
-func (m *UI) controlWorkflow(runID string, control dialog.WorkflowControl) tea.Cmd {
-	ws := m.com.Workspace
+// control pauses, resumes or aborts a run. Pausing and resuming write to
+// the database, so it runs as a command, off Update.
+func (w *workflowFeature) control(runID string, control dialog.WorkflowControl) tea.Cmd {
+	ws := w.ws
 	return func() tea.Msg {
 		var err error
 		switch control {
@@ -122,133 +183,113 @@ func (m *UI) controlWorkflow(runID string, control dialog.WorkflowControl) tea.C
 	}
 }
 
-// targetWorkflowRun is the running run the workflow controls act on: the
-// run whose view is open beneath whatever is on top (such as one of its
-// builders), else the run whose node is selected, else the latest run
-// started from the session on screen. A run picked out by its view or
-// node is the only candidate: if it has finished, nothing is controlled,
-// so a control never reaches a run the user isn't looking at.
-func (m *UI) targetWorkflowRun() (workflowhost.RunView, bool) {
-	running := func(runID string) (workflowhost.RunView, bool) {
-		view, ok := m.workflowRuns.view(runID)
-		return view, ok && view.Status == workflowhost.StatusRunning
+// HandleKey handles the pause and abort keys. It reports false when no
+// running run is in reach, so the key falls through.
+func (w *workflowFeature) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	km := w.host.KeyMap()
+	if !key.Matches(msg, km.WorkflowPause, km.WorkflowAbort) {
+		return nil, false
 	}
-	for i := len(m.drillStack) - 1; i >= 0; i-- {
-		if runID := m.drillStack[i].runID; runID != "" {
-			return running(runID)
-		}
-	}
-	if node, ok := m.activeChat().SelectedItem().(*chat.WorkflowRunMessageItem); ok {
-		return running(node.RunID())
-	}
-	if m.isDrilledIn() || !m.hasSession() {
-		return workflowhost.RunView{}, false
-	}
-	var latest workflowhost.RunView
-	for _, view := range m.workflowRuns.views {
-		// Ties on start time go to the larger run ID, so the choice
-		// doesn't depend on map order.
-		newer := latest.RunID == "" || view.StartedAt.After(latest.StartedAt) ||
-			(view.StartedAt.Equal(latest.StartedAt) && view.RunID > latest.RunID)
-		if view.InvokingSessionID == m.session.ID && view.Status == workflowhost.StatusRunning && newer {
-			latest = view
-		}
-	}
-	return latest, latest.RunID != ""
-}
-
-// handleWorkflowKey handles the pause and abort keys. It reports false
-// when no running run is in reach, so the key falls through.
-func (m *UI) handleWorkflowKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
-	view, ok := m.targetWorkflowRun()
+	view, ok := w.views.TargetRun()
 	if !ok {
 		return nil, false
 	}
 	switch {
-	case key.Matches(msg, m.keyMap.WorkflowPause):
-		if view.Paused {
-			return m.controlWorkflow(view.RunID, dialog.WorkflowResume), true
-		}
-		return m.controlWorkflow(view.RunID, dialog.WorkflowPause), true
-	case key.Matches(msg, m.keyMap.WorkflowAbort):
-		return m.controlWorkflow(view.RunID, dialog.WorkflowAbort), true
+	case key.Matches(msg, km.WorkflowPause) && view.Paused:
+		return w.control(view.RunID, dialog.WorkflowResume), true
+	case key.Matches(msg, km.WorkflowPause):
+		return w.control(view.RunID, dialog.WorkflowPause), true
+	default:
+		return w.control(view.RunID, dialog.WorkflowAbort), true
 	}
-	return nil, false
 }
 
-// workflowControls describes the run the controls act on for the command
-// palette, or nil when there is none.
-func (m *UI) workflowControls() *dialog.WorkflowControls {
-	view, ok := m.targetWorkflowRun()
+// PaletteEntries lists the controls of the run the keys act on.
+func (w *workflowFeature) PaletteEntries() []*dialog.CommandItem {
+	view, ok := w.views.TargetRun()
 	if !ok {
 		return nil
 	}
-	return &dialog.WorkflowControls{
-		RunID:   view.RunID,
-		Command: view.Command,
-		Paused:  view.Paused,
-		Keys: dialog.WorkflowKeys{
-			Pause: m.keyMap.WorkflowPause.Help().Key,
-			Abort: m.keyMap.WorkflowAbort.Help().Key,
-		},
+	t := w.com.Styles
+	km := w.host.KeyMap()
+	item := func(id, title, shortcut string, control dialog.WorkflowControl) *dialog.CommandItem {
+		return dialog.NewCommandItem(t, id, title, shortcut, dialog.ActionWorkflowControl{RunID: view.RunID, Control: control})
+	}
+	pause := item("workflow_pause", "Pause Workflow /"+view.Command, km.WorkflowPause.Help().Key, dialog.WorkflowPause)
+	if view.Paused {
+		pause = item("workflow_pause", "Resume Workflow /"+view.Command, km.WorkflowPause.Help().Key, dialog.WorkflowResume)
+	}
+	return []*dialog.CommandItem{
+		pause,
+		item("workflow_abort", "Abort Workflow /"+view.Command, km.WorkflowAbort.Help().Key, dialog.WorkflowAbort),
 	}
 }
 
-// handleWorkflowEvent shows what a workflow event needs from the user. A
-// run's node and view reload from the database on every event separately.
-func (m *UI) handleWorkflowEvent(ev workflowhost.Event) tea.Cmd {
-	if (ev.Kind == workflowhost.EventApproval || ev.Kind == workflowhost.EventAsk) && m.seenWorkflowRequest(ev.RequestID) {
+// handleEvent shows what a workflow event needs from the user.
+func (w *workflowFeature) handleEvent(ev workflowhost.Event) tea.Cmd {
+	if (ev.Kind == workflowhost.EventApproval || ev.Kind == workflowhost.EventAsk) && w.requests.seen(ev) {
 		// The host republishes requests until answered, in case one was
 		// dropped; one already shown or answered needs nothing more.
 		return nil
 	}
+	if ev.Kind != workflowhost.EventFinished {
+		w.closeRequests(w.requests.observeRun(ev.SessionID, ev.RunID, !isControl(ev)))
+		if ev.RunID != "" && !isControl(ev) {
+			w.live[ev.SessionID] = ev.RunID
+		}
+	}
 	switch ev.Kind {
 	case workflowhost.EventApproval:
-		m.trackWorkflowRequest(ev)
-		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowApproval(m.com, ev))
-		return m.sendNotification(notification.Notification{
+		w.closeRequests(w.requests.add(ev))
+		w.host.Dialogs().OpenDialogWithGrace(dialog.NewWorkflowApproval(w.com, ev))
+		return w.host.Notify(notification.Notification{
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Workflow /%s needs approval", ev.Command),
 		})
 	case workflowhost.EventAsk:
-		m.trackWorkflowRequest(ev)
-		m.dialog.OpenDialogWithGrace(dialog.NewWorkflowAsk(m.com, ev, m.keyMap.WorkflowAbort))
-		return m.sendNotification(notification.Notification{
+		w.closeRequests(w.requests.add(ev))
+		w.host.Dialogs().OpenDialogWithGrace(dialog.NewWorkflowAsk(w.com, ev, w.host.KeyMap().WorkflowAbort))
+		return w.host.Notify(notification.Notification{
 			Title:   "Anvil is waiting...",
 			Message: fmt.Sprintf("Workflow /%s has a question", ev.Command),
 		})
 	case workflowhost.EventWarn:
 		return util.ReportWarn(fmt.Sprintf("Workflow /%s: %s", ev.Command, ev.Message))
 	case workflowhost.EventFinished:
-		return m.finishWorkflow(ev)
+		return w.finish(ev)
 	}
 	return nil
 }
 
-// seenWorkflowRequest reports whether a request is open or was answered.
-func (m *UI) seenWorkflowRequest(id string) bool {
-	_, open := m.workflowRequests[id]
-	return open || m.workflowAnswered[id]
+// closeRequests closes the dialogs of requests that can no longer be
+// answered.
+func (w *workflowFeature) closeRequests(ids []string) {
+	for _, id := range ids {
+		w.host.Dialogs().CloseDialog(dialog.WorkflowRequestDialogID(id))
+	}
 }
 
-func (m *UI) trackWorkflowRequest(ev workflowhost.Event) {
-	if m.workflowRequests == nil {
-		m.workflowRequests = map[string]workflowhost.Event{}
-	}
-	m.workflowRequests[ev.RequestID] = ev
+// isControl reports whether ev is a pause or resume, which the host
+// publishes apart from the run. One can arrive after the run's session
+// moved on to the next run, so it never starts or replaces a run.
+func isControl(ev workflowhost.Event) bool {
+	return ev.Kind == workflowhost.EventState &&
+		(ev.State == workflowhost.StatePaused || ev.State == workflowhost.StateResumed)
 }
 
-// finishWorkflow closes what the run left open and reports how it ended.
-// Its node shows the same outcome from then on.
-func (m *UI) finishWorkflow(ev workflowhost.Event) tea.Cmd {
-	for req, pending := range m.workflowRequests {
-		// An invocation refused before it had a run has no run ID; its
-		// approval is the session's.
-		if pending.RunID == ev.RunID && (ev.RunID != "" || pending.SessionID == ev.SessionID) {
-			m.dialog.CloseDialog(dialog.WorkflowRequestDialogID(req))
-			delete(m.workflowRequests, req)
-		}
+// finish closes what the run left open and reports how it ended. Its node
+// shows the same outcome from then on.
+func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
+	live, ok := w.live[ev.SessionID]
+	if ok && live != ev.RunID && ev.RunID != "" {
+		// The live run is taken to be over, its finish lost, so its
+		// requests end with it.
+		w.closeRequests(w.requests.finish(ev.SessionID, live, true))
 	}
+	// A run heard from before has no provisional invocation of its own;
+	// one never heard from is the provisional invocation.
+	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, ok && live == ev.RunID))
+	delete(w.live, ev.SessionID)
 	outcome := ev.Message
 	if ev.Status == workflowhost.StatusCompleted {
 		outcome = ansi.Truncate(chat.CompactResult(ev.Result), workflowResultMaxWidth, "…")
@@ -261,47 +302,4 @@ func (m *UI) finishWorkflow(ev workflowhost.Event) tea.Cmd {
 		severity = util.InfoTypeWarn
 	}
 	return util.CmdHandler(util.InfoMsg{Type: severity, Msg: "Workflow /" + ev.Command + " " + chat.WorkflowOutcomeText(ev.Status, outcome)})
-}
-
-// annotateWorkflowCommands adds the missing requirements of each workflow
-// command to its problems, so a command that can't run is shown as broken.
-// Scripts that already failed to load aren't checked again. It does IO, so
-// call it from a command.
-func annotateWorkflowCommands(ws workspace.Workspace, cmds []commands.CustomCommand) []commands.CustomCommand {
-	out := make([]commands.CustomCommand, len(cmds))
-	for i, cmd := range cmds {
-		out[i] = cmd
-		if cmd.Workflow == "" || len(cmd.Problems) > 0 {
-			continue
-		}
-		missing, err := ws.WorkflowMissing(cmd.Workflow)
-		if err == nil {
-			out[i].Problems = missing
-		} else if !errors.Is(err, workspace.ErrWorkflowsUnavailable) {
-			out[i].Problems = []string{err.Error()}
-		}
-	}
-	return out
-}
-
-// brokenWorkflowsWarning describes the workflow commands that won't run,
-// or returns "" when there are none.
-func brokenWorkflowsWarning(cmds []commands.CustomCommand) string {
-	var problems []string
-	for _, cmd := range cmds {
-		if cmd.Workflow == "" || len(cmd.Problems) == 0 {
-			continue
-		}
-		problems = append(problems, fmt.Sprintf("/%s: %s", cmd.SlashName(), strings.Join(cmd.Problems, "; ")))
-	}
-	if len(problems) == 0 {
-		return ""
-	}
-	return "Broken workflow commands: " + strings.Join(problems, " · ")
-}
-
-// isWorkflowTurn reports whether text is a turn a workflow script sent.
-func isWorkflowTurn(text string) bool {
-	_, _, ok := commands.ParseWorkflowTurnXML(strings.TrimSpace(text))
-	return ok
 }

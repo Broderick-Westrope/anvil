@@ -544,74 +544,6 @@ func TestServiceTurnIsRecordedAsWorkflowTurn(t *testing.T) {
 	require.Equal(t, "do the thing", prompt)
 }
 
-// agentItems returns the subagents a finished run's view shows.
-func agentItems(t *testing.T, h *serviceHarness, runID string) []workflowhost.RunItem {
-	t.Helper()
-	view, ok, err := h.svc.RunView(h.fixture.Context, runID)
-	require.NoError(t, err)
-	require.True(t, ok)
-	var items []workflowhost.RunItem
-	for _, p := range view.Phases {
-		for _, item := range p.Items {
-			if item.Kind == workflowhost.RunItemAgent {
-				items = append(items, item)
-			}
-		}
-	}
-	return items
-}
-
-func TestServiceAgentRecordsItsSession(t *testing.T) {
-	h := newServiceHarness(t, true)
-	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "looks fine"})
-	path := h.write(t, `requires({agents: ["reviewer"]})
-function main() { return agent("reviewer", "review") }`)
-	h.start(t, path, "")
-	done := h.next(t, workflowhost.EventFinished)
-	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
-
-	items := agentItems(t, h, done.RunID)
-	require.Len(t, items, 1)
-	require.Equal(t, "reviewer", items[0].Agent)
-	require.Empty(t, items[0].Model, "no model was pinned")
-	require.Equal(t, workflowhost.StatusCompleted, items[0].Status)
-	child, err := h.fixture.Workspace.GetSession(h.fixture.Context, items[0].SessionID)
-	require.NoError(t, err)
-	require.Equal(t, h.session, child.ParentSessionID)
-	require.Equal(t, "/demo: reviewer", child.Title)
-}
-
-func TestServiceAgentRecordsFailure(t *testing.T) {
-	h := newServiceHarness(t, true)
-	path := h.write(t, `requires({agents: ["reviewer"]})
-function main() { return agent("reviewer", "review", {model: "nope/nope"}) }`)
-	h.start(t, path, "")
-	done := h.next(t, workflowhost.EventFinished)
-	require.Equal(t, workflowhost.StatusFailed, done.Status)
-
-	items := agentItems(t, h, done.RunID)
-	require.Len(t, items, 1)
-	require.Equal(t, "nope/nope", items[0].Model)
-	require.Equal(t, workflowhost.StatusFailed, items[0].Status)
-	require.Empty(t, items[0].SessionID, "it has no session to open")
-	require.Contains(t, items[0].Err, "nope/nope")
-}
-
-func TestServiceParallelAgentsEachRecordTheirSession(t *testing.T) {
-	h := newServiceHarness(t, true)
-	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "a"}, branchfixture.Response{Text: "b"})
-	path := h.write(t, `requires({agents: ["reviewer"]})
-function main() { parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer", prompt: "b"}]) }`)
-	h.start(t, path, "")
-	done := h.next(t, workflowhost.EventFinished)
-	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
-
-	items := agentItems(t, h, done.RunID)
-	require.Len(t, items, 2)
-	require.NotEmpty(t, items[0].SessionID)
-	require.NotEqual(t, items[0].SessionID, items[1].SessionID)
-}
-
 func TestServiceShutdownInterruptsRunsAndRefusesNewOnes(t *testing.T) {
 	h := newServiceHarness(t, true)
 	path := h.write(t, `function main() { try { ask("wait") } catch (e) {} ; bash("echo after") }`)
@@ -1089,6 +1021,101 @@ BEGIN SELECT RAISE(ABORT, 'finish refused'); END`)
 			}
 		})
 	}
+}
+
+func TestServiceCheckListsWhatStopsAScriptRunning(t *testing.T) {
+	h := newServiceHarness(t, true)
+	tests := map[string]struct {
+		src  string
+		want []string
+	}{
+		"runnable":            {src: `requires({agents: ["reviewer"]}); function main() {}`},
+		"missing requirement": {src: `requires({agents: ["ghost"], skills: ["nope"]}); function main() {}`, want: []string{`skill "nope" not found`, `agent "ghost" not found`}},
+		"script problem":      {src: "requires(deps)\nfunction main() {}", want: []string{"requires() must be a literal"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "workflow.js")
+			require.NoError(t, os.WriteFile(path, []byte(tc.src), 0o644))
+			problems, err := h.svc.Check(path)
+			require.NoError(t, err)
+			require.Len(t, problems, len(tc.want))
+			for i, want := range tc.want {
+				require.Contains(t, problems[i], want)
+			}
+		})
+	}
+
+	_, err := h.svc.Check(filepath.Join(t.TempDir(), "absent.js"))
+	require.Error(t, err, "a script that doesn't load is an error, not a problem")
+}
+
+// agentItems returns the subagents a finished run's view shows.
+func agentItems(t *testing.T, h *serviceHarness, runID string) []workflowhost.RunItem {
+	t.Helper()
+	view, ok, err := h.svc.RunView(h.fixture.Context, runID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	var items []workflowhost.RunItem
+	for _, p := range view.Phases {
+		for _, item := range p.Items {
+			if item.Kind == workflowhost.RunItemAgent {
+				items = append(items, item)
+			}
+		}
+	}
+	return items
+}
+
+func TestServiceAgentRecordsItsSession(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "looks fine"})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() { return agent("reviewer", "review") }`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+
+	items := agentItems(t, h, done.RunID)
+	require.Len(t, items, 1)
+	require.Equal(t, "reviewer", items[0].Agent)
+	require.Empty(t, items[0].Model, "no model was pinned")
+	require.Equal(t, workflowhost.StatusCompleted, items[0].Status)
+	child, err := h.fixture.Workspace.GetSession(h.fixture.Context, items[0].SessionID)
+	require.NoError(t, err)
+	require.Equal(t, h.session, child.ParentSessionID)
+	require.Equal(t, "/demo: reviewer", child.Title)
+}
+
+func TestServiceAgentRecordsFailure(t *testing.T) {
+	h := newServiceHarness(t, true)
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() { return agent("reviewer", "review", {model: "nope/nope"}) }`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusFailed, done.Status)
+
+	items := agentItems(t, h, done.RunID)
+	require.Len(t, items, 1)
+	require.Equal(t, "nope/nope", items[0].Model)
+	require.Equal(t, workflowhost.StatusFailed, items[0].Status)
+	require.Empty(t, items[0].SessionID, "it has no session to open")
+	require.Contains(t, items[0].Err, "nope/nope")
+}
+
+func TestServiceParallelAgentsEachRecordTheirSession(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.fixture.Provider.Enqueue(branchfixture.Response{Text: "a"}, branchfixture.Response{Text: "b"})
+	path := h.write(t, `requires({agents: ["reviewer"]})
+function main() { parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer", prompt: "b"}]) }`)
+	h.start(t, path, "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+
+	items := agentItems(t, h, done.RunID)
+	require.Len(t, items, 2)
+	require.NotEmpty(t, items[0].SessionID)
+	require.NotEqual(t, items[0].SessionID, items[1].SessionID)
 }
 
 func TestServiceMarksTheRunInItsSessionAndRebuildsItsView(t *testing.T) {

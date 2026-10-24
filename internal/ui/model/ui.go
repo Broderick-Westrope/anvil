@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 	"image"
@@ -43,7 +43,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -194,6 +193,12 @@ type UI struct {
 	herdrTickPending bool
 	com              *common.Common
 	session          *session.Session
+	animClock        animClock
+
+	// sessionLoad buffers message events for a session whose transcript is
+	// being read off the event loop, so they can be replayed over the
+	// snapshot once it lands.
+	sessionLoad *pendingSessionLoad
 
 	// composerSent is the composer state last reported to the workspace;
 	// navigating is set while a branch navigation moves the leaf, and
@@ -254,8 +259,15 @@ type UI struct {
 	// caps hold different terminal capabilities that we query for.
 	caps common.Capabilities
 
+	// mouseEnabled is false when options.tui.mouse turns mouse capture off,
+	// leaving selection, copy and scrolling to the terminal or tmux.
+	mouseEnabled bool
+
 	// Editor components
 	textarea textarea.Model
+	// textareaMouseSelecting is true while a mouse drag that started in the
+	// textarea is selecting text.
+	textareaMouseSelecting bool
 
 	// Attachment list
 	attachments *attachments.Attachments
@@ -304,12 +316,6 @@ type UI struct {
 	mcpStates         map[string]mcp.ClientInfo
 	mcpAuthFlows      map[string]*mcpAuthFlow
 	nextMCPAuthFlowID uint64
-	enabledLazyMCPs   map[string]bool
-	// pendingEnableMCPs tracks in-flight enable_mcp ToolCalls by
-	// ToolCallID → server name. The result has not yet arrived, so
-	// we defer the enabled/disabled decision until the correlated
-	// ToolResult is processed.
-	pendingEnableMCPs map[string]string
 
 	// skills
 	skillStates []*skills.SkillState
@@ -344,11 +350,15 @@ type UI struct {
 	composeFor string
 	// draftsRoot is the root session the stashed root draft was written in.
 	draftsRoot string
-	// workflowRequests holds the open approval and ask requests by ID.
-	workflowRequests map[string]workflowhost.Event
-	// workflowAnswered remembers answered requests so a republished copy
-	// doesn't reopen its dialog.
-	workflowAnswered map[string]bool
+	// features are the fork features routed to from the dispatchers.
+	features features
+
+	// diagrams renders Mermaid diagrams in the chat, or is nil when
+	// options.tui.diagrams is off.
+	diagrams chat.DiagramRenderer
+	// graphics draws diagrams and the images tools return. It exists
+	// whether or not diagrams are on.
+	graphics *graphicsFeature
 
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
@@ -424,14 +434,7 @@ type ToolDetailView struct {
 // New creates a new instance of the [UI] model.
 func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	// Editor components
-	ta := textarea.New()
-	ta.SetStyles(com.Styles.Editor.Textarea)
-	ta.ShowLineNumbers = false
-	ta.CharLimit = -1
-	ta.SetVirtualCursor(false)
-	ta.DynamicHeight = true
-	ta.MinHeight = TextareaMinHeight
-	ta.MaxHeight = TextareaMaxHeight
+	ta := newEditorTextarea(com.Styles)
 	ta.Focus()
 
 	ch := NewChat(com)
@@ -452,14 +455,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	// Attachments component
 	attachments := attachments.New(
-		attachments.NewRenderer(
-			com.Styles.Attachments.Normal,
-			com.Styles.Attachments.Deleting,
-			com.Styles.Attachments.Image,
-			com.Styles.Attachments.Text,
-			com.Styles.Attachments.Skill,
-			com.Styles.Attachments.Remove,
-		),
+		attachments.NewRenderer(com.Styles.Attachments),
 		attachments.Keymap{
 			DeleteMode: keyMap.Editor.AttachmentDeleteMode,
 			DeleteAll:  keyMap.Editor.DeleteAllAttachments,
@@ -482,14 +478,25 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
 		mcpAuthFlows:        make(map[string]*mcpAuthFlow),
-		enabledLazyMCPs:     make(map[string]bool),
-		pendingEnableMCPs:   make(map[string]string),
 		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
 		initialSessionID:    initialSessionID,
 		continueLastSession: continueLast,
 	}
+
+	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace, uiWorkflowViews{ui}))
+	graphics := newGraphicsFeature(uiHost{ui}, &ui.caps, com)
+	ui.features.register(graphics)
+	ui.graphics = graphics
+	if com.Workspace.DiagramsEnabled() {
+		ui.diagrams = graphics
+		ui.chat.SetDiagrams(graphics)
+	}
+	ui.features.register(newBranchSummaryFeature(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newFileOpenFeature(com.Workspace.WorkingDir))
+	ui.features.register(newSubagentSteer(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newSubagentCalls())
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -529,6 +536,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.progressBarEnabled = opts.Progress == nil || *opts.Progress
 	// enable transparent mode
 	ui.isTransparent = opts.TUI.Transparent != nil && *opts.TUI.Transparent
+	ui.mouseEnabled = mouseEnabledByConfig(opts)
 
 	return ui
 }
@@ -543,8 +551,6 @@ func (m *UI) Init() tea.Cmd {
 	}
 	// load the user commands async
 	cmds = append(cmds, m.loadCustomCommands())
-	// load prompt history async
-	cmds = append(cmds, m.loadPromptHistory())
 	// load initial LSP state
 	m.lspStates = app.GetLSPStates()
 	// Load initial MCP state. Like skills and LSPs, MCP clients that
@@ -552,9 +558,14 @@ func (m *UI) Init() tea.Cmd {
 	// this model subscribes, so without a seed the sidebar and MCP
 	// palette report no servers until the next state change.
 	m.mcpStates = m.com.Workspace.MCPGetStates()
-	// load initial session if specified
+	// load initial session if specified. loadSessionMsg reloads prompt
+	// history for the session that arrives, so history is only loaded here
+	// when no session is coming; otherwise the no-session query would be
+	// discarded and would hold the single connection the load waits on.
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
+	} else {
+		cmds = append(cmds, m.loadPromptHistory())
 	}
 	// Check once whether to nudge the user to run permission triage.
 	cmds = append(cmds, m.checkTriageNudge())
@@ -576,9 +587,10 @@ func (m *UI) loadInitialSession() tea.Cmd {
 		return func() tea.Msg {
 			sessions, err := m.com.Workspace.ListSessions(context.Background(), m.com.Workspace.WorkingDir())
 			if err != nil || len(sessions) == 0 {
-				return nil
+				// No session to continue, so nothing will load history.
+				return m.loadPromptHistory()()
 			}
-			return m.loadSession(sessions[0].ID)()
+			return continueSessionMsg{sessionID: sessions[0].ID}
 		}
 	default:
 		return nil
@@ -626,11 +638,7 @@ func (m *UI) setState(state uiState, focus uiFocusState) {
 // loadCustomCommands loads the custom commands asynchronously.
 func (m *UI) loadCustomCommands() tea.Cmd {
 	return func() tea.Msg {
-		customCommands, err := commands.LoadAllCommands(m.com.Config(), nil)
-		if err != nil {
-			slog.Error("Failed to load custom commands", "error", err)
-		}
-		return userCommandsLoadedMsg{Commands: annotateWorkflowCommands(m.com.Workspace, customCommands)}
+		return commandsLoaded(loadCommands(m.com))
 	}
 }
 
@@ -687,17 +695,25 @@ func (m *UI) isDrilledIn() bool {
 	return len(m.drillStack) > 0
 }
 
+// topDrillIn is the chat of the drill-in on top, or nil.
+func (m *UI) topDrillIn() *Chat {
+	if len(m.drillStack) == 0 {
+		return nil
+	}
+	return m.drillStack[len(m.drillStack)-1].chat
+}
+
 // clearDrillStack pops all drill-in entries and restores root state.
 func (m *UI) clearDrillStack() {
 	m.drillStack = nil
 }
 
-// findAgentToolItem returns the agent tool item whose child session is
-// childSessionID, in the root chat or any drill-in. A fork copies tool
-// calls with their IDs, so the item must also come from the message that
-// started the session.
+// findAgentToolItem returns the agent tool item of the task call that owns
+// childSessionID (the call that made it, or the latest resume), in the
+// root chat or any drill-in. A fork copies tool calls with their IDs, so
+// the item must also come from the message that made the call.
 func (m *UI) findAgentToolItem(childSessionID string) (chat.MessageItem, *Chat) {
-	messageID, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
+	messageID, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(m.features.calls.OwnerCall(childSessionID))
 	if !ok {
 		return nil, nil
 	}
@@ -743,6 +759,23 @@ func (m *UI) findParentMessageItem(id string) chat.MessageItem {
 	return nil
 }
 
+// applyChatScroll scrolls the active chat by lines and, if the selection is
+// then outside the viewport, moves it to the nearest visible edge. The
+// selection is moved rather than scrolled to so a large coalesced delta is
+// applied in full instead of being rewound to the selected item.
+func (m *UI) applyChatScroll(lines int) {
+	c := m.activeChat()
+	c.ScrollBy(lines)
+	if c.SelectedItemInView() {
+		return
+	}
+	if lines > 0 && c.AtBottom() {
+		c.SelectLast()
+		return
+	}
+	c.SelectNearestInView(lines < 0)
+}
+
 // activeChatArea returns the rectangle the active chat is drawn into. When
 // drilled into a subagent, the top of the main area is occupied by the
 // breadcrumb line plus a one-line margin (see Draw), so the chat starts two
@@ -752,15 +785,18 @@ func (m *UI) activeChatArea() image.Rectangle {
 	area := m.layout.main
 	if m.isDrilledIn() {
 		area.Min.Y = min(area.Min.Y+drillInChatTopMargin, area.Max.Y)
+		area.Max.Y = max(area.Min.Y, area.Max.Y-m.features.drillInFooterLines())
 	}
 	return area
 }
 
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	observed := m.features.observe(msg)
 	model, cmd := m.update(msg)
 	m.trackHerdrState()
-	return model, tea.Batch(cmd, m.herdrTickCmd())
+	drill := m.features.drillInTop(m.topDrillIn())
+	return model, tea.Batch(observed, cmd, drill, m.ensureAnimating(), m.herdrTickCmd())
 }
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -808,21 +844,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.sidebarOffset = 0
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
-		var msgs []message.Message
-		var err error
-		if m.session.LeafMessageID != "" {
-			msgs, err = m.com.Workspace.GetBranchPath(context.Background(), m.session.LeafMessageID)
-		} else {
-			msgs, err = m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+		msgs := msg.messages
+		cmds = append(cmds, m.setSessionMessages(msgs))
+		// The snapshot was read off the event loop; replay what arrived for
+		// this session since, or it would be lost under the snapshot.
+		for _, event := range m.takeSessionLoadEvents(m.session.ID) {
+			cmds = append(cmds, m.applySessionMessageEvent(event))
 		}
-		if err != nil {
-			cmds = append(cmds, util.ReportError(err))
-			break
-		}
-		if cmd := m.setSessionMessages(msgs); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		m.deriveEnabledLazyMCPs(msgs)
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo
 			if m.isRootBusy() {
@@ -836,6 +864,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.loadPromptHistory())
 		m.updateLayoutAndSize()
 		if cmd := m.startElapsedTickForJobs(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 
@@ -864,9 +895,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
 		m.slashAC.SetItems(m.buildSlashACItems())
-		if warning := brokenWorkflowsWarning(msg.Commands); warning != "" {
-			cmds = append(cmds, util.ReportWarn(warning))
-		}
 		dia := m.dialog.Dialog(dialog.CommandsID)
 		if dia == nil {
 			break
@@ -947,9 +975,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.promptHistory.messages = nil
 		for _, source := range msg.messages {
-			if isWorkflowTurn(source.Content().Text) {
-				continue
-			}
 			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName, m.customCommands)
 			if !state.isEmpty() {
 				m.promptHistory.messages = append(m.promptHistory.messages, state)
@@ -1010,7 +1035,18 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.renderPills()
 			}
 		}
+	case continueSessionMsg:
+		cmds = append(cmds, m.loadSession(msg.sessionID))
+	case loadSessionFailedMsg:
+		m.takeSessionLoadEvents(msg.sessionID)
+		cmds = append(cmds, util.ReportError(msg.err))
+		// A failed startup load leaves no session, and Init skipped history
+		// expecting the load to bring it.
+		if m.session == nil {
+			cmds = append(cmds, m.loadPromptHistory())
+		}
 	case pubsub.Event[message.Message]:
+		m.bufferSessionLoadEvent(msg)
 		// Check if this is a child session message for an agent tool.
 		if m.session == nil {
 			break
@@ -1050,24 +1086,14 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+				if cmd := m.startElapsedTickForToolStart(msg.Payload); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 			break
 		}
-		switch msg.Type {
-		case pubsub.CreatedEvent:
-			cmds = append(cmds, m.appendSessionMessage(msg.Payload))
-			m.applyLazyMCPMessageParts(msg.Payload)
-			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		case pubsub.UpdatedEvent:
-			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
-			m.applyLazyMCPMessageParts(msg.Payload)
-			if cmd := m.startElapsedTickForBackgroundResult(msg.Payload); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		case pubsub.DeletedEvent:
-			m.chat.RemoveMessage(msg.Payload.ID)
+		if cmd := m.applySessionMessageEvent(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 		// start the spinner if there is a new message
 		if hasInProgressTodo(m.session.Todos) && m.isRootBusy() && !m.todoIsSpinning {
@@ -1131,12 +1157,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
-	case pubsub.Event[workflowhost.Event]:
-		if msg.Payload.Kind != workflowhost.EventChanged {
-			cmds = append(cmds, m.handleWorkflowEvent(msg.Payload))
-		}
-		if msg.Payload.RunID != "" {
-			cmds = append(cmds, m.loadWorkflowRunView(msg.Payload.RunID))
+		// An automatic approval moves a call back to running without a new
+		// start time, so nothing else restarts a tick that stopped while
+		// it awaited permission.
+		if cmd := m.startElapsedTickForTools(); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
@@ -1158,9 +1183,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateLayoutAndSize()
 		if m.state == uiChat && m.activeChat().Follow() {
-			if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			m.activeChat().ScrollToBottom()
 		}
 	case tea.KeyboardEnhancementsMsg:
 		m.keyenh = msg
@@ -1176,9 +1199,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	case tea.MouseClickMsg:
-		// Pass mouse events to dialogs first if any are open.
+		// Pass mouse events to dialogs first if any are open. A click
+		// or wheel can produce an action (a double click confirms), so
+		// route it like a key press.
 		if m.dialog.HasDialogs() {
-			m.dialog.Update(msg)
+			if cmd := m.handleDialogMsg(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			return m, tea.Batch(cmds...)
 		}
 
@@ -1194,6 +1221,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.attachments.HandleClick(relX) {
 				return m, tea.Batch(cmds...)
 			}
+		}
+
+		if m.handleTextareaMouse(msg) {
+			return m, tea.Batch(cmds...)
 		}
 
 		switch m.state {
@@ -1214,33 +1245,35 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMotionMsg:
-		// Pass mouse events to dialogs first if any are open.
+		// Pass mouse events to dialogs first if any are open. A click
+		// or wheel can produce an action (a double click confirms), so
+		// route it like a key press.
 		if m.dialog.HasDialogs() {
-			m.dialog.Update(msg)
+			if cmd := m.handleDialogMsg(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+		// A drag that started in the textarea selects there and must not
+		// edge-scroll or highlight the chat.
+		if m.handleTextareaMouse(msg) {
 			return m, tea.Batch(cmds...)
 		}
 
 		switch m.state {
 		case uiChat:
 			if msg.Y <= 0 {
-				if cmd := m.activeChat().ScrollByAndAnimate(-1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectPrev()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			} else if msg.Y >= m.activeChat().Height()-1 {
-				if cmd := m.activeChat().ScrollByAndAnimate(1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectNext()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			}
 
@@ -1253,9 +1286,17 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseReleaseMsg:
-		// Pass mouse events to dialogs first if any are open.
+		// Pass mouse events to dialogs first if any are open. A click
+		// or wheel can produce an action (a double click confirms), so
+		// route it like a key press.
 		if m.dialog.HasDialogs() {
-			m.dialog.Update(msg)
+			if cmd := m.handleDialogMsg(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+		if m.handleTextareaMouse(msg) {
 			return m, tea.Batch(cmds...)
 		}
 
@@ -1276,9 +1317,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case common.CoalescedWheelMsg:
-		// Pass mouse events to dialogs first if any are open.
+		// Pass mouse events to dialogs first if any are open. A click
+		// or wheel can produce an action (a double click confirms), so
+		// route it like a key press.
 		if m.dialog.HasDialogs() {
-			m.dialog.Update(msg)
+			if cmd := m.handleDialogMsg(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			return m, tea.Batch(cmds...)
 		}
 
@@ -1303,39 +1348,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if lines == 0 {
 				break
 			}
-			if cmd := m.activeChat().ScrollByAndAnimate(lines); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			if !m.activeChat().SelectedItemInView() {
-				if lines < 0 {
-					m.activeChat().SelectPrev()
-				} else if m.activeChat().AtBottom() {
-					m.activeChat().SelectLast()
-				} else {
-					m.activeChat().SelectNext()
-				}
-				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
+			m.applyChatScroll(lines)
 		}
-	case anim.StepMsg:
-		if m.state == uiChat {
-			// Dispatch animation steps to all chats, not just the active one,
-			// so animations don't freeze when navigating between levels.
-			if cmd := m.chat.Animate(msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			for _, entry := range m.drillStack {
-				if cmd := entry.chat.Animate(msg); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-			if m.activeChat().Follow() {
-				if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
+	case animTickMsg:
+		if cmd := m.handleAnimTick(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case chatWarmMsg:
 		// A resize has settled; warm the message cache one batch at a
@@ -1397,9 +1414,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// both invalidates caches and reports whether any agent is still
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
+		anyTimed := m.syncToolTimers()
 		workflowsRunning, reloads := m.refreshRunningWorkflowRuns()
 		cmds = append(cmds, reloads)
-		shouldContinue := anyRunning || workflowsRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
+		shouldContinue := anyRunning || anyTimed || workflowsRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -1489,15 +1507,14 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			break
 		}
-		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem)
 		newChat := NewChat(m.com)
+		detailItems := chat.BuildToolDetailItems(m.com.Styles, toolItem, m.graphics.For(newChat))
 		// Follow when the tool is still running so streaming output
 		// auto-scrolls; otherwise start at the top.
 		newChat.SetFollow(toolItem.Status() == chat.ToolStatusRunning)
 		newChat.Focus()
 		newChat.SetMessages(detailItems...)
-		newChat.ScrollToBottom()
-		newChat.SelectLast()
+		newChat.ScrollToBottomAndSelectLast()
 		m.drillStack = append(m.drillStack, drillInEntry{
 			chat:     newChat,
 			label:    msg.Label,
@@ -1557,16 +1574,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.loadPromptHistory())
 			}
 
-			// Start animations for all newly loaded items.
-			for _, item := range items {
-				if a, ok := item.(chat.Animatable); ok {
-					if cmd := a.StartAnimation(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-				}
-			}
-
-			// Update nested tool ID maps for animation routing.
+			// Map nested tool IDs to their containers.
 			for _, item := range items {
 				if _, ok := item.(chat.NestedToolContainer); ok {
 					if tmi, ok := item.(chat.ToolMessageItem); ok {
@@ -1583,6 +1591,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
+		if cmd, ok := m.features.handleMsg(msg); ok {
+			cmds = append(cmds, cmd)
+			break
+		}
 		if m.dialog.HasDialogs() {
 			if cmd := m.handleDialogMsg(msg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -1659,6 +1671,14 @@ func (m *UI) trackRecoverySession() {
 
 // expandedToolPatterns returns the expanded_tools glob patterns from
 // config, or nil when the config is unavailable.
+// toolItemOptions returns the options used to build tool message items.
+func (m *UI) toolItemOptions() chat.ToolItemOptions {
+	return chat.ToolItemOptions{
+		ExpandedPatterns: m.expandedToolPatterns(),
+		WorkingDir:       m.com.Workspace.WorkingDir(),
+	}
+}
+
 func (m *UI) expandedToolPatterns() []string {
 	cfg := m.com.Config()
 	if cfg == nil || cfg.Options == nil {
@@ -1669,7 +1689,6 @@ func (m *UI) expandedToolPatterns() []string {
 
 // setSessionMessages sets the messages for the current session in the chat
 func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
-	var cmds []tea.Cmd
 	// Build tool result map to link tool calls with their results
 	msgPtrs := make([]*message.Message, len(msgs))
 	for i := range msgs {
@@ -1686,45 +1705,32 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		}
 	}
 
 	// Load nested tool calls for agent/agentic_fetch tools.
 	m.loadNestedToolCalls(items)
 
-	// If the user switches between sessions while the agent is working we
-	// want to make sure the animations are shown. Gate on the agent actually
-	// being busy: a session that was killed mid-generation can persist an
-	// assistant message with no Finish part, which still reports isSpinning()
-	// even though nothing is running. Starting animations for it here would
-	// leave a ghost "working" spinner (and a second one alongside any tool
-	// spinner) after the session is reloaded.
-	if m.isAgentBusy() {
-		for _, item := range items {
-			if animatable, ok := item.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
-	}
-
 	m.chat.SetMessages(items...)
-	cmds = append(cmds, m.loadWorkflowRunNodes(items))
-	if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-		cmds = append(cmds, cmd)
+	// A session killed mid-generation can persist an assistant message with
+	// no Finish part, which still reports spinning even though nothing is
+	// running. Unless the agent is busy, freeze what is spinning now so the
+	// reload does not show a ghost "working" spinner (and a second one
+	// alongside any tool spinner). Events for those messages unfreeze them.
+	if !m.isRootBusy() {
+		m.chat.FreezeSpinners()
 	}
-	m.chat.SelectLast()
-	return tea.Sequence(cmds...)
+	m.chat.ScrollToBottomAndSelectLast()
+	return m.loadWorkflowRunNodes(items)
 }
 
 // loadNestedToolCalls recursively loads nested tool calls for agent/agentic_fetch tools.
@@ -1742,14 +1748,25 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		tc := toolItem.ToolCall()
 		messageID := toolItem.MessageID()
 
-		// Get the agent tool session ID.
-		agentSessionID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
+		// Get the agent tool session ID: the call's own, or for a resume,
+		// the child session it continued.
+		callID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
+		agentSessionID := callID
+		call, err := m.com.Workspace.GetSubagentCall(context.Background(), callID)
+		linked := err == nil
+		if linked {
+			agentSessionID = call.SessionID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("Failed to load task call link", "call", callID, "error", err)
+		}
 
-		// Fetch nested messages.
+		// Fetch nested messages, keeping only those this call produced.
 		nestedMsgs, err := m.com.Workspace.ListMessages(context.Background(), agentSessionID)
 		if err != nil || len(nestedMsgs) == 0 {
 			continue
 		}
+		ownsChild := linked && latestResumeCall(nestedMsgs) == callID
+		nestedMsgs = messagesOfCall(nestedMsgs, agentSessionID, callID)
 
 		// Build tool result map for nested messages.
 		nestedMsgPtrs := make([]*message.Message, len(nestedMsgs))
@@ -1761,7 +1778,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Extract nested tool items.
 		var nestedTools []chat.ToolMessageItem
 		for _, nestedMsg := range nestedMsgPtrs {
-			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.expandedToolPatterns())
+			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.toolItemOptions(), nil)
 			for _, nestedItem := range nestedItems {
 				if nestedToolItem, ok := nestedItem.(chat.ToolMessageItem); ok {
 					// Mark nested tools as simple (compact) rendering.
@@ -1800,15 +1817,23 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 				da.IncrementToolCalls(len(nm.ToolCalls()))
 			}
 
-			// Populate token/cost stats and timestamps from the child session.
+			// Populate token/cost stats and timestamps: a linked task
+			// call's own, otherwise the child session's.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
-				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
-				da.SetCost(sess.Cost)
-				if sess.CreatedAt > 0 {
-					da.SetStartedAt(time.Unix(sess.CreatedAt, 0))
+				m.features.calls.SeenCost(agentSessionID, sess.Cost)
+				if ownsChild {
+					// Live activity after the reload belongs to this
+					// resume, not to the call that created the child.
+					m.features.calls.LoadedResume(agentSessionID, callID, time.Unix(call.CreatedAt, 0), max(sess.Cost-call.Cost, 0))
 				}
-				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && sess.UpdatedAt > sess.CreatedAt {
-					da.SetFinishedAt(time.Unix(sess.UpdatedAt, 0))
+				stats := loadedCallStats(sess, call, linked)
+				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
+				da.SetCost(stats.cost)
+				if !stats.startedAt.IsZero() {
+					da.SetStartedAt(stats.startedAt)
+				}
+				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && !stats.finishedAt.IsZero() {
+					da.SetFinishedAt(stats.finishedAt)
 				}
 			}
 		}
@@ -1836,54 +1861,33 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
-		for _, item := range items {
-			if animatable, ok := item.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
+		m.loadNestedToolCalls(items)
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() {
-			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			c.ScrollToBottom()
 		}
 	case message.Assistant:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
-		for _, item := range items {
-			if animatable, ok := item.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
 		c.AppendMessages(items...)
 		// Only auto-scroll if this chat is currently visible.
 		if c == m.activeChat() && c.Follow() {
-			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			c.ScrollToBottom()
 		}
 		if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 			infoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 			c.AppendMessages(infoItem)
 			if c == m.activeChat() && c.Follow() {
-				if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				c.ScrollToBottom()
 			}
 		}
 	case message.System:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.expandedToolPatterns())
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
 		c.AppendMessages(items...)
 		cmds = append(cmds, m.loadWorkflowRunNodes(items))
 		if c == m.activeChat() && c.Follow() {
-			if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			c.ScrollToBottom()
 		}
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
@@ -1906,9 +1910,7 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 				}
 				// Only auto-scroll if this chat is currently visible.
 				if c == m.activeChat() && c.Follow() {
-					if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					c.ScrollToBottom()
 				}
 			}
 		}
@@ -1939,6 +1941,25 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 	return cmd
 }
 
+// applySessionMessageEvent applies a message event for the current session to
+// the root chat. Re-applying an event is harmless: creates skip messages the
+// chat already holds and updates overwrite with the event's state.
+func (m *UI) applySessionMessageEvent(event pubsub.Event[message.Message]) tea.Cmd {
+	var cmds []tea.Cmd
+	switch event.Type {
+	case pubsub.CreatedEvent:
+		cmds = append(cmds, m.appendSessionMessage(event.Payload))
+		cmds = append(cmds, m.startElapsedTickForBackgroundResult(event.Payload))
+	case pubsub.UpdatedEvent:
+		cmds = append(cmds, m.updateSessionMessage(event.Payload))
+		cmds = append(cmds, m.startElapsedTickForBackgroundResult(event.Payload))
+		cmds = append(cmds, m.startElapsedTickForToolStart(event.Payload))
+	case pubsub.DeletedEvent:
+		m.chat.RemoveMessage(event.Payload.ID)
+	}
+	return tea.Batch(cmds...)
+}
+
 // updateSessionMessage updates an existing message in the root session chat.
 // It is a thin wrapper around updateSessionMessageToChat.
 func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
@@ -1953,16 +1974,20 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
 	existingItem := c.MessageItem(msg.ID)
 
+	// Activity on a message means it is live again, so a spinner frozen by
+	// a non-busy session reload may move.
+	c.UnfreezeSpinners(msg.ID)
+	for _, tc := range msg.ToolCalls() {
+		c.UnfreezeSpinners(tc.ID)
+	}
+
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
-			// SetMessage returns a StartAnimation Cmd when the message
-			// transitions back to spinning (e.g. its streamed content was
-			// reset for a retry). Propagate it so the spinner re-arms
-			// instead of freezing.
-			if cmd := assistantItem.SetMessage(&msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			assistantItem.SetMessage(&msg)
 		}
+		// A message that just finished with diagrams becomes several
+		// nodes; see chat.NewAssistantMessageItems.
+		c.SyncAssistantSegments(m.com.Styles, &msg, m.diagrams)
 	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
@@ -1992,34 +2017,24 @@ func (m *UI) updateSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 		existingToolItem := c.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
-			// Only update if finished state changed or input changed
+			tc.StartedAt = applyToolStart(toolItem, tc.StartedAt)
+			// Only update if finished state, input or start time changed
 			// to avoid clearing the cache.
-			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
+			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input || tc.StartedAt != existingToolCall.StartedAt {
 				toolItem.SetToolCall(tc)
 			}
 		}
 		if existingToolItem == nil {
-			item := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.expandedToolPatterns())
-			chat.SetToolCallStartedAt(item, msg.CreatedAt)
+			item := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false, m.toolItemOptions())
+			chat.SetToolMessageCreatedAt(item, msg.CreatedAt)
 			items = append(items, item)
-		}
-	}
-
-	for _, item := range items {
-		if animatable, ok := item.(chat.Animatable); ok {
-			if cmd := animatable.StartAnimation(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
 		}
 	}
 
 	c.AppendMessages(items...)
 	// Only auto-scroll if this chat is currently visible.
 	if c == m.activeChat() && c.Follow() {
-		if cmd := c.ScrollToBottomAndAnimate(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		c.SelectLast()
+		c.ScrollToBottomAndSelectLast()
 	}
 
 	return tea.Sequence(cmds...)
@@ -2091,6 +2106,8 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	if agentItem == nil {
 		return nil
 	}
+	// The subagent is producing messages, so its parent is live again.
+	owner.UnfreezeSpinners(item.ID())
 
 	// Set the child session ID and mark that messages have arrived so the
 	// collapsed stats view and drill-in navigation can activate. This runs
@@ -2128,15 +2145,10 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		}
 		if !found {
 			// Create a new nested tool item.
-			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.expandedToolPatterns())
-			chat.SetToolCallStartedAt(nestedItem, event.Payload.CreatedAt)
+			nestedItem := chat.NewToolMessageItem(m.com.Styles, event.Payload.ID, tc, nil, false, m.toolItemOptions())
+			chat.SetToolMessageCreatedAt(nestedItem, event.Payload.CreatedAt)
 			if simplifiable, ok := nestedItem.(chat.Compactable); ok {
 				simplifiable.SetCompact(true)
-			}
-			if animatable, ok := nestedItem.(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
 			}
 			nestedTools = append(nestedTools, nestedItem)
 		}
@@ -2155,14 +2167,11 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	// Update the agent item with the new nested tools.
 	agentItem.SetNestedTools(nestedTools)
 
-	// Update the chat so it updates the index map for animations to work as expected
+	// Map the nested tool IDs to their container.
 	owner.UpdateNestedToolIDs(item.ID())
 
 	if owner.Follow() {
-		if cmd := owner.ScrollToBottomAndAnimate(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		owner.SelectLast()
+		owner.ScrollToBottomAndSelectLast()
 	}
 
 	// Start the elapsed-time tick when the first child session message arrives.
@@ -2220,7 +2229,8 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 // updateAgentItemSessionStats propagates token, cost, and timestamp data from
 // a child session update onto the parent agent item that owns that session.
 func (m *UI) updateAgentItemSessionStats(s session.Session) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(s.ID)
+	stats := m.features.calls.CallStats(s)
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(stats.callID)
 	if !ok {
 		return
 	}
@@ -2232,9 +2242,9 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 
 	if da, ok := item.(chat.DrillableAgent); ok {
 		da.SetTokens(s.PromptTokens + s.CompletionTokens)
-		da.SetCost(s.Cost)
-		if s.CreatedAt > 0 {
-			da.SetStartedAt(time.Unix(s.CreatedAt, 0))
+		da.SetCost(stats.cost)
+		if !stats.startedAt.IsZero() {
+			da.SetStartedAt(stats.startedAt)
 		}
 		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && s.UpdatedAt > s.CreatedAt {
 			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))
@@ -2327,9 +2337,9 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 		switch msg.Role {
 		case message.User:
 			lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(
 					m.com.Styles, msg, m.com.Config(),
@@ -2338,7 +2348,7 @@ func (m *UI) messagesToChatItems(msgs []message.Message) []chat.MessageItem {
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.expandedToolPatterns())...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.toolItemOptions(), m.diagrams)...)
 		}
 	}
 
@@ -2353,12 +2363,18 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 
-	isOnboarding := m.state == uiOnboarding
-
+	// Refused before features see it: a palette command is run by the
+	// feature that claims it, and would act on the user's own session.
 	if cmd := m.refuseInOrchestratorSession(action); cmd != nil {
 		m.dialog.CloseFrontDialog()
 		return cmd
 	}
+
+	if cmd, ok := m.features.handleAction(m.dialog, action); ok {
+		return cmd
+	}
+
+	isOnboarding := m.state == uiOnboarding
 
 	switch msg := action.(type) {
 	// Generic dialog messages
@@ -2561,6 +2577,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return util.NewInfoMsg("Transparent background " + status)
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleMouseSupport:
+		cmds = append(cmds, m.toggleMouseSupport())
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleAnthropicAuthMode:
 		cmds = append(cmds, m.toggleAnthropicAuthMode)
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -2641,24 +2660,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		// Write a thinking_level_change metadata entry if the effort actually
-		// changed. It goes through the session's queue onto its current leaf.
-		if m.session != nil && m.session.LeafMessageID != "" && oldEffort != msg.Effort {
-			ws := m.com.Workspace
-			sid := m.session.ID
-			effort := msg.Effort
-			cmds = append(cmds, func() tea.Msg {
-				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					MessageType: message.MessageTypeThinkingLevelChange,
-					Parts: []message.ContentPart{
-						message.ThinkingLevelChangeContent{ThinkingLevel: effort},
-					},
-				})
-				if err != nil {
-					slog.Error("Failed to write thinking_level_change entry", "error", err)
-				}
-				return nil
-			})
+		// Write a thinking_level_change metadata entry if the effort
+		// actually changed. It goes through the session's queue onto its
+		// current leaf.
+		if oldEffort != msg.Effort {
+			cmds = append(cmds, m.writeMetadataEntry(message.MessageTypeThinkingLevelChange,
+				message.ThinkingLevelChangeContent{ThinkingLevel: msg.Effort}))
 		}
 
 		cmds = append(cmds, func() tea.Msg {
@@ -2718,10 +2725,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		))
 
 	case dialog.ActionRunCustomCommand:
-		if msg.Workflow != "" {
-			cmds = append(cmds, m.handleWorkflowAction(msg))
-			break
-		}
 		if customCommandNeedsArgumentDialog(msg) {
 			m.dialog.CloseFrontDialog()
 			argsDialog := dialog.NewArguments(
@@ -2769,7 +2772,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	case dialog.ActionReturnToPreBranch:
 		m.dialog.CloseFrontDialog()
-		cmds = append(cmds, m.beginBranchReturn(false))
+		cmds = append(cmds, m.beginBranchReturn(msg.Pending))
 
 	case dialog.ActionReloadConfig:
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -2781,8 +2784,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.confirmReloadInstance())
 	case dialog.ActionReloadInstanceCancel:
 		cmds = append(cmds, m.cancelReloadInstance())
-	case dialog.ActionWorkflowRespond, dialog.ActionWorkflowControl:
-		cmds = append(cmds, m.handleWorkflowAction(msg))
 	case dialog.ActionAttachSkill:
 		if m.slashACOpen {
 			m.closeSlashAC(true)
@@ -2794,35 +2795,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			Instructions: msg.Instructions,
 			Source:       msg.Source,
 		})
-	case dialog.ActionToggleLazyMCP:
-		m.enabledLazyMCPs[msg.ServerName] = msg.Enabled
-		// Update the open dialog's item state so the label refreshes.
-		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
-			if palette, ok := dia.(*dialog.MCPPalette); ok {
-				palette.SetEntryEnabled(msg.ServerName, msg.Enabled)
-			}
-		}
-		if m.session != nil && m.session.LeafMessageID != "" {
-			ws := m.com.Workspace
-			sid := m.session.ID
-			serverName := msg.ServerName
-			enabled := msg.Enabled
-			cmds = append(cmds, func() tea.Msg {
-				err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-					MessageType: message.MessageTypeMCPToggle,
-					Parts: []message.ContentPart{
-						message.MCPToggleContent{ServerName: serverName, Enabled: enabled},
-					},
-				})
-				if err != nil {
-					slog.Error("Failed to write mcp_toggle entry", "error", err)
-				}
-				return nil
-			})
-		} else {
-			slog.Debug("MCP toggle not persisted: no active session or leaf message",
-				"server", msg.ServerName, "enabled", msg.Enabled)
-		}
 	case dialog.ActionHardToggleMCP:
 		ws := m.com.Workspace
 		name := msg.ServerName
@@ -2843,6 +2815,21 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.startMCPAuth(msg.ServerName))
 	case dialog.ActionRetryMCPAuth:
 		cmds = append(cmds, m.retryMCPAuth(msg.ServerName))
+	case dialog.ActionCloseOAuth:
+		// Like ActionClose, plus a cleanup command that cancels the
+		// in-flight sign-in so no poller or loopback listener is left.
+		m.dialog.CloseFrontDialog()
+		if msg.Cmd != nil {
+			cmds = append(cmds, msg.Cmd)
+		}
+		if m.state == uiOnboarding {
+			cmds = append(cmds, m.openModelsDialog())
+		}
+	case dialog.ActionSelectAuthMethod:
+		m.dialog.CloseDialog(dialog.AuthMethodID)
+		if cmd := m.openAuthenticationDialogWithMethod(msg.Provider, msg.Model, msg.ModelType, msg.UseOAuth); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.ActionCancelMCPAuth:
 		m.cancelMCPAuth(msg.ServerName)
 		m.dialog.CloseDialog(dialog.MCPAuthID)
@@ -2854,6 +2841,29 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 }
 
 // handleSelectModel performs the model selection.
+// writeMetadataEntry returns a command that records part as a metadata
+// entry of type kind at the tip of the current branch. It returns nil when
+// there is no session or branch tip to attach the entry to, or when a
+// feature guards the leaf (a branch summary is running).
+func (m *UI) writeMetadataEntry(kind message.MessageType, part message.ContentPart) tea.Cmd {
+	if m.session == nil || m.session.LeafMessageID == "" || m.features.blockNavigation() != nil {
+		return nil
+	}
+	// The entry goes through the session's queue onto its leaf at that
+	// point, which the workspace reads; the leaf seen here may be stale.
+	ws, sessionID := m.com.Workspace, m.session.ID
+	return func() tea.Msg {
+		err := ws.WriteMetadataEntry(context.Background(), sessionID, message.CreateMessageParams{
+			MessageType: kind,
+			Parts:       []message.ContentPart{part},
+		})
+		if err != nil {
+			slog.Error("Failed to write metadata entry", "type", kind, "error", err)
+		}
+		return nil
+	}
+}
+
 func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -2874,6 +2884,12 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		isConfigured = func() bool { _, ok := cfg.Providers.Get(providerID); return ok }
 		isOnboarding = m.state == uiOnboarding
 	)
+
+	if config.HasSubscriptionLogin(providerID) && !msg.ReAuthenticate {
+		if cmd, handled := m.handleSubscriptionProviderSelect(msg); handled {
+			return cmd
+		}
+	}
 
 	if !isConfigured() || msg.ReAuthenticate {
 		m.dialog.CloseDialog(dialog.ModelsID)
@@ -2900,25 +2916,10 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 
 		// Write a model_change metadata entry if the large model actually
 		// changed. It goes through the session's queue onto its current leaf.
-		if msg.ModelType == config.SelectedModelTypeLarge && m.session != nil && m.session.LeafMessageID != "" {
-			if oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model {
-				ws := m.com.Workspace
-				sid := m.session.ID
-				provider := msg.Model.Provider
-				modelID := msg.Model.Model
-				cmds = append(cmds, func() tea.Msg {
-					err := ws.WriteMetadataEntry(context.Background(), sid, message.CreateMessageParams{
-						MessageType: message.MessageTypeModelChange,
-						Parts: []message.ContentPart{
-							message.ModelChangeContent{Provider: provider, ModelID: modelID},
-						},
-					})
-					if err != nil {
-						slog.Error("Failed to write model_change entry", "error", err)
-					}
-					return nil
-				})
-			}
+		changed := oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model
+		if msg.ModelType == config.SelectedModelTypeLarge && changed {
+			cmds = append(cmds, m.writeMetadataEntry(message.MessageTypeModelChange,
+				message.ModelChangeContent{Provider: msg.Model.Provider, ModelID: msg.Model.Model}))
 		}
 	}
 
@@ -2954,6 +2955,43 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// handleSubscriptionProviderSelect handles choosing an OpenAI or xAI
+// model, providers that hold exactly one credential: an account sign-in
+// (ChatGPT or Grok) or an API key. It reports whether it took over.
+func (m *UI) handleSubscriptionProviderSelect(msg dialog.ActionSelectModel) (tea.Cmd, bool) {
+	providerID := msg.Model.Provider
+	pc, _ := m.com.Config().Providers.Get(providerID)
+	signedIn := pc.OAuthToken != nil
+
+	if !signedIn && !pc.HasAPIKey(m.com.Workspace.Resolver()) {
+		// No credential yet: ask how to authenticate.
+		m.dialog.CloseDialog(dialog.ModelsID)
+		return m.openAuthenticationDialog(msg.Provider, msg.Model, msg.ModelType), true
+	}
+	if !signedIn {
+		return nil, false
+	}
+
+	// A sign-in swaps the catalog for the plan's, so a model picked before
+	// signing in may not exist any more. Reopen the list and say so rather
+	// than silently selecting something else.
+	if msg.Model.Model == "" || pc.FindModel(msg.Model.Model) == nil {
+		m.dialog.CloseDialog(dialog.OAuthID)
+		m.dialog.CloseDialog(dialog.AuthMethodID)
+		m.dialog.CloseDialog(dialog.ModelsID)
+		var cmds []tea.Cmd
+		if msg.Model.Model != "" {
+			cmds = append(cmds, util.ReportWarn(fmt.Sprintf(
+				"%s isn't offered by your %s account; choose another model",
+				msg.Model.Model, cmp.Or(msg.Provider.Name, providerID),
+			)))
+		}
+		cmds = append(cmds, m.openModelsDialog())
+		return tea.Batch(cmds...), true
+	}
+	return nil, false
+}
+
 func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType) tea.Cmd {
 	var (
 		dlg dialog.Dialog
@@ -2962,13 +3000,61 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 		isOnboarding = m.state == uiOnboarding
 	)
 
-	dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
+	switch {
+	case config.HasSubscriptionLogin(string(provider.ID)):
+		pc, _ := m.com.Config().Providers.Get(string(provider.ID))
+		switch {
+		case pc.OAuthToken != nil:
+			// Re-authenticating while the account login is in force.
+			dlg, cmd = m.newSubscriptionOAuth(provider, model, modelType)
+		case !pc.HasAPIKey(m.com.Workspace.Resolver()):
+			// No credential at all: let the user pick the method.
+			dlg = dialog.NewAuthMethod(m.com, isOnboarding, provider, model, modelType)
+		default:
+			// An API key is the credential in force: edit it.
+			dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
+		}
+	default:
+		dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
+	}
 
 	if m.dialog.ContainsDialog(dlg.ID()) {
 		m.dialog.BringToFront(dlg.ID())
 		return nil
 	}
 
+	m.dialog.OpenDialogWithGrace(dlg)
+	return cmd
+}
+
+// newSubscriptionOAuth opens the account sign-in for OpenAI (ChatGPT) or
+// xAI (Grok).
+func (m *UI) newSubscriptionOAuth(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType) (dialog.Dialog, tea.Cmd) {
+	isOnboarding := m.state == uiOnboarding
+	if provider.ID == catwalk.InferenceProviderXAI {
+		return dialog.NewOAuthGrok(m.com, isOnboarding, provider, model, modelType)
+	}
+	return dialog.NewOAuthOpenAI(m.com, isOnboarding, provider, model, modelType)
+}
+
+// openAuthenticationDialogWithMethod opens the dialog for the method the
+// user picked in the auth method chooser. The model they selected rides
+// through the sign-in so it can be applied afterwards if the plan offers
+// it.
+func (m *UI) openAuthenticationDialogWithMethod(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType, useOAuth bool) tea.Cmd {
+	var (
+		dlg dialog.Dialog
+		cmd tea.Cmd
+	)
+	if useOAuth {
+		dlg, cmd = m.newSubscriptionOAuth(provider, model, modelType)
+	} else {
+		dlg, cmd = dialog.NewAPIKeyInput(m.com, m.state == uiOnboarding, provider, model, modelType)
+	}
+	if m.dialog.ContainsDialog(dlg.ID()) {
+		m.dialog.BringToFront(dlg.ID())
+		return nil
+	}
 	m.dialog.OpenDialogWithGrace(dlg)
 	return cmd
 }
@@ -3001,6 +3087,16 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			m.detailsOpen = !m.detailsOpen
 			m.updateLayoutAndSize()
 			return true
+		case key.Matches(msg, m.keyMap.Chat.EndFollow):
+			if m.state == uiChat && m.hasSession() {
+				m.activeChat().ScrollToBottomAndSelectLast()
+				return true
+			}
+		case key.Matches(msg, m.keyMap.Chat.ToggleSidebar):
+			if m.canToggleSidebar() {
+				cmds = append(cmds, m.toggleCompactMode())
+				return true
+			}
 		case key.Matches(msg, m.keyMap.Chat.TogglePills):
 			if m.state == uiChat && m.hasSession() {
 				if cmd := m.togglePillsExpanded(); cmd != nil {
@@ -3040,8 +3136,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.CycleBouncer):
 			cmds = append(cmds, m.handleCycleBouncerKey())
 			return true
-		case key.Matches(msg, m.keyMap.WorkflowPause, m.keyMap.WorkflowAbort):
-			if cmd, ok := m.handleWorkflowKey(msg); ok {
+		default:
+			if cmd, ok := m.features.handleKey(msg); ok {
 				cmds = append(cmds, cmd)
 				return true
 			}
@@ -3073,6 +3169,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			// Priority 4: Cancel streaming agent (immediate, bypasses
 			// two-phase Esc behavior).
+			if cmd, ok := m.features.cancel(); ok {
+				return tea.Batch(append(cmds, cmd)...)
+			}
 			if id := m.cancelTargetID(); m.isBusy(id) {
 				m.isCanceling = false
 				m.com.Workspace.AgentCancel(id)
@@ -3094,8 +3193,15 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleDialogMsg(msg)
 	}
 
-	// Handle cancel key when the session the editor sends to is busy.
+	if cmd, ok := m.features.preemptInput(msg); ok {
+		return tea.Batch(append(cmds, cmd)...)
+	}
+
+	// Handle cancel key when the session Esc cancels is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
+		if cmd, ok := m.features.cancel(); ok {
+			return tea.Batch(append(cmds, cmd)...)
+		}
 		if m.isBusy(m.cancelTargetID()) {
 			if cmd := m.cancelAgent(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -3230,18 +3336,19 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 			switch {
 			case key.Matches(msg, m.keyMap.Editor.AddImage):
-				if !m.currentModelSupportsImages() {
-					break
-				}
 				if cmd := m.openFilesDialog(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 
 			case key.Matches(msg, m.keyMap.Editor.PasteImage):
 				if !m.currentModelSupportsImages() {
+					cmds = append(cmds, util.ReportWarn(common.NoVisionWarning))
 					break
 				}
 				cmds = append(cmds, m.pasteImageFromClipboard)
+
+			case key.Matches(msg, m.keyMap.Editor.PasteText):
+				cmds = append(cmds, m.pasteTextFromClipboard)
 
 			case key.Matches(msg, m.keyMap.Editor.SendMessage):
 				if m.branchNavigation != nil || m.branchRestoring {
@@ -3360,6 +3467,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.textarea.InsertRune('\n')
 				m.closeCompletions()
 				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
+			case key.Matches(msg, m.keyMap.Editor.CopySelection) && m.textarea.HasSelection():
+				cmds = append(cmds, m.copyEditorSelection(false))
+			case key.Matches(msg, m.keyMap.Editor.CutSelection) && m.textarea.HasSelection():
+				cmds = append(cmds, m.copyEditorSelection(true))
 			case key.Matches(msg, m.keyMap.Editor.HistoryPrev):
 				cmd := m.handleHistoryUp(msg)
 				if cmd != nil {
@@ -3493,65 +3604,40 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			case key.Matches(msg, m.keyMap.Chat.Expand):
 				m.activeChat().ToggleExpandedSelectedItem()
 			case key.Matches(msg, m.keyMap.Chat.Up):
-				if cmd := m.activeChat().ScrollByAndAnimate(-1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectPrev()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			case key.Matches(msg, m.keyMap.Chat.Down):
-				if cmd := m.activeChat().ScrollByAndAnimate(1); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(1)
 				if !m.activeChat().SelectedItemInView() {
 					m.activeChat().SelectNext()
-					if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+					m.activeChat().ScrollToSelected()
 				}
 			case key.Matches(msg, m.keyMap.Chat.UpOneItem):
 				m.activeChat().SelectPrev()
-				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToSelected()
 			case key.Matches(msg, m.keyMap.Chat.DownOneItem):
 				m.activeChat().SelectNext()
-				if cmd := m.activeChat().ScrollToSelectedAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToSelected()
 			case key.Matches(msg, m.keyMap.Chat.HalfPageUp):
-				if cmd := m.activeChat().ScrollByAndAnimate(-m.activeChat().Height() / 2); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-m.activeChat().Height() / 2)
 				m.activeChat().SelectFirstInView()
 			case key.Matches(msg, m.keyMap.Chat.HalfPageDown):
-				if cmd := m.activeChat().ScrollByAndAnimate(m.activeChat().Height() / 2); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(m.activeChat().Height() / 2)
 				m.activeChat().SelectLastInView()
 			case key.Matches(msg, m.keyMap.Chat.PageUp):
-				if cmd := m.activeChat().ScrollByAndAnimate(-m.activeChat().Height()); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(-m.activeChat().Height())
 				m.activeChat().SelectFirstInView()
 			case key.Matches(msg, m.keyMap.Chat.PageDown):
-				if cmd := m.activeChat().ScrollByAndAnimate(m.activeChat().Height()); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollBy(m.activeChat().Height())
 				m.activeChat().SelectLastInView()
 			case key.Matches(msg, m.keyMap.Chat.Home):
-				if cmd := m.activeChat().ScrollToTopAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.activeChat().ScrollToTop()
 				m.activeChat().SelectFirst()
 			case key.Matches(msg, m.keyMap.Chat.End):
-				if cmd := m.activeChat().ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				m.activeChat().SelectLast()
+				m.activeChat().ScrollToBottomAndSelectLast()
 			default:
 				if ok, cmd := m.activeChat().HandleKeyMsg(msg); ok {
 					cmds = append(cmds, cmd)
@@ -3696,7 +3782,12 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			)
 			uv.NewStyledString(breadcrumb).Draw(scr, bcArea)
 
-			m.activeChat().Draw(scr, m.activeChatArea())
+			chatArea := m.activeChatArea()
+			m.activeChat().Draw(scr, chatArea)
+			if footer := m.features.drillInFooter(); footer != nil {
+				footerArea := image.Rect(layout.main.Min.X, chatArea.Max.Y, layout.main.Max.X, layout.main.Max.Y)
+				uv.NewStyledString(footer.Render(footerArea.Dx())).Draw(scr, footerArea)
+			}
 		} else {
 			m.activeChat().Draw(scr, layout.main)
 		}
@@ -3798,11 +3889,44 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		if m.textarea.Focused() {
 			cur := m.textarea.Cursor()
 
-			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
+			cur.Y += m.layout.editor.Min.Y + editorAttachmentsRow
 			return cur
 		}
 	}
 	return nil
+}
+
+// toggleMouseSupport flips mouse capture and saves options.tui.mouse. It
+// runs synchronously, like the notifications toggle, and only flips the UI
+// once the setting is saved, so the palette label (read from config) never
+// disagrees with the live mouse mode.
+func (m *UI) toggleMouseSupport() tea.Cmd {
+	newValue := !m.mouseEnabled
+	if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.mouse", newValue); err != nil {
+		return util.ReportError(err)
+	}
+	m.mouseEnabled = newValue
+	// A drag in progress can never see its release once capture is off.
+	m.textareaMouseSelecting = false
+	status := "disabled"
+	if newValue {
+		status = "enabled"
+	}
+	return util.CmdHandler(util.NewInfoMsg("Mouse support " + status))
+}
+
+// mouseEnabledByConfig reports whether options.tui.mouse leaves mouse
+// capture on. It defaults to on.
+func mouseEnabledByConfig(opts *config.Options) bool {
+	return opts == nil || opts.TUI == nil || opts.TUI.Mouse == nil || *opts.TUI.Mouse
+}
+
+// mouseMode is the mouse reporting mode for the view.
+func mouseMode(enabled bool) tea.MouseMode {
+	if !enabled {
+		return tea.MouseModeNone
+	}
+	return tea.MouseModeCellMotion
 }
 
 // View renders the UI model's view.
@@ -3812,7 +3936,7 @@ func (m *UI) View() tea.View {
 	if !m.isTransparent {
 		v.BackgroundColor = m.com.Styles.Background
 	}
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = mouseMode(m.mouseEnabled)
 	v.ReportFocus = m.caps.ReportFocusEvents
 	var sessionTitle string
 	if m.hasSession() {
@@ -3917,6 +4041,10 @@ func (m *UI) ShortHelp() []key.Binding {
 			k.Models,
 		)
 
+		if m.canToggleSidebar() {
+			binds = append(binds, k.Chat.ToggleSidebar)
+		}
+
 		switch m.focus {
 		case uiFocusEditor:
 			binds = append(
@@ -3942,6 +4070,7 @@ func (m *UI) ShortHelp() []key.Binding {
 				k.Chat.PageDown,
 				k.Chat.Copy,
 			)
+			binds = append(binds, m.selectedItemBindings()...)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, k.Chat.PillLeft)
 			}
@@ -3966,6 +4095,33 @@ func (m *UI) ShortHelp() []key.Binding {
 
 	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isRootBusy() {
 		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
+	}
+	return binds
+}
+
+// selectedItemBindings are the help entries for keys only the selected chat
+// item handles.
+func (m *UI) selectedItemBindings() []key.Binding {
+	selected := m.activeChat().SelectedItem()
+	if diagram, ok := selected.(*chat.DiagramItem); ok && !diagram.Failed() {
+		return []key.Binding{m.keyMap.Chat.OpenDiagram, m.keyMap.Chat.CopyImage}
+	}
+	var binds []key.Binding
+	image := chat.ShowsToolImage(selected)
+	if image {
+		binds = append(binds, m.keyMap.Chat.OpenImage, m.keyMap.Chat.CopyImage)
+	}
+	open, file := chat.FileKeys(selected)
+	switch {
+	case image:
+		// The image item already listed OpenImage.
+	case open == chat.OpensImage:
+		binds = append(binds, m.keyMap.Chat.OpenImage)
+	case open == chat.OpensFile:
+		binds = append(binds, m.keyMap.Chat.OpenFile)
+	}
+	if file {
+		binds = append(binds, m.keyMap.Chat.EditFile, m.keyMap.Chat.RevealFile)
 	}
 	return binds
 }
@@ -4017,7 +4173,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 			mainBinds = append(mainBinds, k.CycleBouncer)
 		}
 		if hasSession {
-			mainBinds = append(mainBinds, k.Chat.NewSession)
+			mainBinds = append(mainBinds, k.Chat.NewSession, k.Chat.EndFollow)
+		}
+		if m.canToggleSidebar() {
+			mainBinds = append(mainBinds, k.Chat.ToggleSidebar)
 		}
 
 		binds = append(binds, mainBinds)
@@ -4028,6 +4187,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 				k.Editor.Newline,
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
+				k.Editor.PasteText,
+				k.Editor.SelectAll,
+				k.Editor.CopySelection,
+				k.Editor.CutSelection,
 			}
 			if m.currentModelSupportsImages() {
 				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)
@@ -4077,10 +4240,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Chat.End,
 					k.Chat.FocusSidebar,
 				},
-				[]key.Binding{
+				append([]key.Binding{
 					k.Chat.Copy,
 					k.Chat.ClearHighlight,
-				},
+				}, m.selectedItemBindings()...),
 			)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {
 				binds = append(binds, []key.Binding{k.Chat.PillLeft})
@@ -4105,6 +4268,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 				k.Editor.Newline,
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
+				k.Editor.PasteText,
+				k.Editor.SelectAll,
+				k.Editor.CopySelection,
+				k.Editor.CutSelection,
 			}
 			if m.currentModelSupportsImages() {
 				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)
@@ -4172,9 +4339,27 @@ func (m *UI) toggleCompactMode() tea.Cmd {
 		return util.ReportError(err)
 	}
 
+	var cmds []tea.Cmd
+	if m.forceCompactMode && m.focus == uiFocusSidebar {
+		// The sidebar is going away, so focus the editor again to keep key
+		// events routed somewhere useful.
+		m.sidebarScrollbarVisible = false
+		m.focus = uiFocusEditor
+		cmds = append(cmds, m.textarea.Focus())
+	}
+
 	m.updateLayoutAndSize()
 
-	return nil
+	return tea.Batch(cmds...)
+}
+
+// canToggleSidebar reports whether the sidebar can be shown right now, i.e.
+// a chat session is active and the terminal is large enough for the full
+// layout.
+func (m *UI) canToggleSidebar() bool {
+	return m.state == uiChat && m.hasSession() &&
+		m.width >= compactModeWidthBreakpoint &&
+		m.height >= compactModeHeightBreakpoint
 }
 
 // updateLayoutAndSize updates the layout and sizes of UI components.
@@ -4213,7 +4398,7 @@ func (m *UI) handleTextareaHeightChange(prevHeight int) tea.Cmd {
 	}
 	m.updateLayoutAndSize()
 	if m.state == uiChat && m.activeChat().Follow() {
-		return m.activeChat().ScrollToBottomAndAnimate()
+		m.activeChat().ScrollToBottom()
 	}
 	return nil
 }
@@ -4251,7 +4436,7 @@ func (m *UI) updateSize() {
 	for i, entry := range m.drillStack {
 		h := chatHeight
 		if i == len(m.drillStack)-1 {
-			h = max(0, chatHeight-drillInChatTopMargin)
+			h = max(0, chatHeight-drillInChatTopMargin-m.features.drillInFooterLines())
 		}
 		entry.chat.SetSize(chatWidth, h)
 	}
@@ -4509,17 +4694,22 @@ func (m *UI) openEditor(value string) tea.Cmd {
 		if err != nil {
 			return util.ReportError(err)
 		}
-		content, err := os.ReadFile(tmpPath)
-		if err != nil {
-			return util.ReportError(err)
-		}
-		if len(content) == 0 {
-			return util.ReportWarn("Message is empty")
-		}
-		return openEditorMsg{
-			Text: strings.TrimSpace(string(content)),
-		}
+		return editorFileMsg(tmpPath)
 	})
+}
+
+// editorFileMsg reads the file the external editor was supposed to write and
+// turns it into the message that replaces the composer text. An emptied buffer
+// yields an empty Text, which clears the composer just like deleting every
+// character in-app does.
+func editorFileMsg(path string) tea.Msg {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return util.ReportError(err)
+	}
+	return openEditorMsg{
+		Text: strings.TrimSpace(string(content)),
+	}
 }
 
 // closeCompletions closes the completions popup and resets state.
@@ -4606,10 +4796,8 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	rawArgs := extractSlashArgs(value, argName)
 	prefix := "/" + argName
 
-	// A workflow command runs its script with the raw arguments; it
-	// never sends its body.
-	if cmd.Workflow != "" {
-		return m.startWorkflowCommand(argName, cmd, rawArgs)
+	if run, ok := m.features.runCommand(cmd, rawArgs); ok {
+		return run
 	}
 
 	// Command matched. If it has named arguments and none were
@@ -4752,8 +4940,13 @@ func (m *UI) insertFileCompletion(path string) tea.Cmd {
 		return nil
 	}
 	heightCmd := m.handleTextareaHeightChange(prevHeight)
+	supportsImages := m.currentModelSupportsImages()
 
 	fileCmd := func() tea.Msg {
+		if !supportsImages && common.IsImagePath(path) {
+			return util.NewWarnMsg(common.NoVisionWarning)
+		}
+
 		absPath, _ := filepath.Abs(path)
 
 		if m.hasSession() {
@@ -4797,6 +4990,7 @@ func (m *UI) insertMCPResourceCompletion(item completions.ResourceCompletionValu
 		return nil
 	}
 	heightCmd := m.handleTextareaHeightChange(prevHeight)
+	supportsImages := m.currentModelSupportsImages()
 
 	resourceCmd := func() tea.Msg {
 		contents, err := m.com.Workspace.ReadMCPResource(
@@ -4829,6 +5023,10 @@ func (m *UI) insertMCPResourceCompletion(item completions.ResourceCompletionValu
 		}
 		if mimeType == "" {
 			mimeType = "text/plain"
+		}
+
+		if !supportsImages && strings.HasPrefix(mimeType, "image/") {
+			return util.NewWarnMsg(common.NoVisionWarning)
 		}
 
 		return message.Attachment{
@@ -5124,22 +5322,25 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 		return nil
 	}
 
-	// Build entries from config + current state.
+	// Build entries from config + current state. Routes are in memory
+	// in the coordinator and their sizes measured at registration, so
+	// reading them here is cheap.
+	routes, routesReady := m.com.Workspace.MCPRoutes()
 	var entries []dialog.MCPPaletteEntry
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
 		state, ok := m.mcpStates[mcpCfg.Name]
 		if !ok {
 			continue
 		}
-		entries = append(entries, dialog.MCPPaletteEntry{
+		entry := dialog.MCPPaletteEntry{
 			Name:        mcpCfg.Name,
 			Description: mcpCfg.MCP.LazyDescription,
-			IsLazy:      mcpCfg.MCP.IsLazy(),
-			Enabled:     m.enabledLazyMCPs[mcpCfg.Name],
 			NeedsAuth:   state.NeedsAuth,
 			State:       state.State,
 			Counts:      state.Counts,
-		})
+		}
+		applyMCPRoute(&entry, routes, routesReady)
+		entries = append(entries, entry)
 	}
 
 	d := dialog.NewMCPPalette(m.com, entries)
@@ -5147,115 +5348,18 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 	return nil
 }
 
-// deriveEnabledLazyMCPs scans branch-path messages for lazy MCP state
-// changes and rebuilds the enabledLazyMCPs map. Only successful
-// enable_mcp calls (ToolResult with IsError == false, correlated by
-// ToolCallID) are counted. MCPToggleContent entries are always honoured.
-// Last event per server wins. This mirrors the agent-side derivation in
-// internal/agent/lazy_mcp.go.
-func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
-	m.enabledLazyMCPs = make(map[string]bool)
-	m.pendingEnableMCPs = make(map[string]string)
-
-	type event struct {
-		serverName string
-		callID     string
-		enabled    bool
-		isToggle   bool
-	}
-	var events []event
-	resultOK := make(map[string]bool)
-
-	for _, msg := range msgs {
-		for _, part := range msg.Parts {
-			switch p := part.(type) {
-			case message.ToolCall:
-				if p.Name != agenttools.EnableMCPToolName || !p.Finished {
-					continue
-				}
-				var params agenttools.EnableMCPParams
-				if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
-					continue
-				}
-				if p.ID != "" {
-					events = append(events, event{serverName: params.ServerName, callID: p.ID})
-				}
-			case message.ToolResult:
-				if p.ToolCallID != "" {
-					resultOK[p.ToolCallID] = !p.IsError
-				}
-			case message.MCPToggleContent:
-				events = append(events, event{
-					serverName: p.ServerName,
-					enabled:    p.Enabled,
-					isToggle:   true,
-				})
-			}
-		}
-	}
-
-	for _, e := range events {
-		if e.isToggle {
-			m.enabledLazyMCPs[e.serverName] = e.enabled
-		} else {
-			ok, found := resultOK[e.callID]
-			if found && ok {
-				m.enabledLazyMCPs[e.serverName] = true
-			}
-		}
-	}
-}
-
-// applyLazyMCPMessageParts scans a message's parts for lazy MCP state
-// changes (enable_mcp tool calls, their results, and MCPToggleContent
-// entries) and applies them to the enabledLazyMCPs map and any open
-// MCP palette.
-//
-// ToolCalls are recorded as pending; the enabled flag is only set when
-// the correlated ToolResult arrives with IsError == false. This prevents
-// a failed connect from briefly showing "✓ enabled" in the palette.
-func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
-	for _, part := range msg.Parts {
-		switch p := part.(type) {
-		case message.ToolCall:
-			if p.Name != agenttools.EnableMCPToolName || !p.Finished {
-				continue
-			}
-			var params agenttools.EnableMCPParams
-			if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
-				continue
-			}
-			if p.ID != "" {
-				m.pendingEnableMCPs[p.ID] = params.ServerName
-			}
-		case message.ToolResult:
-			serverName, ok := m.pendingEnableMCPs[p.ToolCallID]
-			if !ok {
-				continue
-			}
-			delete(m.pendingEnableMCPs, p.ToolCallID)
-			if p.IsError {
-				continue
-			}
-			m.enabledLazyMCPs[serverName] = true
-			m.updateMCPPaletteEntry(serverName, true)
-		case message.MCPToggleContent:
-			m.enabledLazyMCPs[p.ServerName] = p.Enabled
-			m.updateMCPPaletteEntry(p.ServerName, p.Enabled)
-		}
-	}
-}
-
-// updateMCPPaletteEntry updates the enabled state of a named entry in
-// any open MCP palette dialog.
-func (m *UI) updateMCPPaletteEntry(name string, enabled bool) {
-	if m.dialog == nil {
+// applyMCPRoute labels entry with its server's route.
+func applyMCPRoute(entry *dialog.MCPPaletteEntry, routes []agenttools.MCPRouteInfo, ready bool) {
+	if !ready {
+		entry.Route = "route pending"
 		return
 	}
-	if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
-		if palette, ok := dia.(*dialog.MCPPalette); ok {
-			palette.SetEntryEnabled(name, enabled)
+	for _, route := range routes {
+		if route.Server != entry.Name {
+			continue
 		}
+		entry.Route = route.ShortString()
+		return
 	}
 }
 
@@ -5306,6 +5410,9 @@ func (m *UI) handleNavigateTree(msg dialog.ActionNavigateTree) tea.Cmd {
 	}
 	if m.branchNavigation != nil || m.branchRestoring {
 		return util.ReportWarn("Please wait for navigation to finish.")
+	}
+	if cmd := m.features.blockNavigation(); cmd != nil {
+		return cmd
 	}
 	if m.branchReturn != nil && !m.branchReturn.originalDraft.isEmpty() {
 		return util.ReportWarn("Return to pre-branch conversation, then send or clear its draft before branching again.")
@@ -5466,9 +5573,7 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.session = msg.session
 	m.clearDrillStack()
 
-	if cmd := m.setSessionMessages(msg.messages); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
+	cmds = append(cmds, m.setSessionMessages(msg.messages))
 
 	if len(msg.messages) == 0 {
 		m.lastUserMessageTime = 0
@@ -5654,7 +5759,7 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 		return util.ReportError(err)
 	}
 
-	commands.SetWorkflowControls(m.workflowControls())
+	commands.SetFeatureEntries(m.features.paletteEntries())
 	m.dialog.OpenDialog(commands)
 
 	return commands.InitialCmd()
@@ -5702,6 +5807,9 @@ func (m *UI) openSessionsDialog() tea.Cmd {
 
 // openFilesDialog opens the file picker dialog.
 func (m *UI) openFilesDialog() tea.Cmd {
+	if !m.currentModelSupportsImages() {
+		return util.ReportWarn(common.NoVisionWarning)
+	}
 	if m.dialog.ContainsDialog(dialog.FilePickerID) {
 		// Bring to front
 		m.dialog.BringToFront(dialog.FilePickerID)
@@ -5733,19 +5841,14 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 // handlePermissionNotification updates tool items when permission state changes.
 func (m *UI) handlePermissionNotification(notification permission.PermissionNotification) {
-	// Search the root and every drill-in chat, not just the visible one:
+	// Update the root and every drill-in chat, not just the visible one:
 	// a subagent's tool may sit under a thinking or tool drill-in.
-	toolItem := m.findMessageItem(notification.ToolCallID)
-	if toolItem == nil {
-		return
+	status := chat.ToolStatusAwaitingPermission
+	if notification.Granted {
+		status = chat.ToolStatusRunning
 	}
-
-	if permItem, ok := toolItem.(chat.ToolMessageItem); ok {
-		if notification.Granted {
-			permItem.SetStatus(chat.ToolStatusRunning)
-		} else {
-			permItem.SetStatus(chat.ToolStatusAwaitingPermission)
-		}
+	for _, item := range m.toolItemsByCallID(notification.ToolCallID) {
+		item.SetStatus(status)
 	}
 }
 
@@ -5809,6 +5912,10 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		return m.handleDialogMsg(msg)
 	}
 
+	if cmd, ok := m.features.preemptInput(msg); ok {
+		return cmd
+	}
+
 	if m.focus != uiFocusEditor {
 		return nil
 	}
@@ -5843,16 +5950,7 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				return false
 			}
-
-			lowerPath := strings.ToLower(path)
-			isValid := false
-			for _, ext := range common.AllowedImageTypes {
-				if strings.HasSuffix(lowerPath, ext) {
-					isValid = true
-					break
-				}
-			}
-			if !isValid {
+			if !common.IsImagePath(path) {
 				return false
 			}
 		}
@@ -5862,6 +5960,15 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		m.closeSlashAC(true)
 		prevHeight := m.textarea.Height()
 		return m.updateTextareaWithPrevHeight(msg, prevHeight)
+	}
+	if !m.currentModelSupportsImages() {
+		// Keep the pasted paths as text so nothing the user pasted is lost.
+		m.closeSlashAC(true)
+		prevHeight := m.textarea.Height()
+		return tea.Batch(
+			m.updateTextareaWithPrevHeight(msg, prevHeight),
+			util.ReportWarn(common.NoVisionWarning),
+		)
 	}
 
 	var cmds []tea.Cmd
@@ -5950,15 +6057,7 @@ func (m *UI) pasteImageFromClipboard() tea.Msg {
 		return nil // Clipboard does not contain an image or valid file path
 	}
 
-	lowerPath := strings.ToLower(path)
-	isAllowed := false
-	for _, ext := range common.AllowedImageTypes {
-		if strings.HasSuffix(lowerPath, ext) {
-			isAllowed = true
-			break
-		}
-	}
-	if !isAllowed {
+	if !common.IsImagePath(path) {
 		return util.NewInfoMsg("File type is not a supported image format")
 	}
 

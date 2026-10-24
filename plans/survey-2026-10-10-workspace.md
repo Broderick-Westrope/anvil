@@ -25,6 +25,8 @@ removes the stale docs that keep agents adding forwards.
 
 ### 1. `Workspace` is a middle man with one implementation (Strong)
 
+**Status (2026-10-16):** Open. #97 removed the dead `PermissionGrantPersistent` forward, and #110 removed `WorkflowRunning` and replaced `WorkflowMissing` with `AnnotateCommands`, which asks the workflow host's `Check`. The rest of the layer is untouched.
+
 - **Flags:** Middle man, Pass-through, Speculative generality
 - **Evidence:**
   - `AppWorkspace` has 83 methods (`app_workspace.go`). About 52 are pure
@@ -57,6 +59,8 @@ removes the stale docs that keep agents adding forwards.
 
 ### 2. Run-state queries travel five hops and the state has no single owner (Strong)
 
+**Status (2026-10-12):** Open. `feat/workflow-run-node` changes cancel and queue behaviour around the session queue, so wait for it before consolidating.
+
 - **Flags:** Pass-through, Hand-synced state, Information leakage
 - **Evidence:**
   - `Cancel`, `ClearQueue`, `IsBusy`, `IsSessionBusy`, `QueuedPrompts`,
@@ -88,6 +92,8 @@ removes the stale docs that keep agents adding forwards.
 
 ### 3. First-run onboarding never installs the LSP callback or idle reaper (Strong, bug)
 
+**Status (2026-10-12):** Done in #93.
+
 - **Flags:** Temporal decomposition, Hand-synced state
 - **Evidence:** `app.New` returns early when config isn't configured
   (`app.go:198-202`), before `LSPManager.SetCallback`, `TrackConfigured`
@@ -100,6 +106,8 @@ removes the stale docs that keep agents adding forwards.
   configuration, with a test that starts unconfigured and onboards.
 
 ### 4. Provider-kind knowledge is spread over about eight switches (Worth exploring)
+
+**Status (2026-10-12):** Open. #87 turned `getProviderOptions` into tables, but the other switches remain.
 
 - **Flags:** Growing switch, Information leakage
 - **Evidence:** after #87 moves `getProviderOptions` into tables in
@@ -116,6 +124,8 @@ removes the stale docs that keep agents adding forwards.
   Much of this is upstream code, so weigh sync cost.
 
 ### 5. `coordinator.go` owns too many concerns (Worth exploring)
+
+**Status (2026-10-12):** Open.
 
 - **Flags:** God module, Data clumps, Divergent change
 - **Evidence:** 2,364 lines covering agent `.md` discovery, the pause gate,
@@ -134,6 +144,8 @@ removes the stale docs that keep agents adding forwards.
 
 ### 6. `internal/app` mixes wiring with run modes and diagnostics (Speculative)
 
+**Status (2026-10-12):** Partly done. #96 moved `RunNonInteractive` printing into `streamPrinter` and the memory monitor into `memoryMonitor`; where they live is still open.
+
 - **Flags:** God module, Feature envy
 - **Evidence:** besides wiring, `app` holds `anvil run`
   (`RunNonInteractive`, cognitive 39), shutdown choreography, the update
@@ -145,6 +157,8 @@ removes the stale docs that keep agents adding forwards.
   candidate 1, since collapsing `Workspace` may move code into `app`.
 
 ### 7. Several ways to reach config (Speculative)
+
+**Status (2026-10-12):** Partly done. #95 corrected the `AGENTS.md` wording; there is still more than one read path.
 
 - **Flags:** Two ways to do one task
 - **Evidence:** `Common.Config()` → `Workspace.Config()` → `store.Config()`

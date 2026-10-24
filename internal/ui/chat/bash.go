@@ -11,6 +11,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
+	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -32,12 +33,15 @@ func NewBashToolMessageItem(
 	toolCall message.ToolCall,
 	result *message.ToolResult,
 	canceled bool,
+	workingDir string,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &BashToolRenderContext{}, canceled)
+	return newBaseToolMessageItem(sty, toolCall, result, &BashToolRenderContext{workingDir: workingDir}, canceled)
 }
 
 // BashToolRenderContext renders bash tool messages.
-type BashToolRenderContext struct{}
+type BashToolRenderContext struct {
+	workingDir string
+}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
@@ -68,11 +72,7 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	// raw command with newlines preserved.
 	mainParam := params.Description
 	if mainParam == "" || opts.ExpandedContent {
-		mainParam = params.Command
-		if !opts.ExpandedContent {
-			mainParam = strings.ReplaceAll(mainParam, "\n", " ")
-		}
-		mainParam = strings.ReplaceAll(mainParam, "\t", "    ")
+		mainParam = b.displayCommand(sty, params, opts.ExpandedContent)
 	}
 	toolParams := []string{mainParam}
 	if params.RunInBackground {
@@ -103,6 +103,26 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	bodyWidth := width - toolBodyLeftPaddingTotal
 	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent, opts.NoTruncate))
 	return joinToolParts(header, body)
+}
+
+// displayCommand returns the command as shown in the header: syntax
+// highlighted, and without a "cd <project> && " prefix when the command runs
+// from the project directory anyway.
+func (b *BashToolRenderContext) displayCommand(sty *styles.Styles, params tools.BashParams, expanded bool) string {
+	cmd := params.Command
+	if !expanded {
+		cmd = strings.ReplaceAll(cmd, "\n", " ")
+	}
+	cmd = strings.ReplaceAll(cmd, "\t", "    ")
+	// Each call starts in params.WorkingDir when set, so a cd into the
+	// project is only redundant when the call has no other directory.
+	if params.WorkingDir == "" || params.WorkingDir == b.workingDir {
+		cmd = common.StripBashDisplayPrefix(cmd, b.workingDir)
+	}
+	if highlighted, err := common.SyntaxHighlight(sty, cmd, "command.sh", nil); err == nil {
+		cmd = strings.TrimRight(highlighted, "\n")
+	}
+	return cmd
 }
 
 // -----------------------------------------------------------------------------
@@ -156,8 +176,8 @@ func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	waiting := params.Wait && paramsErr == nil && !opts.HasResult() && !opts.IsCanceled()
 	if opts.IsPending() || waiting {
 		header := pendingTool(sty, "Job", opts.Anim, opts.Compact)
-		if waiting && !opts.StartedAt.IsZero() {
-			elapsed := max(opts.Now.Sub(opts.StartedAt), 0)
+		if waiting && !opts.MessageCreatedAt.IsZero() {
+			elapsed := max(opts.Now.Sub(opts.MessageCreatedAt), 0)
 			header += " " + sty.Tool.StateWaiting.Render("waiting "+shell.FormatRuntime(elapsed))
 		}
 		return header
@@ -251,7 +271,7 @@ func (j *JobKillToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 // renderJobTool renders a job-related tool with the common pattern:
 // header → nested check → early state → body.
 func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, shellID, description, content string) string {
-	header := jobHeader(sty, opts.Status, action, shellID, description, width)
+	header := jobHeader(sty, opts.Status, action, shellID, description, width, opts.Duration)
 	if opts.Compact {
 		return header
 	}
@@ -272,7 +292,7 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 // jobHeader builds a header for job-related tools.
 // Format: "● Job (Action) ID 05A description...". The ID is the job ID
 // Anvil assigned, not an operating system process ID.
-func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, description string, width int) string {
+func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, description string, width int, duration time.Duration) string {
 	icon := toolIcon(sty, status)
 	jobPart := sty.Tool.JobToolName.Render("Job")
 	actionPart := sty.Tool.JobAction.Render("(" + action + ")")
@@ -282,18 +302,13 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 		prefix += " " + sty.Tool.JobID.Render(jobIDLabel(shellID))
 	}
 
-	if description == "" {
-		return prefix
-	}
-
-	prefixWidth := lipgloss.Width(prefix)
-	availableWidth := width - prefixWidth - 1
-	if availableWidth < 10 {
-		return prefix
+	suffix, availableWidth := fitToolTimerSuffix(sty, duration, width, lipgloss.Width(prefix)+1)
+	if description == "" || availableWidth < 10 {
+		return prefix + suffix
 	}
 
 	truncatedDesc := ansi.Truncate(description, availableWidth, "…")
-	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc)
+	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc) + suffix
 }
 
 // jobIDLabel labels a job ID in tool and notice headers.

@@ -104,3 +104,36 @@ func TestSkillsRenderedPrompts(t *testing.T) {
 		}
 	}
 }
+
+func TestDiagramLineFollowsDiagramsOption(t *testing.T) {
+	t.Parallel()
+	off, on := false, true
+	options := map[string]struct {
+		value *bool
+		want  bool
+	}{
+		"omitted": {value: nil, want: true},
+		"true":    {value: &on, want: true},
+		"false":   {value: &off, want: false},
+	}
+	constructors := map[string]func(...prompt.Option) (*prompt.Prompt, error){
+		"orchestrator": orchestratorPrompt,
+		"specialist":   specialistPrompt,
+	}
+	for promptName, constructor := range constructors {
+		for optionName, tc := range options {
+			t.Run(promptName+"/"+optionName, func(t *testing.T) {
+				t.Parallel()
+				cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+				require.NoError(t, err)
+				cfg.Config().Options.ContextPaths = nil
+				cfg.Config().Options.TUI.Diagrams = tc.value
+				p, err := constructor(prompt.WithAvailableSkills(nil))
+				require.NoError(t, err)
+				built, err := p.Build(t.Context(), "test", "test", cfg)
+				require.NoError(t, err)
+				require.Equal(t, tc.want, strings.Contains(built, "Mermaid diagrams in your replies may be rendered"))
+			})
+		}
+	}
+}

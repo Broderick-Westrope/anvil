@@ -1,0 +1,27 @@
+{
+  "why": "A rebase replaced a commit SHA; the summary must say which SHA is current.",
+  "trunk": [
+    {"role": "user", "text": "Fix the login timeout on fix/login-timeout."},
+    {"role": "assistant", "text": "Working in /wt/fix-login-timeout."}
+  ],
+  "branch": [
+    {"role": "user", "text": "Commit it, rebase on main and push."},
+    {"role": "assistant", "text": "Committing, then rebasing.", "calls": [
+      {"id": "c1", "name": "bash", "input": {"command": "git -C /wt/fix-login-timeout commit -am \"Raise the login timeout to 30s\""}}
+    ]},
+    {"role": "tool", "results": [
+      {"id": "c1", "content": "[fix/login-timeout 3c3c3c3] Raise the login timeout to 30s", "metadata": {"exit_code": 0}}
+    ]},
+    {"role": "assistant", "calls": [
+      {"id": "c2", "name": "bash", "input": {"command": "git -C /wt/fix-login-timeout rebase main"}},
+      {"id": "c3", "name": "bash", "input": {"command": "git -C /wt/fix-login-timeout push --force-with-lease origin fix/login-timeout"}}
+    ]},
+    {"role": "tool", "results": [
+      {"id": "c2", "content": "Successfully rebased and updated refs/heads/fix/login-timeout.", "metadata": {"exit_code": 0}},
+      {"id": "c3", "content": "To github.com:acme/app.git\n + 3c3c3c3...7d7d7d7 fix/login-timeout -> fix/login-timeout (forced update)", "metadata": {"exit_code": 0}}
+    ]},
+    {"role": "assistant", "text": "Pushed. The rebase rewrote the commit, so the branch is now at 7d7d7d7."}
+  ],
+  "required": ["7d7d7d7"],
+  "forbidden": []
+}

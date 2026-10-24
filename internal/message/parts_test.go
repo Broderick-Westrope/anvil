@@ -24,14 +24,21 @@ func TestStoredParts_RoundTripEveryPartType(t *testing.T) {
 		message.TextContent{Text: "text"},
 		message.ImageURLContent{URL: "https://example.com/a.png", Detail: "high"},
 		message.BinaryContent{Path: "a.png", MIMEType: "image/png", Data: []byte{1, 2, 3}},
-		message.ToolCall{ID: "call", Name: "bash", Input: "{}", ProviderExecuted: true, Finished: true},
-		message.ToolResult{ToolCallID: "call", Name: "bash", Content: "out", Data: "ZGF0YQ==", MIMEType: "text/plain", Metadata: "{}", IsError: true},
+		message.ToolCall{ID: "call", Name: "bash", Input: "{}", ProviderExecuted: true, Finished: true, StartedAt: 1_000},
+		message.ToolResult{ToolCallID: "call", Name: "bash", Content: "out", Data: "ZGF0YQ==", MIMEType: "text/plain", Metadata: "{}", IsError: true, FinishedAt: 2_000},
 		message.CompactionContent{Summary: "sum", FirstKeptEntryID: "kept", TokensBefore: 10},
-		message.BranchSummaryContent{Summary: "branch", FromID: "from"},
+		message.BranchSummaryContent{
+			Summary: "branch", FromID: "from", ChildSessionID: "child", Agent: "branch-summarizer",
+			Ledger: message.BranchLedger{
+				Modified: []string{"a.go"}, Read: []string{"b.go"},
+				Events: []message.LedgerEvent{{Tool: "bash", Command: "git commit -m x", Dir: "/repo", Status: message.LedgerSucceeded, Refs: []string{"abc1234"}}},
+			},
+		},
 		message.LabelContent{TargetID: "target", Label: "label"},
 		message.ModelChangeContent{Provider: "anthropic", ModelID: "model"},
 		message.ThinkingLevelChangeContent{ThinkingLevel: "high"},
 		message.MCPToggleContent{ServerName: "server", Enabled: true},
+		message.InjectionContent{Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: "go on", CallID: "call", Attempt: 1, MaxAttempts: 2},
 		message.Finish{Reason: message.FinishReasonEndTurn, Time: 5, Message: "msg", Details: "details"},
 	}
 

@@ -352,35 +352,6 @@ func TestWorkflowDialogIDsAreUniquePerRequest(t *testing.T) {
 	require.Equal(t, WorkflowRequestDialogID("req-1"), NewWorkflowApproval(workflowCommon(), approvalEvent("")).ID())
 }
 
-func TestDefaultCommandsWorkflowControls(t *testing.T) {
-	t.Parallel()
-
-	keys := WorkflowKeys{Pause: "f1", Abort: "f2"}
-	newCommands := func(w *WorkflowControls) []*CommandItem {
-		s := styles.TokyoNight()
-		com := &common.Common{Styles: &s, Workspace: &bouncerCommandsWorkspace{cfg: testCommandsConfig()}}
-		return (&Commands{com: com, workflow: w}).defaultCommands()
-	}
-
-	require.Nil(t, findCommandItem(newCommands(nil), "workflow_pause"))
-
-	running := newCommands(&WorkflowControls{RunID: "run-1", Command: "demo", Keys: keys})
-	pause := findCommandItem(running, "workflow_pause")
-	require.NotNil(t, pause)
-	require.Contains(t, pause.Filter(), "Pause Workflow /demo")
-	require.Equal(t, ActionWorkflowControl{RunID: "run-1", Control: WorkflowPause}, pause.Action())
-	require.Equal(t, "f1", pause.Shortcut())
-	abort := findCommandItem(running, "workflow_abort")
-	require.NotNil(t, abort)
-	require.Equal(t, ActionWorkflowControl{RunID: "run-1", Control: WorkflowAbort}, abort.Action())
-	require.Equal(t, "f2", abort.Shortcut())
-
-	paused := newCommands(&WorkflowControls{RunID: "run-1", Command: "demo", Paused: true, Keys: keys})
-	resume := findCommandItem(paused, "workflow_pause")
-	require.Contains(t, resume.Filter(), "Resume Workflow /demo")
-	require.Equal(t, ActionWorkflowControl{RunID: "run-1", Control: WorkflowResume}, resume.Action())
-}
-
 func drawDialogANSI(d Dialog, width, height int) (string, *tea.Cursor) {
 	scr := uv.NewScreenBuffer(width, height)
 	cur := d.Draw(scr, uv.Rect(0, 0, width, height))
