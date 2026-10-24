@@ -253,7 +253,7 @@ server's route and why. Set `route` to override it:
 | --- | --- |
 | `auto` (default) | Direct when connected at startup and under 12,000 bytes, else the catalogue. |
 | `catalogue` | Always through the catalogue. |
-| `direct` | Always in the tool list. On a lazy server this keeps the `enable_mcp` flow below. |
+| `direct` | Always in the tool list. Not allowed on a lazy server (see below). |
 
 Routes don't change while Anvil runs: a server that grows past the limit,
 reconnects or is toggled in the palette keeps its route until restart, and
@@ -284,20 +284,18 @@ first needed. The description introduces the server to the model:
 }
 ```
 
-Under the default `route`, a lazy server goes through the catalogue and
-connects on its first search.
+A lazy server goes through the catalogue and connects on its first
+search. To connect it sooner, select it in the MCP palette (Ctrl+P → "MCP
+Servers") and press Enter.
 
-> **Changed:** lazy servers used to load whole through `enable_mcp`. They
-> now go through the catalogue by default. Set `"route": "direct"` to keep
-> the old flow.
+A lazy server can't be routed `direct`: it isn't connected when the tool
+list is fixed at startup, so Anvil refuses to load a config that sets both
+`lazy_description` and `"route": "direct"`. Remove `route` to keep it lazy,
+or remove `lazy_description` to connect it at startup and list its tools.
 
-With `"route": "direct"`, a lazy server doesn't connect at startup, and its
-tool schemas stay out of the LLM context until the server is enabled; the
-first enable connects it. The agent sees an `enable_mcp` tool listing
-available lazy servers and calls it when needed. You can also toggle such
-servers manually via the MCP palette (Ctrl+P → "MCP Servers"). Enabled
-state is branch-scoped: it persists for the current conversation branch and
-survives restarts.
+> **Changed:** lazy servers used to load whole through an `enable_mcp`
+> tool, which `"route": "direct"` kept for a while. That flow is gone; the
+> catalogue covers every lazy server.
 
 ### OAuth
 

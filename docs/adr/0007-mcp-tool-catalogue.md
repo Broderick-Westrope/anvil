@@ -63,7 +63,8 @@ results instead of the system prompt.
   Opus.
 - Existing lazy servers move from `enable_mcp` to the catalogue under
   `auto`. `route: "direct"` keeps the old flow, which ADR 0002 still
-  governs. The catalogue persists nothing.
+  governs. The catalogue persists nothing. (ADR 0008 later removed that
+  flow and made a lazy server routed `direct` a config error.)
 - A route can differ between processes: a small server in error at
   startup goes to the catalogue for that process. A direct-name call to a
   catalogue tool is forwarded to `call_mcp_tool` and recorded under that

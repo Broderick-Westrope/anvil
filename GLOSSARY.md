@@ -104,9 +104,9 @@ The `disable_default_providers` option and its error message call known provider
 
 ## Lazy MCP
 
-An MCP server with `lazy_description` set. It doesn't connect at startup. Under the default route it goes through the MCP catalogue and connects on its first search. Routed `direct`, its tools are hidden from the model until the agent calls `enable_mcp` or the user enables it from the MCP palette, and whether it is enabled is derived from the current branch's messages (see `docs/adr/0002`).
+An MCP server with `lazy_description` set. It doesn't connect at startup, goes through the MCP catalogue, and connects on its first search. It can't be routed `direct` (see `docs/adr/0008`).
 
-- **Code:** `agent/lazy_mcp.go`, `agent/tools/enable_mcp.go`, `mcp.StateLazy`
+- **Code:** `MCPConfig.IsLazy` (`internal/config/config.go`), `mcp.StateDeferred`
 - **Not:** disabled MCP. A disabled MCP is off for every session.
 
 ## MCP Tool Catalogue
@@ -114,7 +114,7 @@ An MCP server with `lazy_description` set. It doesn't connect at startup. Under 
 The three tools (`search_mcp_tools`, `describe_mcp_tool`, `call_mcp_tool`) through which an agent finds and runs the tools of catalogue-routed MCP servers, whose schemas never enter the tool list. A proxied call runs as the inner tool, under its `mcp_<server>_<tool>` name.
 
 - **Code:** `NewCatalogueTools` (`internal/agent/tools/catalogue.go`), `agentMCPTools` (`internal/agent/mcp_tools.go`)
-- **Not:** lazy loading through `enable_mcp`, which puts a whole server in the tool list.
+- **Not:** lazy loading through `enable_mcp`, which put a whole server in the tool list until it was removed (`docs/adr/0008`).
 
 ## MCP Route
 
@@ -201,7 +201,7 @@ An agent marked `branch_summarizer: true` in its frontmatter, which the user can
 
 ## Tool Access
 
-Which tools an agent may use: built-in tools by its `allowed_tools` filter and the global `disabled_tools` list, MCP tools, lazy MCPs and the MCP catalogue by its `allowed_mcp` map. The job tools come with bash. A positive `allowed_tools` list naming only built-ins keeps the catalogue; `disabled_tools` or a `!name` entry in a negative list removes it.
+Which tools an agent may use: built-in tools by its `allowed_tools` filter and the global `disabled_tools` list, MCP tools and the MCP catalogue by its `allowed_mcp` map. The job tools come with bash. A positive `allowed_tools` list naming only built-ins keeps the catalogue; `disabled_tools` or a `!name` entry in a negative list removes it.
 
 - **Code:** `toolAccess` (`internal/agent/tool_access.go`)
 - **Not:** permissions. Tool access decides which tools the model sees; the permission service decides whether one call may run.
