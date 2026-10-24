@@ -60,6 +60,9 @@ const (
 	// MessageTypeMCPToggle is kept so old sessions' lazy MCP toggles
 	// decode and stay out of context (ADR 0008).
 	MessageTypeMCPToggle MessageType = "mcp_toggle"
+	// MessageTypeWorkflowRun marks where a workflow run started in the
+	// session that invoked it. The UI shows it as the run's node.
+	MessageTypeWorkflowRun MessageType = "workflow_run"
 	// MessageTypeJobEvent is a user-role notice about background job
 	// events. It is sent to the model like any user message.
 	MessageTypeJobEvent MessageType = "job_event"
@@ -258,6 +261,16 @@ type MCPToggleContent struct {
 }
 
 func (MCPToggleContent) isPart() {}
+
+// WorkflowRunContent identifies the workflow run a workflow_run marker
+// stands for.
+type WorkflowRunContent struct {
+	RunID   string `json:"run_id"`
+	Command string `json:"command"`
+	Input   string `json:"input"`
+}
+
+func (WorkflowRunContent) isPart() {}
 
 type Message struct {
 	ID              string

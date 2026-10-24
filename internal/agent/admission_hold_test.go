@@ -92,7 +92,7 @@ func TestHoldQueuesAwaitedSubmitUntilRelease(t *testing.T) {
 		require.NoError(t, err)
 		awaited <- resultText(r)
 	}()
-	require.Eventually(t, func() bool { return len(a.queued("s")) == 1 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return queueLen(a, "s") == 1 }, time.Second, time.Millisecond)
 	require.False(t, a.busy("s"))
 
 	release()

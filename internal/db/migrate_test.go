@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
@@ -25,6 +26,7 @@ func TestMigrations_RoundTrip(t *testing.T) {
 	// Apply all migrations, roll back every recently added one (newest
 	// first), then re-apply. Extend this list when adding migrations.
 	recent := []int64{
+		20261019000000, // add_workflow_run_links
 		20261018000000, // add_subagents
 		20261014000000, // add_messages_session_role_index
 		20261010000000, // add_workflows
@@ -113,14 +115,17 @@ func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
 
 	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
 	q := New(conn)
-	migrated, err := q.GetSessionByID(t.Context(), "m$$c")
-	require.NoError(t, err)
-	require.Equal(t, int64(1), migrated.UpdatedAt, "marking cost rolled up isn't activity")
+	// Generated queries assume the latest schema, so sessions are read with
+	// plain SQL at this version.
+	updatedAt := func() int64 {
+		var v int64
+		require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT updated_at FROM sessions WHERE id = 'm$$c'`).Scan(&v))
+		return v
+	}
+	require.Equal(t, int64(1), updatedAt(), "marking cost rolled up isn't activity")
 	_, err = conn.ExecContext(t.Context(), `UPDATE sessions SET cost_rolled_up = 0.7 WHERE id = 'm$$c'`)
 	require.NoError(t, err)
-	migrated, err = q.GetSessionByID(t.Context(), "m$$c")
-	require.NoError(t, err)
-	require.Equal(t, int64(1), migrated.UpdatedAt)
+	require.Equal(t, int64(1), updatedAt())
 	_, err = conn.ExecContext(t.Context(), `UPDATE sessions SET cost_rolled_up = cost WHERE id = 'm$$c'`)
 	require.NoError(t, err)
 	require.NoError(t, q.CreateSubagent(t.Context(), CreateSubagentParams{
@@ -133,9 +138,9 @@ func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
 			`{"type":"injection","data":{"source":"human","kind":"steer","text":"use v2","call_id":"m$$c"}}]`,
 	})
 	require.NoError(t, err)
-	child, err := q.GetSessionByID(t.Context(), "m$$c")
-	require.NoError(t, err)
-	require.InDelta(t, 0.5, child.CostRolledUp, 1e-9, "existing children's cost is never rolled up again")
+	var rolledUp float64
+	require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT cost_rolled_up FROM sessions WHERE id = 'm$$c'`).Scan(&rolledUp))
+	require.InDelta(t, 0.5, rolledUp, 1e-9, "existing children's cost is never rolled up again")
 
 	// Down drops identities, links and watermarks, but keeps sessions and
 	// their accumulated cost.
@@ -154,4 +159,93 @@ func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
 	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
 	_, err = q.GetSubagent(t.Context(), "m$$c")
 	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestMigrations_WorkflowRunMarkersBecomeReadableMetadataOnDowngrade(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, initGoose())
+
+	conn, err := openDB(filepath.Join(t.TempDir(), "anvil.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	conn.SetMaxOpenConns(1)
+
+	const before, links = 20261018000000, 20261019000000
+	require.NoError(t, goose.UpTo(conn, "migrations", links))
+
+	// A marker in the middle of a branch, and one that's a session's leaf.
+	_, err = conn.ExecContext(t.Context(), `
+		INSERT INTO sessions (id, title, updated_at, created_at, leaf_message_id) VALUES
+			('s1', 't', 0, 0, 'reply'), ('s2', 't', 0, 0, 'leaf-marker');
+		INSERT INTO messages (id, session_id, role, parts, created_at, updated_at, parent_message_id, message_type) VALUES
+			('user', 's1', 'user', '[]', 0, 0, NULL, 'message'),
+			('marker', 's1', 'system', '[{"type":"workflow_run","data":{"run_id":"r"}}]', 0, 0, 'user', 'workflow_run'),
+			('reply', 's1', 'user', '[]', 0, 0, 'marker', 'message'),
+			('leaf-marker', 's2', 'system', '[{"type":"workflow_run","data":{"run_id":"r2"}}]', 0, 0, NULL, 'workflow_run');`)
+	require.NoError(t, err)
+
+	require.NoError(t, goose.DownTo(conn, "migrations", before))
+
+	rows, err := conn.QueryContext(t.Context(), `SELECT id, message_type, parts FROM messages WHERE id IN ('marker', 'leaf-marker') ORDER BY id`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var converted []string
+	for rows.Next() {
+		var id, typ, parts string
+		require.NoError(t, rows.Scan(&id, &typ, &parts))
+		converted = append(converted, id+" "+typ+" "+parts)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []string{
+		`leaf-marker model_change [{"type":"model_change","data":{"provider":"","model_id":""}}]`,
+		`marker model_change [{"type":"model_change","data":{"provider":"","model_id":""}}]`,
+	}, converted)
+
+	marker := "marker"
+	require.Equal(t, map[string]*string{"user": nil, "marker": &[]string{"user"}[0], "reply": &marker, "leaf-marker": nil},
+		queryLinks(t, conn, `SELECT id, parent_message_id FROM messages`), "no message moves")
+	reply, leafMarker := "reply", "leaf-marker"
+	require.Equal(t, map[string]*string{"s1": &reply, "s2": &leafMarker},
+		queryLinks(t, conn, `SELECT id, leaf_message_id FROM sessions`), "no leaf moves")
+}
+
+// queryLinks maps the first column of query to its second, nullable one.
+func queryLinks(t *testing.T, conn *sql.DB, query string) map[string]*string {
+	t.Helper()
+	rows, err := conn.QueryContext(t.Context(), query)
+	require.NoError(t, err)
+	defer rows.Close()
+	links := map[string]*string{}
+	for rows.Next() {
+		var id string
+		var link *string
+		require.NoError(t, rows.Scan(&id, &link))
+		links[id] = link
+	}
+	require.NoError(t, rows.Err())
+	return links
+}
+
+func TestListSessionsByWorkflowRunUsesItsIndex(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, initGoose())
+	conn, err := openDB(filepath.Join(t.TempDir(), "anvil.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	require.NoError(t, goose.Up(conn, "migrations"))
+
+	rows, err := conn.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+listSessionsByWorkflowRun, "run-1")
+	require.NoError(t, err)
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.Contains(t, strings.Join(plan, "\n"), "idx_sessions_workflow_run", "a run view reload must not scan every session")
 }

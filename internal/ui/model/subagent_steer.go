@@ -236,7 +236,9 @@ func (f *subagentSteer) DrillInFooter() panelView {
 		queued:  len(f.ws.AgentSubagentPendingSteers(child)),
 	}
 	if child == f.child {
-		footer.inputView, footer.focused = firstLine(f.input.View()), f.input.Focused()
+		// The first line as drawn: trimming it would shift the input.
+		inputView, _, _ := strings.Cut(f.input.View(), "\n")
+		footer.inputView, footer.focused = inputView, f.input.Focused()
 	} else {
 		footer.inputView = f.input.Prompt + f.drafts[child]
 	}

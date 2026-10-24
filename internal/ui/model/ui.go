@@ -31,6 +31,7 @@ import (
 	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
@@ -341,6 +342,14 @@ type UI struct {
 	customCommands []commands.CustomCommand
 	mcpPrompts     []commands.MCPPrompt
 
+	// workflowRuns holds the workflow run views loaded and being loaded.
+	workflowRuns workflowRuns
+	// drafts keeps unsent editor text per session while the editor targets
+	// another one; composeFor is the session the editor last targeted.
+	drafts     map[string]composerDraft
+	composeFor string
+	// draftsRoot is the root session the stashed root draft was written in.
+	draftsRoot string
 	// features are the fork features routed to from the dispatchers.
 	features features
 
@@ -411,6 +420,10 @@ type drillInEntry struct {
 	label     string           // breadcrumb label, e.g. "Explorer: Search auth"
 	session   *session.Session // cached session for sidebar stats
 	toolView  *ToolDetailView  // non-nil when this entry is a tool drill-in
+	runID     string           // workflow run shown, when this entry is a run view
+	// conversational marks a session the user can talk to (a workflow
+	// run's builder), so the editor is shown and sends to it.
+	conversational bool
 }
 
 // ToolDetailView tracks the source tool item for a tool drill-in.
@@ -472,7 +485,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		continueLastSession: continueLast,
 	}
 
-	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newWorkflowFeature(uiHost{ui}, com, com.Workspace, uiWorkflowViews{ui}))
 	graphics := newGraphicsFeature(uiHost{ui}, &ui.caps, com)
 	ui.features.register(graphics)
 	ui.graphics = graphics
@@ -695,6 +708,28 @@ func (m *UI) clearDrillStack() {
 	m.drillStack = nil
 }
 
+// findAgentToolItem returns the agent tool item of the task call that owns
+// childSessionID (the call that made it, or the latest resume), in the
+// root chat or any drill-in. A fork copies tool calls with their IDs, so
+// the item must also come from the message that made the call.
+func (m *UI) findAgentToolItem(childSessionID string) (chat.MessageItem, *Chat) {
+	messageID, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(m.features.calls.OwnerCall(childSessionID))
+	if !ok {
+		return nil, nil
+	}
+	chats := []*Chat{m.chat}
+	for _, entry := range m.drillStack {
+		chats = append(chats, entry.chat)
+	}
+	for _, c := range chats {
+		item := c.MessageItem(toolCallID)
+		if tool, ok := item.(chat.ToolMessageItem); ok && tool.MessageID() == messageID {
+			return item, c
+		}
+	}
+	return nil, nil
+}
+
 // findMessageItem searches the root chat and all drill-stack chats for
 // an item matching the given ID. Returns nil if not found.
 func (m *UI) findMessageItem(id string) chat.MessageItem {
@@ -767,9 +802,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.trackRecoverySession()
 	defer m.syncComposerState()
+	defer m.syncDraft()
 	var cmds []tea.Cmd
-	if m.hasSession() && m.isAgentBusy() {
-		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
+	if ps := m.pillsSession(); ps != nil && m.isAgentBusy() {
+		queueSize := m.com.Workspace.AgentQueuedPrompts(ps.ID)
 		if queueSize != m.promptQueue {
 			m.promptQueue = queueSize
 			m.updateLayoutAndSize()
@@ -809,7 +845,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebarOffset = 0
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs := msg.messages
-		m.setSessionMessages(msgs)
+		cmds = append(cmds, m.setSessionMessages(msgs))
 		// The snapshot was read off the event loop; replay what arrived for
 		// this session since, or it would be lost under the snapshot.
 		for _, event := range m.takeSessionLoadEvents(m.session.ID) {
@@ -817,7 +853,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if hasInProgressTodo(m.session.Todos) {
 			// only start spinner if there is an in-progress todo
-			if m.isAgentBusy() {
+			if m.isRootBusy() {
 				m.todoIsSpinning = true
 				cmds = append(cmds, m.todoSpinner.Tick)
 			}
@@ -835,6 +871,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sendMessageMsg:
+		if cmd := m.refuseInOrchestratorSession(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+			break
+		}
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
 	case sendDoneMsg:
 		cmds = append(cmds, m.handleSendDone(msg))
@@ -928,6 +968,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case promptHistoryLoadedMsg:
+		// A load that finishes after the editor moved to another session
+		// is for the wrong one.
+		if msg.sessionID != m.historySessionID() {
+			break
+		}
 		m.promptHistory.messages = nil
 		for _, source := range msg.messages {
 			state := composerFromMessage(source, m.com.Workspace.ActiveSkillByName, m.customCommands)
@@ -957,6 +1002,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.drillStack[i].sessionID == msg.Payload.ID {
 				s := msg.Payload
 				m.drillStack[i].session = &s
+				if m.drillStack[i].conversational {
+					// A builder the editor sends to shows its own todos.
+					m.updateLayoutAndSize()
+				}
 			}
 		}
 
@@ -1047,12 +1096,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		// start the spinner if there is a new message
-		if hasInProgressTodo(m.session.Todos) && m.isAgentBusy() && !m.todoIsSpinning {
+		if hasInProgressTodo(m.session.Todos) && m.isRootBusy() && !m.todoIsSpinning {
 			m.todoIsSpinning = true
 			cmds = append(cmds, m.todoSpinner.Tick)
 		}
 		// stop the spinner if the agent is not busy anymore
-		if m.todoIsSpinning && !m.isAgentBusy() {
+		if m.todoIsSpinning && !m.isRootBusy() {
 			m.todoIsSpinning = false
 		}
 		// there is a number of things that could change the pills here so we want to re-render
@@ -1366,7 +1415,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// running — eliminating a separate hasRunningSubagents scan.
 		anyRunning := m.invalidateRunningAgentCaches()
 		anyTimed := m.syncToolTimers()
-		shouldContinue := anyRunning || anyTimed || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
+		workflowsRunning, reloads := m.refreshRunningWorkflowRuns()
+		cmds = append(cmds, reloads)
+		shouldContinue := anyRunning || anyTimed || workflowsRunning || (m.isDrilledIn() && m.isViewedSubagentRunning()) || m.hasRunningJobs()
 		if shouldContinue {
 			cmds = append(cmds, tickElapsedTime())
 		} else {
@@ -1422,9 +1473,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newChat.SetFollow(true)
 		newChat.Focus()
 		m.drillStack = append(m.drillStack, drillInEntry{
-			sessionID: msg.SessionID,
-			chat:      newChat,
-			label:     msg.Label,
+			sessionID:      msg.SessionID,
+			chat:           newChat,
+			label:          msg.Label,
+			conversational: msg.Conversational,
 		})
 		// Disable the editor while viewing a subagent.
 		m.textarea.Blur()
@@ -1435,6 +1487,17 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.loadAgentDrillInSession(msg.SessionID))
 		// Start the elapsed tick if the viewed subagent is running.
 		if !m.elapsedTickRunning && m.isViewedSubagentRunning() {
+			m.elapsedTickRunning = true
+			cmds = append(cmds, tickElapsedTime())
+		}
+
+	case util.WorkflowRunDrillInMsg:
+		cmds = append(cmds, m.openWorkflowRun(msg.RunID, msg.Label))
+	case workflowRunViewLoadedMsg:
+		cmds = append(cmds, m.workflowRunViewLoaded(msg))
+		if msg.ok && msg.view.Status == workflowhost.StatusRunning && !m.elapsedTickRunning {
+			// A running run's node counts its time and its view shows which
+			// builders are working, so both refresh every second.
 			m.elapsedTickRunning = true
 			cmds = append(cmds, tickElapsedTime())
 		}
@@ -1504,6 +1567,12 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// drill-in, so they're never older than the snapshot.
 			items := mergeLiveItems(m.messagesToChatItems(msg.messages), m.drillStack[i].chat)
 			m.drillStack[i].chat.SetMessages(items...)
+			cmds = append(cmds, m.loadWorkflowRunNodes(items))
+			if m.drillStack[i].conversational && i == len(m.drillStack)-1 {
+				// The editor now sends to this session, so its history is
+				// this session's.
+				cmds = append(cmds, m.loadPromptHistory())
+			}
 
 			// Map nested tool IDs to their containers.
 			for _, item := range items {
@@ -1546,7 +1615,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uiFocusMain:
 	case uiFocusEditor:
 		// Textarea placeholder logic
-		if m.isAgentBusy() {
+		if m.isTargetBusy() {
 			m.textarea.Placeholder = m.workingPlaceholder
 		} else {
 			m.textarea.Placeholder = m.readyPlaceholder
@@ -1619,7 +1688,7 @@ func (m *UI) expandedToolPatterns() []string {
 }
 
 // setSessionMessages sets the messages for the current session in the chat
-func (m *UI) setSessionMessages(msgs []message.Message) {
+func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	// Build tool result map to link tool calls with their results
 	msgPtrs := make([]*message.Message, len(msgs))
 	for i := range msgs {
@@ -1657,10 +1726,11 @@ func (m *UI) setSessionMessages(msgs []message.Message) {
 	// running. Unless the agent is busy, freeze what is spinning now so the
 	// reload does not show a ghost "working" spinner (and a second one
 	// alongside any tool spinner). Events for those messages unfreeze them.
-	if !m.isAgentBusy() {
+	if !m.isRootBusy() {
 		m.chat.FreezeSpinners()
 	}
 	m.chat.ScrollToBottomAndSelectLast()
+	return m.loadWorkflowRunNodes(items)
 }
 
 // loadNestedToolCalls recursively loads nested tool calls for agent/agentic_fetch tools.
@@ -1811,6 +1881,13 @@ func (m *UI) appendSessionMessageToChat(c *Chat, msg message.Message) tea.Cmd {
 			if c == m.activeChat() && c.Follow() {
 				c.ScrollToBottom()
 			}
+		}
+	case message.System:
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.toolItemOptions(), m.diagrams)
+		c.AppendMessages(items...)
+		cmds = append(cmds, m.loadWorkflowRunNodes(items))
+		if c == m.activeChat() && c.Follow() {
+			c.ScrollToBottom()
 		}
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
@@ -2015,16 +2092,12 @@ func invalidateRunningAgentsInChat(c *Chat) bool {
 func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.Cmd {
 	var cmds []tea.Cmd
 
-	// Check if this is an agent tool session and parse it.
+	// Find the agent tool item that started this child session, in the
+	// root chat or in a drilled-in session such as a workflow's builder.
 	childSessionID := event.Payload.SessionID
-	toolCallID, ok := m.agentItemToolCallID(childSessionID)
-	if !ok {
-		return nil
-	}
-
-	// Find the parent agent tool item by ID lookup.
 	var agentItem chat.NestedToolContainer
-	if item := m.chat.MessageItem(toolCallID); item != nil {
+	item, owner := m.findAgentToolItem(childSessionID)
+	if item != nil {
 		if agent, ok := item.(chat.NestedToolContainer); ok {
 			agentItem = agent
 		}
@@ -2034,7 +2107,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		return nil
 	}
 	// The subagent is producing messages, so its parent is live again.
-	m.chat.UnfreezeSpinners(toolCallID)
+	owner.UnfreezeSpinners(item.ID())
 
 	// Set the child session ID and mark that messages have arrived so the
 	// collapsed stats view and drill-in navigation can activate. This runs
@@ -2095,10 +2168,10 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	agentItem.SetNestedTools(nestedTools)
 
 	// Map the nested tool IDs to their container.
-	m.chat.UpdateNestedToolIDs(toolCallID)
+	owner.UpdateNestedToolIDs(item.ID())
 
-	if m.chat.Follow() {
-		m.chat.ScrollToBottomAndSelectLast()
+	if owner.Follow() {
+		owner.ScrollToBottomAndSelectLast()
 	}
 
 	// Start the elapsed-time tick when the first child session message arrives.
@@ -2114,12 +2187,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 // parent agent item that owns childSessionID. It searches both the root chat
 // and every drill-stack chat so nested drill-ins are covered.
 func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[message.Message]) {
-	toolCallID, ok := m.agentItemToolCallID(childSessionID)
-	if !ok {
-		return
-	}
-
-	item := m.findMessageItem(toolCallID)
+	item, _ := m.findAgentToolItem(childSessionID)
 	if item == nil {
 		return
 	}
@@ -2295,6 +2363,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 
+	// Refused before features see it: a palette command is run by the
+	// feature that claims it, and would act on the user's own session.
+	if cmd := m.refuseInOrchestratorSession(action); cmd != nil {
+		m.dialog.CloseFrontDialog()
+		return cmd
+	}
+
 	if cmd, ok := m.features.handleAction(m.dialog, action); ok {
 		return cmd
 	}
@@ -2370,7 +2445,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionNewSession:
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 			break
 		}
@@ -2379,7 +2454,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionSummarize:
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before summarizing session..."))
 			break
 		}
@@ -2430,7 +2505,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.session == nil {
 			break
 		}
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before regenerating title..."))
 			break
 		}
@@ -2447,7 +2522,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionExternalEditor:
-		if m.isAgentBusy() {
+		if m.isTargetBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
 			break
 		}
@@ -2554,7 +2629,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseDialog(dialog.CommandsID)
 		cmds = append(cmds, m.disableDockerMCP)
 	case dialog.ActionInitializeProject:
-		if m.isAgentBusy() {
+		if m.isRootBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before summarizing session..."))
 			break
 		}
@@ -2586,8 +2661,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 
 		// Write a thinking_level_change metadata entry if the effort
-		// actually changed. The busy check above keeps it from racing the
-		// leaf pointer.
+		// actually changed. It goes through the session's queue onto its
+		// current leaf.
 		if oldEffort != msg.Effort {
 			cmds = append(cmds, m.writeMetadataEntry(message.MessageTypeThinkingLevelChange,
 				message.ThinkingLevelChangeContent{ThinkingLevel: msg.Effort}))
@@ -2774,12 +2849,13 @@ func (m *UI) writeMetadataEntry(kind message.MessageType, part message.ContentPa
 	if m.session == nil || m.session.LeafMessageID == "" || m.features.blockNavigation() != nil {
 		return nil
 	}
-	ws, sessionID, leafID := m.com.Workspace, m.session.ID, m.session.LeafMessageID
+	// The entry goes through the session's queue onto its leaf at that
+	// point, which the workspace reads; the leaf seen here may be stale.
+	ws, sessionID := m.com.Workspace, m.session.ID
 	return func() tea.Msg {
 		err := ws.WriteMetadataEntry(context.Background(), sessionID, message.CreateMessageParams{
-			ParentMessageID: leafID,
-			MessageType:     kind,
-			Parts:           []message.ContentPart{part},
+			MessageType: kind,
+			Parts:       []message.ContentPart{part},
 		})
 		if err != nil {
 			slog.Error("Failed to write metadata entry", "type", kind, "error", err)
@@ -2838,10 +2914,10 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 			}
 		}
 
-		// Write a model_change metadata entry if the large model actually changed.
-		// Skip when the agent is busy to avoid racing the leaf pointer.
+		// Write a model_change metadata entry if the large model actually
+		// changed. It goes through the session's queue onto its current leaf.
 		changed := oldAgentModel.ModelCfg.Provider != msg.Model.Provider || oldAgentModel.ModelCfg.Model != msg.Model.Model
-		if msg.ModelType == config.SelectedModelTypeLarge && changed && !m.isAgentBusy() {
+		if msg.ModelType == config.SelectedModelTypeLarge && changed {
 			cmds = append(cmds, m.writeMetadataEntry(message.MessageTypeModelChange,
 				message.ModelChangeContent{Provider: msg.Model.Provider, ModelID: msg.Model.Model}))
 		}
@@ -3096,9 +3172,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			if cmd, ok := m.features.cancel(); ok {
 				return tea.Batch(append(cmds, cmd)...)
 			}
-			if m.isAgentBusy() && m.hasSession() {
+			if id := m.cancelTargetID(); m.isBusy(id) {
 				m.isCanceling = false
-				m.com.Workspace.AgentCancel(m.session.ID)
+				m.com.Workspace.AgentCancel(id)
 				m.todoIsSpinning = false
 				m.renderPills()
 				return tea.Batch(cmds...)
@@ -3121,12 +3197,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return tea.Batch(append(cmds, cmd)...)
 	}
 
-	// Handle cancel key when agent is busy.
+	// Handle cancel key when the session Esc cancels is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
 		if cmd, ok := m.features.cancel(); ok {
 			return tea.Batch(append(cmds, cmd)...)
 		}
-		if m.isAgentBusy() {
+		if m.isBusy(m.cancelTargetID()) {
 			if cmd := m.cancelAgent(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -3141,8 +3217,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		switch m.focus {
 		case uiFocusEditor:
 			// Redirect to main focus when viewing a subagent — the editor is
-			// disabled while drilled in.
-			if m.isDrilledIn() {
+			// only shown for sessions the user can talk to.
+			if !m.composeTarget().shown {
 				m.focus = uiFocusMain
 				break
 			}
@@ -3187,7 +3263,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						// display names ever diverge from execution keys.
 						builtinName := strings.TrimPrefix(selected.ID, "builtin:")
 						m.closeSlashAC(true)
-						cmd := m.tryExecuteBuiltinCommand("/" + builtinName)
+						cmd := m.tryExecuteSlashCommand("/" + builtinName)
 						if cmd != nil {
 							return cmd
 						}
@@ -3254,7 +3330,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			if ok := m.attachments.Update(msg); ok {
 				return tea.Batch(cmds...)
 			}
-			if m.pendingBranch != nil && key.Matches(msg, m.keyMap.Editor.Escape) && !m.isAgentBusy() {
+			if m.pendingBranch != nil && key.Matches(msg, m.keyMap.Editor.Escape) && !m.isRootBusy() {
 				return m.beginBranchReturn(true)
 			}
 
@@ -3293,6 +3369,17 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				// carried over in the draft.
 				if m.reloading {
 					cmds = append(cmds, util.ReportWarn(reloadInProgressMsg))
+					return tea.Batch(cmds...)
+				}
+
+				// A builder still loading can't take a message, and commands
+				// don't run from a builder; either way the draft stays put.
+				if refusal := m.composeTarget().loadingRefusal(); refusal != nil {
+					cmds = append(cmds, refusal)
+					return tea.Batch(cmds...)
+				}
+				if cmd := m.refuseInOrchestratorSession(slashCommand(strings.TrimSpace(value))); cmd != nil {
+					cmds = append(cmds, cmd)
 					return tea.Batch(cmds...)
 				}
 
@@ -3355,7 +3442,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if !m.hasSession() {
 					break
 				}
-				if m.isAgentBusy() {
+				if m.isRootBusy() {
 					cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 					break
 				}
@@ -3370,7 +3457,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.activeChat().SetSelected(m.activeChat().Len() - 1)
 				}
 			case key.Matches(msg, m.keyMap.Editor.OpenEditor):
-				if m.isAgentBusy() {
+				if m.isTargetBusy() {
 					cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
 					break
 				}
@@ -3471,8 +3558,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case uiFocusMain:
 			switch {
 			case key.Matches(msg, m.keyMap.Tab):
-				// Do not focus the editor while drilled into a subagent.
-				if m.isDrilledIn() {
+				// Only focus the editor when it's shown: in a drill-in, only a
+				// builder the user talks to shows it.
+				if !m.composeTarget().shown {
 					break
 				}
 				m.focus = uiFocusEditor
@@ -3481,7 +3569,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.activeChat().Blur()
 			case m.isDrilledIn() && key.Matches(msg, m.keyMap.Chat.PillLeft):
 				// Navigate back one drill-in level.
+				left := m.drillStack[len(m.drillStack)-1]
 				m.drillStack = m.drillStack[:len(m.drillStack)-1]
+				if left.conversational {
+					// The editor goes back to the session below, so does
+					// its history.
+					cmds = append(cmds, m.loadPromptHistory())
+				}
 				if m.isDrilledIn() {
 					m.activeChat().Focus()
 				} else {
@@ -3497,7 +3591,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if !m.hasSession() {
 					break
 				}
-				if m.isAgentBusy() {
+				if m.isRootBusy() {
 					cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
 					break
 				}
@@ -3696,10 +3790,13 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			}
 		} else {
 			m.activeChat().Draw(scr, layout.main)
-			if layout.pills.Dy() > 0 && m.pillsView != "" {
-				uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
-			}
-
+		}
+		// The pills area has no height, and nothing to draw, where the
+		// editor is hidden.
+		uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
+		// The editor is there for the root session, and for a drilled-in
+		// session the user can talk to, such as a workflow's builder.
+		if m.composeTarget().shown {
 			editorWidth := scr.Bounds().Dx()
 			if !m.isCompact {
 				editorWidth -= layout.sidebar.Dx()
@@ -3919,12 +4016,12 @@ func (m *UI) ShortHelp() []key.Binding {
 
 	switch m.state {
 	case uiChat:
-		// Show cancel binding if agent is busy.
-		if m.isAgentBusy() {
+		// Show the cancel binding when Esc would cancel something.
+		if m.isBusy(m.cancelTargetID()) {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
-			} else if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
+			} else if m.com.Workspace.AgentQueuedPrompts(m.cancelTargetID()) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}
 			binds = append(binds, cancelBinding)
@@ -3996,7 +4093,7 @@ func (m *UI) ShortHelp() []key.Binding {
 		k.Help,
 	)
 
-	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isRootBusy() {
 		binds = append(binds, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch")))
 	}
 	return binds
@@ -4044,12 +4141,12 @@ func (m *UI) FullHelp() [][]key.Binding {
 
 	switch m.state {
 	case uiChat:
-		// Show cancel binding if agent is busy.
-		if m.isAgentBusy() {
+		// Show the cancel binding when Esc would cancel something.
+		if m.isBusy(m.cancelTargetID()) {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
-			} else if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
+			} else if m.com.Workspace.AgentQueuedPrompts(m.cancelTargetID()) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}
 			binds = append(binds, []key.Binding{cancelBinding})
@@ -4201,10 +4298,10 @@ func (m *UI) FullHelp() [][]key.Binding {
 		},
 	)
 
-	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isAgentBusy() {
+	if m.pendingBranch != nil && m.focus == uiFocusEditor && !m.isRootBusy() {
 		binds = append(binds, []key.Binding{key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "return to previous branch"))})
 	}
-	if m.focus == uiFocusMain && hasSession && m.session.ParentSessionID == "" && !m.isDrilledIn() {
+	if m.focus == uiFocusMain && hasSession && m.session.Conversational() && !m.isDrilledIn() {
 		binds = append(binds, []key.Binding{k.Chat.Branch})
 	}
 	return binds
@@ -4217,7 +4314,7 @@ func (m *UI) quitBinding() key.Binding {
 		switch {
 		case m.textarea.Value() != "" || m.attachments.HasContent():
 			quit.SetHelp("ctrl+c", "clear")
-		case m.isAgentBusy():
+		case m.isBusy(m.cancelTargetID()):
 			quit.SetHelp("ctrl+c", "cancel")
 		}
 	}
@@ -4366,10 +4463,11 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	// The help height
 	helpHeight := 1
 	// The editor height: textarea height + margin for attachments and bottom spacing.
-	// When drilled into a subagent, the editor is hidden (height = 0) so the
-	// main area can use all available vertical space.
+	// In a read-only drill-in (anything but a builder the user talks to),
+	// the editor is hidden (height = 0) so the main area can use all
+	// available vertical space.
 	editorHeight := m.textarea.Height() + editorHeightMargin
-	if m.isDrilledIn() {
+	if !m.composeTarget().shown {
 		editorHeight = 0
 	}
 	// The sidebar width
@@ -4678,6 +4776,9 @@ func (m *UI) buildSlashACItems() []autocomplete.Item {
 func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 	if !strings.HasPrefix(value, "/") {
 		return nil
+	}
+	if cmd := m.refuseInOrchestratorSession(slashCommand(value)); cmd != nil {
+		return cmd
 	}
 
 	// Builtin slash commands are checked before user-defined commands.
@@ -5045,28 +5146,10 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return util.ReportError(fmt.Errorf("orchestrator agent is not initialized"))
 	}
 
-	if m.pendingBranch != nil {
-		m.branchReturn = m.pendingBranch
-		m.pendingBranch = nil
+	sessionID, cmds, refusal := m.prepareSend()
+	if refusal != nil {
+		return refusal
 	}
-
-	loadCmd, err := m.ensureSession()
-	if err != nil {
-		return util.ReportError(err)
-	}
-	cmds := []tea.Cmd{loadCmd}
-
-	ctx := context.Background()
-	cmds = append(cmds, func() tea.Msg {
-		for _, path := range m.sessionFileReads {
-			m.com.Workspace.FileTrackerRecordRead(ctx, m.session.ID, path)
-			m.com.Workspace.LSPStart(ctx, path)
-		}
-		return nil
-	})
-
-	// Capture session ID to avoid race with main goroutine updating m.session.
-	sessionID := m.session.ID
 	cmds = append(cmds, m.trackSend(func() tea.Msg {
 		err := m.com.Workspace.AgentRun(context.Background(), sessionID, content, attachments...)
 		if err != nil {
@@ -5119,7 +5202,8 @@ func cancelTimerCmd() tea.Cmd {
 // and starts a timer. The second press (before the timer expires) actually
 // cancels the agent.
 func (m *UI) cancelAgent() tea.Cmd {
-	if !m.hasSession() {
+	sessionID := m.cancelTargetID()
+	if sessionID == "" {
 		return nil
 	}
 
@@ -5130,7 +5214,7 @@ func (m *UI) cancelAgent() tea.Cmd {
 	if m.isCanceling {
 		// Second escape press - actually cancel the agent.
 		m.isCanceling = false
-		m.com.Workspace.AgentCancel(m.session.ID)
+		m.com.Workspace.AgentCancel(sessionID)
 		// Stop the spinning todo indicator.
 		m.todoIsSpinning = false
 		m.renderPills()
@@ -5138,8 +5222,8 @@ func (m *UI) cancelAgent() tea.Cmd {
 	}
 
 	// Check if there are queued prompts - if so, clear the queue.
-	if m.com.Workspace.AgentQueuedPrompts(m.session.ID) > 0 {
-		m.com.Workspace.AgentClearQueue(m.session.ID)
+	if m.com.Workspace.AgentQueuedPrompts(sessionID) > 0 {
+		m.com.Workspace.AgentClearQueue(sessionID)
 		return nil
 	}
 
@@ -5489,7 +5573,7 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 	m.session = msg.session
 	m.clearDrillStack()
 
-	m.setSessionMessages(msg.messages)
+	cmds = append(cmds, m.setSessionMessages(msg.messages))
 
 	if len(msg.messages) == 0 {
 		m.lastUserMessageTime = 0

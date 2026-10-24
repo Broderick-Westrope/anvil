@@ -365,7 +365,7 @@ func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 		r.state, r.err = ev.State, ev.Err
 		if item := b.live[r.childID]; item != nil {
 			delete(b.live, r.childID)
-			item.SetFailed(firstLine(ev.Err.Error()))
+			item.SetFailed(chat.FirstLine(ev.Err.Error()))
 		}
 	case branchsummaries.StateCancelled:
 		b.end(ev.SessionID, r)
@@ -494,7 +494,7 @@ func (p branchSummaryPanel) Render(width int) string {
 	t := p.styles
 	sep := t.Pills.HelpText.Render(" · ")
 	line := t.Pills.TodoLabel.Render("Branch summary") + sep + t.Pills.TodoProgress.Render(p.agent) + sep +
-		t.Pills.QueueLabel.Render("failed: "+firstLine(p.err.Error()))
+		t.Pills.QueueLabel.Render("failed: "+chat.FirstLine(p.err.Error()))
 	hint := t.Pills.HelpKey.Render("ctrl+p") + " " + t.Pills.HelpText.Render("dismiss")
 	available := width - lipgloss.Width(hint) - 2
 	line = ansi.Truncate(line, max(available, 0), "…")

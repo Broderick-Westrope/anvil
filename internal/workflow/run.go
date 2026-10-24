@@ -82,7 +82,7 @@ func NewRun(script *Script, backend Backend, rec Recorder, opts Options) *Run {
 		backend:  backend,
 		rec:      rec,
 		opts:     opts,
-		sessions: []string{opts.InvokingSessionID},
+		sessions: []string{},
 		seeds:    map[string]seed{},
 		warned:   map[string]bool{},
 	}
@@ -197,7 +197,8 @@ func (r *Run) Abort() {
 	}
 }
 
-// Sessions lists the sessions the run has touched, invoking session first.
+// Sessions lists the sessions the run made, oldest first. The invoking
+// session is the user's, so it isn't one of them.
 func (r *Run) Sessions() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

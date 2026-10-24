@@ -24,7 +24,11 @@ func TestPromptHistorySkipsWorkflowTurns(t *testing.T) {
 			f.ws.history = []message.Message{turn, user}
 
 			msg := f.u.loadPromptHistory()()
-			require.Equal(t, promptHistoryLoadedMsg{messages: []message.Message{user}}, msg)
+			want := promptHistoryLoadedMsg{messages: []message.Message{user}}
+			if inSession {
+				want.sessionID = "sess-1"
+			}
+			require.Equal(t, want, msg)
 			f.u.Update(msg)
 			require.Len(t, f.u.promptHistory.messages, 1)
 			require.Equal(t, "mine", f.u.promptHistory.messages[0].text)

@@ -2,7 +2,6 @@ package model
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
@@ -14,7 +13,7 @@ import (
 func TestWorkflowRequestReopensWhenItsAnswerFailed(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.ws.respondErr = errors.New("no pending workflow request")
 	f.event(started("demo", "sess-1"))
 	ask := workflowhost.Event{Kind: workflowhost.EventAsk, RunID: "run-1", RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
@@ -32,7 +31,7 @@ func TestWorkflowRequestReopensWhenItsAnswerFailed(t *testing.T) {
 func TestWorkflowRepublishedRequestDoesNotRelayout(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(started("demo", "sess-1"))
 	ask := workflowhost.Event{Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
 	f.event(ask)
@@ -45,19 +44,14 @@ func TestWorkflowRepublishedRequestDoesNotRelayout(t *testing.T) {
 func TestWorkflowRepublishedRequestIsShownOnce(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(started("demo", "sess-1"))
 	ask := workflowhost.Event{Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "sess-1", Question: "Go?"}
 	f.event(ask)
 	f.event(ask)
-	f.press(showRunKey)
-	require.Equal(t, 1, strings.Count(f.runDialog(), "Go?"))
-	f.host.overlay.CloseDialog(dialog.WorkflowRunID)
+	require.Len(t, f.host.notes, 1, "a republished request isn't shown again")
 
 	f.act(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"})
-	f.press(showRunKey)
-	require.Equal(t, 1, strings.Count(f.runDialog(), "Go?"), "the answer goes on the question's entry")
-	f.host.overlay.CloseDialog(dialog.WorkflowRunID)
 	f.event(ask)
 	require.False(t, f.host.overlay.ContainsDialog(dialog.WorkflowRequestDialogID("ask-1")), "an answered request must not reopen")
 	require.Equal(t, [][2]string{{"ask-1", "yes"}}, f.ws.responds)
@@ -75,12 +69,12 @@ func finishedIn(sessionID, runID string, status workflowhost.Status) workflowhos
 }
 
 // requestOpen reports whether id's dialog is open.
-func (f *workflowFixture) requestOpen(id string) bool {
+func (f *workflowFeatureFixture) requestOpen(id string) bool {
 	return f.host.overlay.ContainsDialog(dialog.WorkflowRequestDialogID(id))
 }
 
 // requireShownOnce checks that a republished ev opens nothing new.
-func (f *workflowFixture) requireShownOnce(t *testing.T, ev workflowhost.Event) {
+func (f *workflowFeatureFixture) requireShownOnce(t *testing.T, ev workflowhost.Event) {
 	t.Helper()
 	wasOpen := f.requestOpen(ev.RequestID)
 	notes := len(f.host.notes)
@@ -92,7 +86,7 @@ func (f *workflowFixture) requireShownOnce(t *testing.T, ev workflowhost.Event) 
 // requireNothingKept checks that no request IDs outlive their invocation.
 // It reads the feature's internals because forgetting them can't be seen
 // from outside.
-func (f *workflowFixture) requireNothingKept(t *testing.T) {
+func (f *workflowFeatureFixture) requireNothingKept(t *testing.T) {
 	t.Helper()
 	require.Empty(t, f.wf.requests.bySession)
 }
@@ -100,7 +94,7 @@ func (f *workflowFixture) requireNothingKept(t *testing.T) {
 func TestWorkflowRequestsOfConcurrentApprovalsAreKeptApart(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(approvalFor("req-a", "sess-1"))
 	f.event(approvalFor("req-b", "sess-2"))
 	require.True(t, f.requestOpen("req-a"))
@@ -142,7 +136,7 @@ func TestWorkflowRequestsAreForgottenWhenTheInvocationEndsBeforeItsRun(t *testin
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newWorkflowFixture(t)
+			f := newWorkflowFeatureFixture(t)
 			f.event(approvalFor("req-1", "sess-1"))
 			f.requireShownOnce(t, approvalFor("req-1", "sess-1"))
 			if tc.answer != "" {
@@ -159,7 +153,7 @@ func TestWorkflowRequestsAreForgottenWhenTheInvocationEndsBeforeItsRun(t *testin
 func TestWorkflowRequestsOfAFinishedRunAreForgotten(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(approvalFor("req-1", "sess-1"))
 	f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
 	f.event(started("demo", "sess-1"))
@@ -190,7 +184,7 @@ func TestWorkflowRequestsOfAReplacedInvocationAreForgotten(t *testing.T) {
 	for name, next := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newWorkflowFixture(t)
+			f := newWorkflowFeatureFixture(t)
 			f.event(approvalFor("req-1", "sess-1"))
 			f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
 			f.event(started("demo", "sess-1"))
@@ -224,7 +218,7 @@ func TestWorkflowReplacedInvocationClosesItsOpenRequests(t *testing.T) {
 	for name, next := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newWorkflowFixture(t)
+			f := newWorkflowFeatureFixture(t)
 			f.event(started("demo", "sess-1"))
 			ask := askFor("ask-1", "Go?")
 			ask.RunID = "run-1"
@@ -245,7 +239,7 @@ func TestWorkflowLateFinishKeepsTheNextInvocationsRequests(t *testing.T) {
 	for name, answered := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newWorkflowFixture(t)
+			f := newWorkflowFeatureFixture(t)
 			f.event(started("demo", "sess-1"))
 
 			// The host frees the session before publishing run-1's finish, so
@@ -265,7 +259,7 @@ func TestWorkflowLateFinishKeepsTheNextInvocationsRequests(t *testing.T) {
 func TestWorkflowRequestsAreForgottenWhenTheRunEndsBeforeItsFirstEvent(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(approvalFor("req-1", "sess-1"))
 	f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
 	// Shutdown can end a recorded run before it publishes that it started.
@@ -279,7 +273,7 @@ func TestWorkflowLateControlOfAnEarlierRunKeepsTheCurrentRequests(t *testing.T) 
 	for _, state := range []workflowhost.RunState{workflowhost.StatePaused, workflowhost.StateResumed} {
 		t.Run(string(state), func(t *testing.T) {
 			t.Parallel()
-			f := newWorkflowFixture(t)
+			f := newWorkflowFeatureFixture(t)
 			f.event(started("demo", "sess-1"))
 			f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
 			next := started("demo", "sess-1")
@@ -295,8 +289,6 @@ func TestWorkflowLateControlOfAnEarlierRunKeepsTheCurrentRequests(t *testing.T) 
 			f.event(workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: state})
 
 			require.True(t, f.requestOpen("ask-open"))
-			require.Contains(t, f.panel(), "? Done? → yes", "run-2's record is kept")
-			require.NotContains(t, f.panel(), "paused")
 			f.requireShownOnce(t, open)
 			done := askFor("ask-done", "Done?")
 			done.RunID = "run-2"
@@ -308,7 +300,7 @@ func TestWorkflowLateControlOfAnEarlierRunKeepsTheCurrentRequests(t *testing.T) 
 func TestWorkflowNextRunsOwnEventReplacesAnInvocationWhoseFinishWasLost(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(started("demo", "sess-1"))
 	stale := askFor("ask-a", "Still there?")
 	stale.RunID = "run-1"
@@ -330,7 +322,7 @@ func TestWorkflowNextRunsOwnEventReplacesAnInvocationWhoseFinishWasLost(t *testi
 func TestWorkflowLateControlDuringTheNextApprovalKeepsItsRequests(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(started("demo", "sess-1"))
 	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
 	f.event(approvalFor("req-2", "sess-1"))
@@ -348,7 +340,7 @@ func TestWorkflowLateControlDuringTheNextApprovalKeepsItsRequests(t *testing.T) 
 func TestWorkflowAnswerToAForgottenRequestIsSentButNotKept(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(started("demo", "sess-1"))
 	ask := askFor("ask-1", "Go?")
 	ask.RunID = "run-1"
@@ -366,7 +358,7 @@ func TestWorkflowAnswerToAForgottenRequestIsSentButNotKept(t *testing.T) {
 func TestWorkflowUnseenRunFinishingAfterAnEarlierRunReleasesItsInvocation(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(started("demo", "sess-1"))
 	f.event(finishedIn("sess-1", "run-1", workflowhost.StatusCompleted))
 	f.event(approvalFor("req-2", "sess-1"))
@@ -379,7 +371,7 @@ func TestWorkflowUnseenRunFinishingAfterAnEarlierRunReleasesItsInvocation(t *tes
 func TestWorkflowFinishOfAnotherRunEndsTheLiveRunsRequestsToo(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	f.event(started("demo", "sess-1"))
 	ask := askFor("ask-1", "Go?")
 	ask.RunID = "run-1"
@@ -388,7 +380,6 @@ func TestWorkflowFinishOfAnotherRunEndsTheLiveRunsRequestsToo(t *testing.T) {
 	// run-1's finish and all of run-2's earlier events were lost.
 	f.event(finishedIn("sess-1", "run-2", workflowhost.StatusCompleted))
 
-	require.Contains(t, f.panel(), "/demo · completed")
 	require.False(t, f.requestOpen("ask-1"), "run-1's question can't be answered any more")
 	f.requireNothingKept(t)
 }
@@ -396,7 +387,7 @@ func TestWorkflowFinishOfAnotherRunEndsTheLiveRunsRequestsToo(t *testing.T) {
 func TestWorkflowRepublishedApprovalIsShownOnce(t *testing.T) {
 	t.Parallel()
 
-	f := newWorkflowFixture(t)
+	f := newWorkflowFeatureFixture(t)
 	approval := approvalFor("req-1", "sess-1")
 	f.event(approval)
 	f.act(dialog.ActionWorkflowRespond{RequestID: "req-1", Answer: workflowhost.AnswerApprove})
@@ -404,4 +395,19 @@ func TestWorkflowRepublishedApprovalIsShownOnce(t *testing.T) {
 
 	require.False(t, f.requestOpen("req-1"), "an answered approval must not reopen")
 	require.Equal(t, [][2]string{{"req-1", workflowhost.AnswerApprove}}, f.ws.responds)
+}
+
+// A finish without a run ID is an invocation's that ended before its run
+// started; it says nothing about the run live in the session.
+func TestARunlessFinishLeavesTheLiveRunsRequestsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFeatureFixture(t)
+	ask := askFor("ask-1", "Which repo?")
+	ask.RunID = "run-1"
+	f.event(ask)
+	require.True(t, f.requestOpen("ask-1"))
+
+	f.event(finishedIn("sess-1", "", workflowhost.StatusDenied))
+	require.True(t, f.requestOpen("ask-1"))
 }

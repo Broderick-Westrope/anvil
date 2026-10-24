@@ -301,7 +301,7 @@ func (app *App) resolveSession(ctx context.Context, continueSessionID string, us
 		if err != nil {
 			return session.Session{}, fmt.Errorf("session not found: %s", continueSessionID)
 		}
-		if sess.ParentSessionID != "" {
+		if !sess.Conversational() {
 			return session.Session{}, fmt.Errorf("cannot continue a child session: %s", continueSessionID)
 		}
 		return sess, nil
@@ -663,6 +663,7 @@ func (app *App) startWorkflows() {
 	app.Workflows = workflowhost.NewService(app.globalCtx, workflowhost.Deps{
 		Coordinator:  app.AgentCoordinator,
 		Sessions:     app.Sessions,
+		Messages:     app.Messages,
 		Store:        app.workflowStore,
 		WorkingDir:   app.config.WorkingDir(),
 		SkipApproval: app.skipWorkflowApproval,

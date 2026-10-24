@@ -30,6 +30,9 @@ type submissionOwner struct {
 	// runs next even while the session is held: it's the same logical
 	// work, so a hold waits for it rather than cutting it off.
 	continued bool
+	// holdingPrompts is set on silent work run while the session's queued
+	// prompts are held back after a failed turn; they stay held after it.
+	holdingPrompts bool
 }
 
 type submission struct {
@@ -44,6 +47,8 @@ type submission struct {
 	ctx context.Context
 	// continuation marks work queued by continueWith.
 	continuation bool
+	// silent marks work that isn't a prompt, which queued() leaves out.
+	silent bool
 }
 
 type submissionResult struct {
@@ -123,12 +128,23 @@ func (a *admission) submitAwait(ctx context.Context, id string, job submission) 
 		return nil, err
 	}
 	// The job joins the queue and, on an idle session, starts from its head,
-	// which is the job itself unless earlier work is still waiting.
+	// which is the job itself unless earlier work is still waiting. Prompts
+	// waiting on an idle session were held back by a failed turn; silent
+	// work runs past them and leaves them held, as it does behind a turn.
+	// (A script's turn is never left waiting on an idle session: it's
+	// always handed the session.)
 	a.queues[id] = append(a.queues[id], job)
 	if a.owners[id] == nil && a.held[id] == 0 {
-		job = a.queues[id][0]
-		a.queues[id] = a.queues[id][1:]
+		q := a.queues[id]
+		i, holding := 0, false
+		if job.silent {
+			i = slices.IndexFunc(q, func(j submission) bool { return j.silent })
+			holding = slices.ContainsFunc(q, func(j submission) bool { return !j.silent })
+		}
+		job = q[i]
+		a.queues[id] = append(q[:i:i], q[i+1:]...)
 		owner := a.claimFor(job, id)
+		owner.holdingPrompts = holding
 		a.mu.Unlock()
 		a.start(owner, job)
 	} else {
@@ -327,7 +343,7 @@ func (a *admission) claimIdle(ctx context.Context, id string, check func() error
 func (a *admission) execute(owner *submissionOwner, job submission) (result *fantasy.AgentResult, err error) {
 	a.mu.Lock()
 	owner.done = job.done
-	awaited := job.done != nil
+	scriptTurn, silent := isScriptTurn(job), job.silent
 	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
@@ -351,10 +367,13 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 			queued = q[i]
 			a.queues[owner.sessionID] = append(q[:i:i], q[i+1:]...)
 			next = a.claimFor(queued, owner.sessionID)
-		} else if len(q) > 0 && a.held[owner.sessionID] == 0 && a.shouldHandOff(owner, awaited, err, q) {
-			queued = q[0]
-			a.queues[owner.sessionID] = q[1:]
-			next = a.claimFor(queued, owner.sessionID)
+		} else if len(q) > 0 && a.held[owner.sessionID] == 0 {
+			if i, holding := a.nextInQueue(owner, scriptTurn, silent, err, q); i >= 0 {
+				queued = q[i]
+				a.queues[owner.sessionID] = append(q[:i:i], q[i+1:]...)
+				next = a.claimFor(queued, owner.sessionID)
+				next.holdingPrompts = holding
+			}
 		}
 	}
 	done := owner.done
@@ -382,16 +401,36 @@ func (a *admission) execute(owner *submissionOwner, job submission) (result *fan
 	return nil, err
 }
 
-// shouldHandOff decides whether the queue continues after owner's job. A
-// failed or cancelled user turn normally holds back the queue, but never
-// while awaited work is queued anywhere in it: a workflow can't send a
+// nextInQueue picks the index of the job that runs after owner's, or -1,
+// and whether the queue's prompts are being held back. A failed or
+// cancelled user turn normally holds back the queue, but never while a
+// script's turn is queued anywhere in it: a workflow can't send a
 // follow-up message to unblock itself, so the work queued ahead of its
-// turn runs and then its turn does.
-func (a *admission) shouldHandOff(owner *submissionOwner, awaited bool, err error, queue []submission) bool {
-	if awaited || slices.ContainsFunc(queue, func(job submission) bool { return job.done != nil }) {
-		return a.lifetime.Err() == nil
+// turn runs and then its turn does. While prompts are held, silent work (a
+// marker, a metadata entry, a fork's copy) still runs, and the prompts stay
+// held after it. Silent work's own outcome never holds them: the user
+// can't see it, so its failure says nothing about their prompts.
+func (a *admission) nextInQueue(owner *submissionOwner, scriptTurn, silent bool, err error, queue []submission) (int, bool) {
+	if a.lifetime.Err() != nil {
+		return -1, false
 	}
-	return (err == nil || owner.handoffOnError) && owner.ctx.Err() == nil
+	if scriptTurn || slices.ContainsFunc(queue, isScriptTurn) {
+		return 0, false
+	}
+	held := owner.holdingPrompts
+	if !silent {
+		held = held || (err != nil && !owner.handoffOnError) || owner.ctx.Err() != nil
+	}
+	if !held {
+		return 0, false
+	}
+	return slices.IndexFunc(queue, func(job submission) bool { return job.silent }), true
+}
+
+// isScriptTurn reports whether a job is a workflow script's awaited turn,
+// as opposed to the user's prompt or silent work.
+func isScriptTurn(job submission) bool {
+	return job.done != nil && !job.silent
 }
 
 func (a *admission) busy(id string) bool {
@@ -408,24 +447,47 @@ func (a *admission) queued(id string) []string {
 	defer a.mu.Unlock()
 	var prompts []string
 	for _, job := range a.queues[id] {
-		prompts = append(prompts, job.prompt)
+		// The user's prompts: what the queue pill lists and Esc clears.
+		if !job.silent && !isScriptTurn(job) {
+			prompts = append(prompts, job.prompt)
+		}
 	}
 	return prompts
 }
 
 func (a *admission) clear(id string) {
 	a.mu.Lock()
-	dropped := a.queues[id]
-	delete(a.queues, id)
+	dropped := a.dropPrompts(id)
 	a.mu.Unlock()
 	cancelAwaited(dropped)
+}
+
+// dropPrompts removes the queued prompts of a session and returns them:
+// the user's, which Esc clears. Silent work (a workflow's marker, a
+// metadata entry, a fork's copy) and a workflow script's queued turns
+// aren't the user's to clear, so they stay queued and run once the session
+// is free; a script is stopped by aborting its run. Callers hold a.mu.
+func (a *admission) dropPrompts(id string) []submission {
+	var kept, dropped []submission
+	for _, job := range a.queues[id] {
+		if job.silent || isScriptTurn(job) {
+			kept = append(kept, job)
+		} else {
+			dropped = append(dropped, job)
+		}
+	}
+	if len(kept) == 0 {
+		delete(a.queues, id)
+	} else {
+		a.queues[id] = kept
+	}
+	return dropped
 }
 
 func (a *admission) cancel(id string) {
 	a.mu.Lock()
 	owner := a.owners[id]
-	dropped := a.queues[id]
-	delete(a.queues, id)
+	dropped := a.dropPrompts(id)
 	// Cancelled under the lock, so continueWith sees either the queue
 	// before it was cleared or the cancelled context, never neither.
 	if owner != nil {

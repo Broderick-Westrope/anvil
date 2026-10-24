@@ -355,7 +355,7 @@ func (d *WorkflowAsk) HandleMsg(msg tea.Msg) Action {
 		case key.Matches(keyMsg, d.keyMap.Close):
 			return nil
 		case key.Matches(keyMsg, d.keyMap.Abort):
-			return ActionWorkflowControl{SessionID: d.ev.SessionID, Control: WorkflowAbort}
+			return ActionWorkflowControl{RunID: d.ev.RunID, Control: WorkflowAbort}
 		case key.Matches(keyMsg, d.keyMap.ScrollUp):
 			d.question.ScrollUp(1)
 			return nil

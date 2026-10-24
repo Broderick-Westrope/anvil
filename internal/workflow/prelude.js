@@ -31,6 +31,9 @@
       turn(prompt, opts) {
         return invoke("turn", Object.assign({}, opts, { session: id, prompt }));
       },
+      fork(opts) {
+        return handle(invoke("session.fork", Object.assign({}, opts, { session: id })));
+      },
     });
   }
 
@@ -58,7 +61,6 @@
     workflow: Object.freeze({
       tmpdir: () => invoke("workflow.tmpdir"),
       dir: () => invoke("workflow.dir"),
-      focus: (s) => { invoke("workflow.focus", { session: s.id }); },
       exclusive: (fn, opts) => {
         invoke("workflow.hold", { stopJobs: !!(opts && opts.stopJobs) });
         try {
@@ -66,6 +68,11 @@
         } finally {
           invoke("workflow.release");
         }
+      },
+      // Removed with run nodes; scripts written before them get told why
+      // rather than "not a function".
+      focus: () => {
+        throw new Error("workflow.focus() was removed: the user drills into a session from the run's node to watch or talk to it; drop the call");
       },
     }),
   });

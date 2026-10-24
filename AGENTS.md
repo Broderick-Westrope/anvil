@@ -270,6 +270,19 @@ Terms with a specific meaning in this codebase are defined in
   tool restriction, pinned model and a `submit_result` tool for schemas.
   Startup marks runs of dead instances interrupted and prunes run
   directories older than 14 days (`Store.PruneRunDirs`).
+  A run shows as a node where it started (see
+  `plans/completed/design-2026-10-14-workflow-run-node.md`): a
+  `workflow_run` marker message, written through the session's queue
+  (`Coordinator.RunInSession`, which also carries metadata entries and
+  forks). Every session a run makes is a child of the invoking session
+  recording its run, creating event and kind (`session.WorkflowOwner`);
+  `Session.Conversational` tells a builder the user talks to from a
+  subagent (ADR 0010). The invoking session stays the user's: scripts can
+  only `fork()` it (`message.Service.CopyBranch`).
+  `workflowhost.RunView` rebuilds what the node and its drill-in show from
+  the database; the UI reloads it on every run event (`EventChanged` is
+  published after each event is recorded) and every few seconds while a
+  running run is on screen, since announcements can be dropped.
 - **Mermaid diagrams**: when an assistant message finishes, each top-level
   ```` ```mermaid ```` fence becomes its own chat node
   (`chat.NewAssistantMessageItems`, spliced in by

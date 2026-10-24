@@ -1,0 +1,289 @@
+package message_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Broderick-Westrope/anvil/internal/db"
+	"github.com/Broderick-Westrope/anvil/internal/message"
+)
+
+func newSession(t *testing.T, q db.Querier) string {
+	t.Helper()
+	s, err := q.CreateSession(t.Context(), db.CreateSessionParams{ID: uuid.NewString(), Title: "fork"})
+	require.NoError(t, err)
+	return s.ID
+}
+
+func add(t *testing.T, svc message.Service, sessionID, parent string, role message.MessageRole, parts ...message.ContentPart) message.Message {
+	t.Helper()
+	m, err := svc.Create(t.Context(), sessionID, message.CreateMessageParams{Role: role, ParentMessageID: parent, Parts: parts})
+	require.NoError(t, err)
+	return m
+}
+
+func TestCopyBranchCopiesTheBranchIntoAnotherSession(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	u1 := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+	a1 := add(t, svc, source, u1.ID, message.Assistant, message.TextContent{Text: "hi"}, message.Finish{Reason: message.FinishReasonEndTurn})
+	// A branch that isn't on the copied path.
+	add(t, svc, source, u1.ID, message.Assistant, message.TextContent{Text: "other branch"}, message.Finish{Reason: message.FinishReasonEndTurn})
+	compaction, err := svc.Create(t.Context(), source, message.CreateMessageParams{
+		Role: message.User, ParentMessageID: a1.ID, MessageType: message.MessageTypeCompaction,
+		Parts: []message.ContentPart{message.CompactionContent{Summary: "so far", FirstKeptEntryID: a1.ID}},
+	})
+	require.NoError(t, err)
+	u2 := add(t, svc, source, compaction.ID, message.User, message.TextContent{Text: "build it"})
+
+	fork := newSession(t, q)
+	leaf, _, err := svc.CopyBranch(t.Context(), u2.ID, fork)
+	require.NoError(t, err)
+
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	original, err := svc.GetBranchPath(t.Context(), u2.ID)
+	require.NoError(t, err)
+	require.Len(t, copied, len(original))
+	for i := range original {
+		require.NotEqual(t, original[i].ID, copied[i].ID)
+		require.Equal(t, fork, copied[i].SessionID)
+		require.Equal(t, original[i].Role, copied[i].Role)
+		require.Equal(t, original[i].MessageType, copied[i].MessageType)
+		require.Equal(t, original[i].CreatedAt, copied[i].CreatedAt)
+		if original[i].MessageType != message.MessageTypeCompaction {
+			require.Equal(t, original[i].Parts, copied[i].Parts, "parts are copied as they are")
+		}
+	}
+	kept := copied[2].Parts[0].(message.CompactionContent).FirstKeptEntryID
+	require.Equal(t, copied[1].ID, kept, "the compaction points at the copy of its first kept message")
+
+	session, err := q.GetSessionByID(t.Context(), fork)
+	require.NoError(t, err)
+	require.Equal(t, leaf, session.LeafMessageID.String)
+
+	sourceSession, err := q.GetSessionByID(t.Context(), source)
+	require.NoError(t, err)
+	require.Equal(t, u2.ID, sourceSession.LeafMessageID.String, "the source is left as it was")
+}
+
+func TestCopyBranchLeavesOutAnExchangeItEndsInTheMiddleOf(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(svc message.Service, sessionID, after string) message.Message{
+		"unfinished reply": func(svc message.Service, sessionID, after string) message.Message {
+			return add(t, svc, sessionID, after, message.Assistant, message.TextContent{Text: "half a th"})
+		},
+		"tool call without its result": func(svc message.Service, sessionID, after string) message.Message {
+			return add(t, svc, sessionID, after, message.Assistant,
+				message.ToolCall{ID: "c1", Name: "view", Input: "{}", Finished: true}, message.Finish{Reason: message.FinishReasonToolUse})
+		},
+		"tool result with no reply yet": func(svc message.Service, sessionID, after string) message.Message {
+			call := add(t, svc, sessionID, after, message.Assistant,
+				message.ToolCall{ID: "c1", Name: "view", Input: "{}", Finished: true}, message.Finish{Reason: message.FinishReasonToolUse})
+			return add(t, svc, sessionID, call.ID, message.Tool, message.ToolResult{ToolCallID: "c1", Content: "ok"})
+		},
+	}
+	for name, unfinished := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, q, source := newTestService(t)
+			u := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+			tip := unfinished(svc, source, u.ID)
+
+			fork := newSession(t, q)
+			leaf, end, err := svc.CopyBranch(t.Context(), tip.ID, fork)
+			require.NoError(t, err)
+			copied, err := svc.GetBranchPath(t.Context(), leaf)
+			require.NoError(t, err)
+			require.Len(t, copied, 1)
+			require.Equal(t, message.User, copied[0].Role)
+			require.Equal(t, u.ID, end, "the copy ends at the last message it kept, not the one asked for")
+		})
+	}
+}
+
+func TestCopyBranchOfNothingCopiesNothing(t *testing.T) {
+	t.Parallel()
+
+	svc, q, _ := newTestService(t)
+	leaf, _, err := svc.CopyBranch(t.Context(), "", newSession(t, q))
+	require.NoError(t, err)
+	require.Empty(t, leaf)
+}
+
+func TestCopyBranchKeepsPartsItCantReadWhileRemappingReferences(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	kept := add(t, svc, source, "", message.User, message.TextContent{Text: "kept"})
+	compaction, err := svc.Create(t.Context(), source, message.CreateMessageParams{
+		Role: message.User, ParentMessageID: kept.ID, MessageType: message.MessageTypeCompaction,
+		Parts: []message.ContentPart{message.CompactionContent{Summary: "s", FirstKeptEntryID: kept.ID}},
+	})
+	require.NoError(t, err)
+	// A newer Anvil wrote a part this version doesn't know beside the
+	// compaction.
+	raw := `[{"type":"from_the_future","data":{"x":1}},{"type":"compaction","data":{"summary":"s","first_kept_entry_id":"` + kept.ID + `","tokens_before":0}}]`
+	require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{ID: compaction.ID, Parts: raw}))
+
+	fork := newSession(t, q)
+	leaf, _, err := svc.CopyBranch(t.Context(), compaction.ID, fork)
+	require.NoError(t, err)
+	stored, err := q.GetMessage(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Contains(t, stored.Parts, `{"type":"from_the_future","data":{"x":1}}`, "the unknown part survives the copy")
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Equal(t, copied[0].ID, copied[1].Parts[0].(message.CompactionContent).FirstKeptEntryID)
+}
+
+func TestCopyBranchLooksPastMetadataForAnUnfinishedExchange(t *testing.T) {
+	t.Parallel()
+
+	metadata := map[string]message.CreateMessageParams{
+		"model change": {Role: message.System, MessageType: message.MessageTypeModelChange, Parts: []message.ContentPart{message.ModelChangeContent{ModelID: "m"}}},
+		"mcp toggle":   {Role: message.System, MessageType: message.MessageTypeMCPToggle, Parts: []message.ContentPart{message.MCPToggleContent{ServerName: "s"}}},
+		"marker":       {Role: message.System, MessageType: message.MessageTypeWorkflowRun, Parts: []message.ContentPart{message.WorkflowRunContent{RunID: "r"}}},
+	}
+	for name, params := range metadata {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, q, source := newTestService(t)
+			u := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+			call := add(t, svc, source, u.ID, message.Assistant,
+				message.ToolCall{ID: "c1", Name: "view", Input: "{}", Finished: true}, message.Finish{Reason: message.FinishReasonToolUse})
+			params.ParentMessageID = call.ID
+			meta, err := svc.Create(t.Context(), source, params)
+			require.NoError(t, err)
+
+			fork := newSession(t, q)
+			leaf, _, err := svc.CopyBranch(t.Context(), meta.ID, fork)
+			require.NoError(t, err)
+			copied, err := svc.GetBranchPath(t.Context(), leaf)
+			require.NoError(t, err)
+			require.Len(t, copied, 1, "the unanswered tool call and the metadata after it are left out")
+			require.Equal(t, message.User, copied[0].Role)
+		})
+	}
+}
+
+func TestCopyBranchKeepsMetadataAfterAFinishedExchange(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	u := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+	reply := add(t, svc, source, u.ID, message.Assistant, message.TextContent{Text: "hi"}, message.Finish{Reason: message.FinishReasonEndTurn})
+	meta, err := svc.Create(t.Context(), source, message.CreateMessageParams{
+		Role: message.System, ParentMessageID: reply.ID, MessageType: message.MessageTypeModelChange,
+		Parts: []message.ContentPart{message.ModelChangeContent{ModelID: "m"}},
+	})
+	require.NoError(t, err)
+
+	leaf, _, err := svc.CopyBranch(t.Context(), meta.ID, newSession(t, q))
+	require.NoError(t, err)
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Len(t, copied, 3)
+	require.Equal(t, message.MessageTypeModelChange, copied[2].MessageType)
+}
+
+func TestAForksCopiesArentListedAgainInPromptHistory(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	asked := add(t, svc, source, "", message.User, message.TextContent{Text: "asked once"})
+	// Messages the user wrote before the run started are older than the
+	// fork that copies them.
+	// A prompt from the same second as the fork is a copy too.
+	fork := newSession(t, q)
+	leaf, end, err := svc.CopyBranch(t.Context(), asked.ID, fork)
+	require.NoError(t, err)
+	require.NoError(t, q.SetSessionWorkflowOwner(t.Context(), db.SetSessionWorkflowOwnerParams{
+		ID: fork, WorkflowRunID: "run-1", WorkflowSeq: 1, WorkflowKind: "session", ForkedFromMessageID: end,
+	}))
+	time.Sleep(1100 * time.Millisecond) // created_at has one-second resolution
+	add(t, svc, fork, leaf, message.User, message.TextContent{Text: "typed to the builder"})
+
+	history, err := svc.ListUserMessagesByWorkingDir(t.Context(), "")
+	require.NoError(t, err)
+	var texts []string
+	for _, m := range history {
+		texts = append(texts, m.Content().Text)
+	}
+	require.ElementsMatch(t, []string{"asked once", "typed to the builder"}, texts)
+}
+
+func TestCopyBranchOfOnlyAnUnfinishedExchangeCopiesNothing(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	reply := add(t, svc, source, "", message.Assistant, message.TextContent{Text: "half a th"})
+
+	leaf, end, err := svc.CopyBranch(t.Context(), reply.ID, newSession(t, q))
+	require.NoError(t, err)
+	require.Empty(t, leaf)
+	require.Empty(t, end)
+}
+
+func TestCopyBranchKeepsAToolExchangeTheReplyFinished(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	u := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+	call := add(t, svc, source, u.ID, message.Assistant,
+		message.ToolCall{ID: "c1", Name: "view", Input: "{}", Finished: true}, message.Finish{Reason: message.FinishReasonToolUse})
+	result := add(t, svc, source, call.ID, message.Tool, message.ToolResult{ToolCallID: "c1", Content: "ok"})
+	reply := add(t, svc, source, result.ID, message.Assistant, message.TextContent{Text: "done"}, message.Finish{Reason: message.FinishReasonEndTurn})
+
+	leaf, end, err := svc.CopyBranch(t.Context(), reply.ID, newSession(t, q))
+	require.NoError(t, err)
+	require.Equal(t, reply.ID, end)
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Len(t, copied, 4)
+}
+
+// A part that refers to a message off the copied path is left as it is,
+// and doesn't stop the parts after it being remapped.
+func TestCopyBranchRemapsEveryPartThatRefersToTheCopiedPath(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	kept := add(t, svc, source, "", message.User, message.TextContent{Text: "kept"})
+	compaction := func(id string) string {
+		return `{"type":"compaction","data":{"summary":"s","first_kept_entry_id":"` + id + `","tokens_before":0}}`
+	}
+	summary := func(id string) string {
+		return `{"type":"branch_summary","data":{"summary":"s","from_id":"` + id + `"}}`
+	}
+	withParts := func(parent, raw string) message.Message {
+		m, err := svc.Create(t.Context(), source, message.CreateMessageParams{
+			Role: message.User, ParentMessageID: parent, MessageType: message.MessageTypeCompaction,
+			Parts: []message.ContentPart{message.CompactionContent{Summary: "s"}},
+		})
+		require.NoError(t, err)
+		require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{ID: m.ID, Parts: raw}))
+		return m
+	}
+	first := withParts(kept.ID, "["+compaction("elsewhere")+","+summary(kept.ID)+"]")
+	second := withParts(first.ID, "["+summary("elsewhere")+","+compaction(kept.ID)+"]")
+
+	leaf, _, err := svc.CopyBranch(t.Context(), second.ID, newSession(t, q))
+	require.NoError(t, err)
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Len(t, copied, 3)
+	keptCopy := copied[0].ID
+
+	require.Equal(t, "elsewhere", copied[1].Parts[0].(message.CompactionContent).FirstKeptEntryID)
+	require.Equal(t, keptCopy, copied[1].Parts[1].(message.BranchSummaryContent).FromID)
+	require.Equal(t, "elsewhere", copied[2].Parts[0].(message.BranchSummaryContent).FromID)
+	require.Equal(t, keptCopy, copied[2].Parts[1].(message.CompactionContent).FirstKeptEntryID)
+}

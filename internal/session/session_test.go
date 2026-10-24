@@ -507,3 +507,95 @@ func TestRefresh(t *testing.T) {
 
 	require.Error(t, sessions.Refresh(t.Context(), "missing"))
 }
+
+// A workflow's session is never seen, even by the event announcing it,
+// without the run that owns it.
+func TestCreateWorkflowSessionIsOwnedFromTheStart(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+	sessions := NewService(db.New(conn), conn)
+	events := sessions.Subscribe(t.Context())
+
+	parent, err := sessions.Create(t.Context(), "parent", "/home/user/project")
+	require.NoError(t, err)
+	<-events
+	owner := WorkflowOwner{RunID: "run-1", Seq: 2, Kind: WorkflowKindSession}
+	child, err := sessions.CreateWorkflowSession(t.Context(), "", parent.ID, "/build approach 1", owner)
+	require.NoError(t, err)
+
+	created := (<-events).Payload
+	for _, s := range []Session{child, created} {
+		require.Equal(t, parent.ID, s.ParentSessionID)
+		require.Equal(t, "run-1", s.WorkflowRunID)
+		require.True(t, s.Conversational())
+		require.Equal(t, "/home/user/project", s.WorkingDir)
+	}
+}
+
+// The CLI deletes through the service too, from a process that knows
+// nothing of runs in flight, so the service refuses what the database
+// shows is still in use.
+func TestDeleteRefusesWhileWhatAWorkflowMadeIsInUse(t *testing.T) {
+	runFrom := func(runID string, from func(invoker, builder string) string) func(t *testing.T, q *db.Queries, invoker, builder string) {
+		return func(t *testing.T, q *db.Queries, invoker, builder string) {
+			require.NoError(t, q.CreateWorkflowRun(t.Context(), db.CreateWorkflowRunParams{
+				ID: runID, Command: "project:build", InvokingSessionID: from(invoker, builder), InstanceID: "other", StartedAt: 1,
+			}))
+		}
+	}
+	theInvoker := func(invoker, _ string) string { return invoker }
+	theBuilder := func(_, builder string) string { return builder }
+	tests := map[string]struct {
+		setup func(t *testing.T, q *db.Queries, invoker, builder string)
+		// deleted picks the session to delete.
+		deleted func(invoker, builder string) string
+		want    error
+	}{
+		"a run recorded as running": {
+			setup: runFrom("run-1", theInvoker), deleted: theInvoker, want: ErrWorkflowRunning,
+		},
+		"a run started from a builder": {
+			setup: runFrom("run-nested", theBuilder), deleted: theInvoker, want: ErrWorkflowRunning,
+		},
+		"a session a running run made": {
+			setup: runFrom("run-0", theInvoker), deleted: theBuilder, want: ErrWorkflowRunning,
+		},
+		"a builder with a job still running": {
+			setup: func(t *testing.T, q *db.Queries, _, builder string) {
+				_, err := q.CreateBackgroundJob(t.Context(), db.CreateBackgroundJobParams{
+					SessionID: builder, Origin: "explicit", Command: "npm run dev", WorkingDir: "/w", StartedAt: 1, InstanceID: "other",
+				})
+				require.NoError(t, err)
+			},
+			deleted: theInvoker, want: ErrWorkflowSessionInUse,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			t.Cleanup(func() {
+				require.NoError(t, db.Release(dataDir))
+				db.ResetPool()
+			})
+			conn, err := db.Connect(t.Context(), dataDir)
+			require.NoError(t, err)
+			q := db.New(conn)
+			sessions := NewService(q, conn)
+			invoker, err := sessions.Create(t.Context(), "invoker", "/w")
+			require.NoError(t, err)
+			builder, err := sessions.CreateWorkflowSession(t.Context(), "", invoker.ID, "/build approach 1",
+				WorkflowOwner{RunID: "run-0", Seq: 1, Kind: WorkflowKindSession})
+			require.NoError(t, err)
+
+			tc.setup(t, q, invoker.ID, builder.ID)
+			require.ErrorIs(t, sessions.Delete(t.Context(), tc.deleted(invoker.ID, builder.ID)), tc.want)
+			_, err = sessions.Get(t.Context(), builder.ID)
+			require.NoError(t, err, "nothing was deleted")
+		})
+	}
+}

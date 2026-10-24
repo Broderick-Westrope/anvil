@@ -10,6 +10,55 @@ import (
 	"database/sql"
 )
 
+const copyMessage = `-- name: CopyMessage :exec
+INSERT INTO messages (
+    id,
+    session_id,
+    role,
+    parts,
+    model,
+    provider,
+    parent_message_id,
+    message_type,
+    created_at,
+    updated_at,
+    finished_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+`
+
+type CopyMessageParams struct {
+	ID              string         `json:"id"`
+	SessionID       string         `json:"session_id"`
+	Role            string         `json:"role"`
+	Parts           string         `json:"parts"`
+	Model           sql.NullString `json:"model"`
+	Provider        sql.NullString `json:"provider"`
+	ParentMessageID sql.NullString `json:"parent_message_id"`
+	MessageType     string         `json:"message_type"`
+	CreatedAt       int64          `json:"created_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+	FinishedAt      sql.NullInt64  `json:"finished_at"`
+}
+
+func (q *Queries) CopyMessage(ctx context.Context, arg CopyMessageParams) error {
+	_, err := q.exec(ctx, q.copyMessageStmt, copyMessage,
+		arg.ID,
+		arg.SessionID,
+		arg.Role,
+		arg.Parts,
+		arg.Model,
+		arg.Provider,
+		arg.ParentMessageID,
+		arg.MessageType,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+		arg.FinishedAt,
+	)
+	return err
+}
+
 const createMessage = `-- name: CreateMessage :one
 INSERT INTO messages (
     id,
@@ -429,6 +478,7 @@ WHERE rowid IN (
     FROM messages m
     JOIN sessions s ON m.session_id = s.id
     WHERE m.role = 'user' AND s.working_dir = ?
+        AND NOT (s.forked_from_message_id != '' AND m.created_at <= s.created_at)
     ORDER BY m.created_at DESC
     LIMIT 200
 )
@@ -437,7 +487,10 @@ ORDER BY created_at DESC
 
 // Backs prompt history when no session is open. The subquery picks the 200
 // newest rowids from the covering session/role index, so the sort never
-// touches message parts; only the rows kept are read in full.
+// touches message parts; only the rows kept are read in full. A fork's
+// copies of its source's messages keep their times, so none is newer than
+// the fork itself (times are whole seconds, so one can share its second);
+// they're left out so each prompt is listed once.
 func (q *Queries) ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error) {
 	rows, err := q.query(ctx, q.listUserMessagesByWorkingDirStmt, listUserMessagesByWorkingDir, workingDir)
 	if err != nil {

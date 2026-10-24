@@ -46,11 +46,14 @@ func TestUnmarshalPartsEdgeCases(t *testing.T) {
 		require.Empty(t, got)
 	})
 
-	t.Run("unknown type is an error", func(t *testing.T) {
+	t.Run("unknown type is skipped", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := unmarshalParts([]byte(`[{"type":"nope","data":{}}]`))
-		require.ErrorContains(t, err, "unknown part type: nope")
+		// A newer Anvil sharing the database may write parts this one
+		// doesn't know; the rest of the message still reads.
+		got, err := unmarshalParts([]byte(`[{"type":"nope","data":{}},{"type":"text","data":{"text":"hi"}}]`))
+		require.NoError(t, err)
+		require.Equal(t, []ContentPart{TextContent{Text: "hi"}}, got)
 	})
 
 	t.Run("payload may precede its type tag", func(t *testing.T) {

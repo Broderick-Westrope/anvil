@@ -80,31 +80,17 @@ func TestWorkflowKeyPrecedence(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newWorkflowUIFixture(t)
-			f.event(started("demo", "sess-1"))
+			// A run of the session on screen, in reach of the keys.
+			f.u.workflowRuns.endLoad(workflowRunViewLoadedMsg{runID: "run-1", ok: true, view: workflowhost.RunView{
+				RunID: "run-1", Command: "demo", InvokingSessionID: "sess-1", Status: workflowhost.StatusRunning,
+			}})
 			tc.setup(t, f)
 			f.press(tc.key)
 			if tc.wantPaused {
-				require.Equal(t, []string{"pause:sess-1"}, f.ws.controls)
+				require.Equal(t, []string{"pause:run-1"}, f.ws.controls)
 			} else {
 				require.Empty(t, f.ws.controls)
 			}
 		})
 	}
-}
-
-func TestWorkflowFollowKeyWorksFromLanding(t *testing.T) {
-	t.Parallel()
-
-	f := newWorkflowUIFixture(t)
-	f.u.session = nil
-	f.u.setState(uiLanding, uiFocusEditor)
-	f.u.textarea.SetValue("draft")
-	infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Focus: "sess-2"})
-	require.Len(t, infos, 1)
-	require.Nil(t, f.u.session)
-
-	f.press(tea.KeyPressMsg{Code: 'g', Mod: tea.ModAlt})
-	require.NotNil(t, f.u.session)
-	require.Equal(t, "sess-2", f.u.session.ID)
-	require.Equal(t, "draft", f.u.textarea.Value())
 }

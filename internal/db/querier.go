@@ -13,6 +13,9 @@ type Querier interface {
 	AddSessionCost(ctx context.Context, arg AddSessionCostParams) (int64, error)
 	AddSubagentCallCost(ctx context.Context, arg AddSubagentCallCostParams) error
 	ClaimBackgroundJobEvents(ctx context.Context, arg ClaimBackgroundJobEventsParams) ([]string, error)
+	CopyMessage(ctx context.Context, arg CopyMessageParams) error
+	CountRunningBackgroundJobsBySession(ctx context.Context, sessionID string) (int64, error)
+	CountRunningWorkflowRunsFrom(ctx context.Context, invokingSessionID string) (int64, error)
 	// Mirrors triage.IsSource: keep the two in sync.
 	CountUnresolvedPermissionDecisionsSince(ctx context.Context, createdAt int64) (int64, error)
 	CreateBackgroundJob(ctx context.Context, arg CreateBackgroundJobParams) (int64, error)
@@ -68,15 +71,24 @@ type Querier interface {
 	ListRunningBackgroundJobs(ctx context.Context) ([]BackgroundJob, error)
 	ListRunningWorkflowRuns(ctx context.Context) ([]WorkflowRun, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
+	ListSessionsByWorkflowRun(ctx context.Context, workflowRunID string) ([]Session, error)
 	ListSessionsByWorkingDir(ctx context.Context, workingDir string) ([]Session, error)
 	ListUndeliveredBackgroundJobEvents(ctx context.Context) ([]ListUndeliveredBackgroundJobEventsRow, error)
 	// Backs prompt history, which steps back one entry at a time.
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	// Backs prompt history when no session is open. The subquery picks the 200
 	// newest rowids from the covering session/role index, so the sort never
-	// touches message parts; only the rows kept are read in full.
+	// touches message parts; only the rows kept are read in full. A fork's
+	// copies of its source's messages keep their times, so none is newer than
+	// the fork itself (times are whole seconds, so one can share its second);
+	// they're left out so each prompt is listed once.
 	ListUserMessagesByWorkingDir(ctx context.Context, workingDir string) ([]Message, error)
+	// The sessions workflow runs made from a session.
+	ListWorkflowChildSessionIDs(ctx context.Context, parentSessionID sql.NullString) ([]string, error)
 	ListWorkflowEvents(ctx context.Context, runID string) ([]WorkflowEvent, error)
+	// The events a run's view is built from, without the payloads it doesn't
+	// read (bash output, turn replies, file contents), which can be large.
+	ListWorkflowViewEvents(ctx context.Context, runID string) ([]ListWorkflowViewEventsRow, error)
 	MarkBackgroundJobLogExpired(ctx context.Context, arg MarkBackgroundJobLogExpiredParams) error
 	MarkBackgroundJobsInterrupted(ctx context.Context, arg MarkBackgroundJobsInterruptedParams) error
 	MarkChildCostRolledUp(ctx context.Context, id string) error
@@ -85,6 +97,9 @@ type Querier interface {
 	ReleaseBackgroundJobEvent(ctx context.Context, id string) error
 	RenameSession(ctx context.Context, arg RenameSessionParams) error
 	SetSessionPin(ctx context.Context, arg SetSessionPinParams) error
+	SetSessionWorkflowOwner(ctx context.Context, arg SetSessionWorkflowOwnerParams) error
+	SetWorkflowRunMarker(ctx context.Context, arg SetWorkflowRunMarkerParams) error
+	SetWorkflowRunPaused(ctx context.Context, arg SetWorkflowRunPausedParams) error
 	SubagentHandleExists(ctx context.Context, arg SubagentHandleExistsParams) (int64, error)
 	TouchAnvilInstance(ctx context.Context, arg TouchAnvilInstanceParams) error
 	TransferBackgroundJobs(ctx context.Context, arg TransferBackgroundJobsParams) error

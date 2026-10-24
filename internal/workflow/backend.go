@@ -18,14 +18,15 @@ type Backend interface {
 	// turn's own final text once its run finishes.
 	Turn(ctx context.Context, call TurnCall) (string, error)
 	// NewSession creates an interactive orchestrator session for the run.
-	NewSession(ctx context.Context, title string) (string, error)
+	NewSession(ctx context.Context, call SessionCall) (string, error)
+	// Fork creates an interactive orchestrator session for the run whose
+	// history is a copy of call.Source's.
+	Fork(ctx context.Context, call ForkCall) (string, error)
 	// Agent runs a fresh, isolated subagent. With a schema, it returns the
 	// validated output or a *SchemaError.
 	Agent(ctx context.Context, call AgentCall) (AgentResult, error)
 	Bash(ctx context.Context, call BashCall) (BashResult, error)
 	Ask(ctx context.Context, question string, options []string) (string, error)
-	Status(step, detail string)
-	Focus(sessionID string)
 	// Warn shows a non-fatal problem, such as undeclared use of a skill.
 	Warn(msg string)
 	// Hold stops new runs from starting in the given sessions and waits for
@@ -50,9 +51,27 @@ type TurnCall struct {
 	Skills    []string
 }
 
+// SessionCall creates a session. Seq is the run's event that creates it.
+type SessionCall struct {
+	Title string
+	Seq   int
+}
+
+// ForkCall creates a session copying Source's history. FromInvoker means
+// Source is the session the run was started from, whose history is copied
+// as it was when the run started; otherwise it's one of the run's own
+// sessions, copied as it is now.
+type ForkCall struct {
+	SessionCall
+	Source      string
+	FromInvoker bool
+}
+
 // AgentCall runs a subagent. Tools restricts its tool set (fail closed),
 // Model pins a provider/model, and Schema makes it return structured output.
 type AgentCall struct {
+	// Seq is the run's event that runs the subagent.
+	Seq             int
 	ParentSessionID string
 	Agent           string
 	Prompt          string

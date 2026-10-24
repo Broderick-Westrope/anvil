@@ -15,27 +15,44 @@ import (
 // promptHistoryLoadedMsg is sent when prompt history is loaded.
 type promptHistoryLoadedMsg struct {
 	messages []message.Message
+	// sessionID is the session the history is for, "" for the working
+	// directory's.
+	sessionID string
+}
+
+// historySessionID is the session prompt history comes from: a drilled-in
+// builder's while the editor sends to it, and the root session's
+// otherwise.
+func (m *UI) historySessionID() string {
+	if target := m.composeTarget(); target.drilled && target.session != nil {
+		return target.session.ID
+	}
+	if m.session != nil {
+		return m.session.ID
+	}
+	return ""
 }
 
 // loadPromptHistory loads user messages for history navigation. Both queries
 // stop at the 200 most recent entries; recall only steps back one at a time.
 func (m *UI) loadPromptHistory() tea.Cmd {
+	sessionID := m.historySessionID()
 	return func() tea.Msg {
 		ctx := context.Background()
 		var messages []message.Message
 		var err error
 
-		if m.session != nil {
-			messages, err = m.com.Workspace.ListUserMessages(ctx, m.session.ID)
+		if sessionID != "" {
+			messages, err = m.com.Workspace.ListUserMessages(ctx, sessionID)
 		} else {
 			messages, err = m.com.Workspace.ListUserMessagesByWorkingDir(ctx, m.com.Workspace.WorkingDir())
 		}
 		if err != nil {
 			slog.Error("Failed to load prompt history", "error", err)
-			return promptHistoryLoadedMsg{messages: nil}
+			return promptHistoryLoadedMsg{sessionID: sessionID}
 		}
 
-		return promptHistoryLoadedMsg{messages: slices.DeleteFunc(messages, isWorkflowTurn)}
+		return promptHistoryLoadedMsg{messages: slices.DeleteFunc(messages, isWorkflowTurn), sessionID: sessionID}
 	}
 }
 

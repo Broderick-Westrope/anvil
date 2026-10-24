@@ -68,6 +68,22 @@ func TestStoredParts_EmptyArrayDecodesToEmptyParts(t *testing.T) {
 	require.Empty(t, got.Parts)
 }
 
+func TestStoredParts_SkipsPartTypesFromANewerVersion(t *testing.T) {
+	t.Parallel()
+
+	svc, q, sessionID := newTestService(t)
+	created, err := svc.Create(t.Context(), sessionID, message.CreateMessageParams{Role: message.Assistant})
+	require.NoError(t, err)
+	require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{
+		ID:    created.ID,
+		Parts: `[{"type":"from_the_future","data":{}},{"type":"text","data":{"text":"still here"}}]`,
+	}))
+
+	got, err := svc.Get(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, []message.ContentPart{message.TextContent{Text: "still here"}}, got.Parts)
+}
+
 func TestStoredParts_RejectsMalformedJSON(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +94,6 @@ func TestStoredParts_RejectsMalformedJSON(t *testing.T) {
 		"not an array":         {raw: `{}`, wantErr: "cannot unmarshal object"},
 		"part not an object":   {raw: `[1]`, wantErr: "cannot unmarshal number"},
 		"data of wrong shape":  {raw: `[{"type":"text","data":5}]`, wantErr: "cannot unmarshal number"},
-		"unknown part type":    {raw: `[{"type":"bogus","data":{}}]`, wantErr: "unknown part type: bogus"},
 		"error after good one": {raw: `[{"type":"text","data":{"text":"ok"}},{"type":"finish","data":"x"}]`, wantErr: "cannot unmarshal string"},
 	}
 

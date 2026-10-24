@@ -83,13 +83,14 @@ type wakerFixture struct {
 }
 
 const (
-	topSession   = "top"
-	childSession = "child"
+	topSession     = "top"
+	childSession   = "child"
+	builderSession = "builder"
 )
 
 func newWakerFixture(t *testing.T) *wakerFixture {
 	t.Helper()
-	owners := map[string]string{"J-top": topSession, "J-child": childSession}
+	owners := map[string]string{"J-top": topSession, "J-child": childSession, "J-builder": builderSession}
 	store := jobevents.NewStore(func(id string) (string, bool) {
 		s, ok := owners[id]
 		return s, ok
@@ -97,6 +98,10 @@ func newWakerFixture(t *testing.T) *wakerFixture {
 	sessions := fakeSessions{
 		topSession:   {ID: topSession},
 		childSession: {ID: childSession, ParentSessionID: topSession},
+		builderSession: {
+			ID: builderSession, ParentSessionID: topSession,
+			WorkflowRunID: "run-1", WorkflowKind: session.WorkflowKindSession,
+		},
 	}
 	f := &wakerFixture{
 		waker: newJobWaker(store, sessions),
@@ -231,6 +236,18 @@ func TestJobWaker_ChildSessionNeverWakes(t *testing.T) {
 
 	tries, _ := f.checkNow(t, childSession)
 	require.Zero(t, tries)
+}
+
+// A workflow's builder is a child session, but the user talks to it, and
+// the background jobs it starts are its own.
+func TestJobWaker_WorkflowBuilderSessionWakes(t *testing.T) {
+	t.Parallel()
+	f := newWakerFixture(t)
+	f.waker.SetComposerState(builderSession, true, false, false)
+	f.complete("J-builder", builderSession)
+
+	_, wakes := f.checkNow(t, builderSession)
+	require.Equal(t, 1, wakes)
 }
 
 func TestJobWaker_DisabledNeverWakes(t *testing.T) {

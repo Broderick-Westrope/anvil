@@ -368,7 +368,7 @@ func BenchmarkFeaturesIgnoreHighFrequencyMessages(b *testing.B) {
 	u.com.Workspace = ws
 	u.keyMap = DefaultKeyMap()
 	u.dialog = dialog.NewOverlay()
-	u.features.register(newWorkflowFeature(uiHost{u}, u.com, ws))
+	u.features.register(newWorkflowFeature(uiHost{u}, u.com, ws, uiWorkflowViews{u}))
 	msgs := []tea.Msg{spinner.TickMsg{}, animTickMsg{}, tea.MouseMotionMsg{}}
 	b.ReportAllocs()
 	for b.Loop() {

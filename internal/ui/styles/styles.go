@@ -563,8 +563,6 @@ type Styles struct {
 		HelpKey            lipgloss.Style // Keystroke hint style
 		HelpText           lipgloss.Style // Help action text style
 		Area               lipgloss.Style // Pills area container
-		// WorkflowWarning flags a workflow running in another session.
-		WorkflowWarning lipgloss.Style
 	}
 }
 

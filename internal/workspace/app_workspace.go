@@ -87,7 +87,23 @@ func (w *AppWorkspace) SetSessionPin(ctx context.Context, sessionID string, pinn
 	return w.app.Sessions.SetPin(ctx, sessionID, pinned, note)
 }
 
+// DeleteSession refuses, as the session service does for what the
+// database shows, what's in flight in this Anvil: a run not yet recorded,
+// and turns.
 func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) error {
+	if w.WorkflowRunning(sessionID) {
+		return session.ErrWorkflowRunning
+	}
+	descendants, err := w.app.Sessions.WorkflowDescendants(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	mgr := shell.GetBackgroundShellManager()
+	for _, id := range descendants {
+		if w.AgentIsSessionBusy(id) || slices.ContainsFunc(mgr.ListBySession(id), func(j shell.JobInfo) bool { return !j.Done }) {
+			return session.ErrWorkflowSessionInUse
+		}
+	}
 	return w.app.Sessions.Delete(ctx, sessionID)
 }
 
@@ -133,11 +149,22 @@ func (w *AppWorkspace) MoveLeaf(ctx context.Context, sessionID, leafMessageID st
 
 // WriteMetadataEntry creates a metadata message under the session's
 // current leaf, read in the same transaction, and advances the leaf to it.
-// The leaf the caller saw may be stale, for instance just after a branch
-// summary was stored.
+// It's written through the session's queue, after work in flight, so it
+// can't land beside something written meanwhile (a turn, or a workflow's
+// marker) on a side branch. params' ParentMessageID must be empty; it's
+// decided here.
 func (w *AppWorkspace) WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error {
-	_, err := w.app.Messages.AppendToLeaf(ctx, sessionID, params)
-	return err
+	if params.ParentMessageID != "" {
+		return errors.New("metadata entries go on the session's current leaf; leave ParentMessageID empty")
+	}
+	write := func(ctx context.Context) error {
+		_, err := w.app.Messages.AppendToLeaf(ctx, sessionID, params)
+		return err
+	}
+	if w.app.AgentCoordinator == nil {
+		return write(ctx)
+	}
+	return w.app.AgentCoordinator.RunInSession(ctx, sessionID, write)
 }
 
 // -- Agent --
@@ -731,25 +758,36 @@ func (w *AppWorkspace) WorkflowRespond(requestID, answer string) error {
 	return w.app.Workflows.Respond(requestID, answer)
 }
 
-func (w *AppWorkspace) WorkflowPause(sessionID string) error {
+func (w *AppWorkspace) WorkflowPause(runID string) error {
 	if w.app.Workflows == nil {
 		return ErrWorkflowsUnavailable
 	}
-	return w.app.Workflows.Pause(sessionID)
+	return w.app.Workflows.Pause(runID)
 }
 
-func (w *AppWorkspace) WorkflowResume(sessionID string) error {
+func (w *AppWorkspace) WorkflowResume(runID string) error {
 	if w.app.Workflows == nil {
 		return ErrWorkflowsUnavailable
 	}
-	return w.app.Workflows.Resume(sessionID)
+	return w.app.Workflows.Resume(runID)
 }
 
-func (w *AppWorkspace) WorkflowAbort(sessionID string) error {
+func (w *AppWorkspace) WorkflowRunning(sessionID string) bool {
+	return w.app.Workflows != nil && w.app.Workflows.Running(sessionID)
+}
+
+func (w *AppWorkspace) WorkflowAbort(runID string) error {
 	if w.app.Workflows == nil {
 		return ErrWorkflowsUnavailable
 	}
-	return w.app.Workflows.Abort(sessionID)
+	return w.app.Workflows.Abort(runID)
+}
+
+func (w *AppWorkspace) WorkflowRunView(ctx context.Context, runID string) (workflowhost.RunView, bool, error) {
+	if w.app.Workflows == nil {
+		return workflowhost.RunView{}, false, ErrWorkflowsUnavailable
+	}
+	return w.app.Workflows.RunView(ctx, runID)
 }
 
 func (w *AppWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {

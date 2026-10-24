@@ -14,6 +14,7 @@ import (
 
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 )
 
 // SubmitResultToolName is the tool a workflow subagent calls to return
@@ -46,6 +47,9 @@ type WorkflowAgentCall struct {
 	// OnSession, when set, is called with the child session's ID once the
 	// session exists, before the agent runs in it.
 	OnSession func(sessionID string)
+	// Owner, when set, is the workflow run the child session belongs to,
+	// recorded as it's created.
+	Owner *session.WorkflowOwner
 }
 
 // WorkflowAgentOutput is what a workflow subagent produced. Output is nil
@@ -101,8 +105,11 @@ func (c *coordinator) runWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 		sessionID = uuid.NewString()
 	}
 	out := WorkflowAgentOutput{SessionID: sessionID}
+	// The parent is the user's own session, which the run never works in,
+	// so a subagent's surviving jobs stay with the run: in the subagent's
+	// session, where workflow.exclusive finds them.
 	handedOff, err := c.inChildSession(ctx, childSession{
-		ID: sessionID, ParentID: call.ParentSessionID, Title: title, OnCreate: call.OnSession,
+		ID: sessionID, ParentID: call.ParentSessionID, Title: title, OnCreate: call.OnSession, KeepJobs: true, Owner: call.Owner,
 	}, func(ctx context.Context, sessionID string) error {
 		text, err := c.runWorkflowTurn(ctx, sub, sessionID, call.Prompt)
 		if err != nil {
@@ -120,7 +127,7 @@ func (c *coordinator) runWorkflowAgent(ctx context.Context, call WorkflowAgentCa
 		return nil
 	})
 	if handedOff != "" {
-		slog.Info("Workflow subagent jobs handed off", "parent_session", call.ParentSessionID, "inventory", handedOff)
+		slog.Info("Workflow subagent jobs left running", "session", sessionID, "inventory", handedOff)
 	}
 	if err != nil {
 		return WorkflowAgentOutput{}, err

@@ -537,3 +537,42 @@ func TestSubagentLoadKeepsALiveToolThatAlreadyHasItsResult(t *testing.T) {
 	require.Same(t, live, u.drillStack[0].chat.MessageItem("tc1"),
 		"when both copies have the result, the live item keeps its identity")
 }
+
+// parsingAgentWorkspace parses agent tool session IDs the way the session
+// service does.
+type parsingAgentWorkspace struct {
+	*nestedAgentWorkspace
+}
+
+func (*parsingAgentWorkspace) ParseAgentToolSessionID(id string) (string, string, bool) {
+	messageID, toolCallID, ok := strings.Cut(id, "$$")
+	return messageID, toolCallID, ok
+}
+
+// A subagent a drilled-in builder starts can be opened while it runs, like
+// one started in the root session.
+func TestASubagentStartedInADrilledInSessionCanBeOpenedLive(t *testing.T) {
+	t.Parallel()
+
+	u, jobs := newJobsTestUI(nil)
+	u.com.Workspace = &parsingAgentWorkspace{&nestedAgentWorkspace{jobsWorkspace: jobs}}
+	u.Update(util.AgentDrillInMsg{SessionID: "builder", Label: "builder", Conversational: true})
+	call := message.ToolCall{ID: "agent1", Name: agent.TaskToolName, Input: `{"prompt":"look"}`, Finished: true}
+	// The root chat holds a copy of the same tool call from another
+	// message, as a fork would; it must not take the subagent's session.
+	u.chat.SetMessages(chat.NewToolMessageItem(u.com.Styles, "copied-msg", call, nil, false, chat.ToolItemOptions{}))
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "builder-msg", Role: message.Assistant, SessionID: "builder", Parts: []message.ContentPart{call},
+	}})
+
+	u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: message.Message{
+		ID: "child-1", Role: message.Assistant, SessionID: "builder-msg$$agent1",
+		Parts: []message.ContentPart{message.TextContent{Text: "looking"}},
+	}})
+
+	live, ok := u.drillStack[0].chat.MessageItem("agent1").(chat.AgentDrillInHandler)
+	require.True(t, ok)
+	require.Equal(t, "builder-msg$$agent1", live.AgentDrillIn())
+	copied := u.chat.MessageItem("agent1").(chat.AgentDrillInHandler)
+	require.Empty(t, copied.AgentDrillIn(), "the copy belongs to another message")
+}

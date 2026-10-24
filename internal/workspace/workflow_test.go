@@ -81,6 +81,7 @@ func TestWorkflowControlsNeedTheService(t *testing.T) {
 	require.ErrorIs(t, w.WorkflowPause("s"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowResume("s"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowAbort("s"), ErrWorkflowsUnavailable)
+	require.False(t, w.WorkflowRunning("s"))
 }
 
 func TestWorkflowControlsReachTheService(t *testing.T) {
@@ -88,4 +89,11 @@ func TestWorkflowControlsReachTheService(t *testing.T) {
 
 	w := &AppWorkspace{app: &app.App{Workflows: workflowhost.NewService(t.Context(), workflowhost.Deps{})}}
 	require.ErrorIs(t, w.WorkflowPause("s"), workflowhost.ErrNoRun)
+}
+
+func TestWorkflowControlsFindNothingWithoutRuns(t *testing.T) {
+	t.Parallel()
+
+	w := &AppWorkspace{app: &app.App{Workflows: workflowhost.NewService(t.Context(), workflowhost.Deps{})}}
+	require.ErrorIs(t, w.WorkflowPause("run-1"), workflowhost.ErrNoRun)
 }

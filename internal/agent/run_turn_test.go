@@ -44,12 +44,11 @@ func TestRunTurnReturnsItsOwnResultWhileUserMessagesQueue(t *testing.T) {
 		}
 		turn <- turnResult{text: result.Response.Content.Text()}
 	}()
-	require.Eventually(t, func() bool { return f.Coordinator.QueuedPrompts(s.ID) == 1 }, 5*time.Second, 5*time.Millisecond)
-	_, err = f.Coordinator.Run(f.Context, s.ID, "later message")
-	require.NoError(t, err)
-
 	close(userRelease)
 	<-scriptStarted
+	_, err = f.Coordinator.Run(f.Context, s.ID, "later message")
+	require.NoError(t, err)
+	require.Equal(t, 1, f.Coordinator.QueuedPrompts(s.ID), "the user's message queues behind the script's turn")
 	close(scriptRelease)
 	got := <-turn
 	require.NoError(t, got.err)
