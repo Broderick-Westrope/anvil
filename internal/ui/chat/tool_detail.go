@@ -491,7 +491,7 @@ func (p *toolDetailParamItem) renderBody(width int) string {
 		return wrapBesideKey(keyLine, hint, width)
 	}
 
-	// Single-line or non-string value: always inline.
+	// Single-line or non-string value: shown in full, never collapsed.
 	var valStr string
 	switch val := p.value.(type) {
 	case string:
