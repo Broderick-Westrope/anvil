@@ -76,15 +76,15 @@
 `SetConfigFields` writes the file before reload validates it and only logs a failed reload (`store.go:436-447`), so an in-app config write that produces the combination stays on disk and fails the next startup. That's existing behaviour for every validation rule; the updated `anvil-config` skill stops steering the model toward the combination, and fixing write-then-validate is its own change.
 
 **Success Criteria:**
-- [ ] Loading a config whose server sets both `lazy_description` and `route: "direct"` fails with an error naming the server and both fixes; `lazy_description` with `route` unset, `auto` or `catalogue` loads.
-- [ ] A reload that introduces the combination is rejected and the running config is unchanged.
-- [ ] Non-test Go code has no references to `enable_mcp`, `EnableMCPToolName`, `EnableMCPParams`, `LazyMCPState`, `StateLazy`, `ConnectFn`, `SetConnectFn`, `lazyTools`, `enabledLazyMCPs`, `ActionToggleLazyMCP`, `SetEntryEnabled`, `ClientInfo.IsLazy`, `LazyIcon` or `filterLazyMCPTools`, outside `MCPToggleContent` and `MessageTypeMCPToggle` with their decoder and context-filter cases.
-- [ ] A session containing `mcp_toggle` messages and `enable_mcp` calls loads and continues, and a model call to `enable_mcp` in it comes back as an error tool result and the turn carries on (regression test through `repairToolCall`).
-- [ ] A lazy server absent from the route map is listed directly once connected (test).
-- [ ] Enter on a deferred server in the palette connects it, whether or not its route is known yet.
-- [ ] In a real session driven through the `terminal` MCP, a lazy server shows `deferred` in the palette and `anvil_info`, connects on its first catalogue search, then shows `connected`; the palette offers no lazy toggle.
-- [ ] `task lint` and `go test ./...` pass.
-- [ ] ADR 0008 exists, ADR 0002 says it is superseded by 0008, and `AGENTS.md`, `internal/ui/AGENTS.md`, `GLOSSARY.md`, `docs/configuration.md`, the `anvil-config` and `anvil-cache-triage` skills, the `LazyDescription` comment and `schema.json` describe lazy servers as connecting on first use through the catalogue, mentioning `enable_mcp` only as history; this doc moves to `plans/completed/`.
+- [x] Loading a config whose server sets both `lazy_description` and `route: "direct"` fails with an error naming the server and both fixes; `lazy_description` with `route` unset, `auto` or `catalogue` loads.
+- [x] A reload that introduces the combination is rejected and the running config is unchanged.
+- [x] Non-test Go code has no references to `enable_mcp`, `EnableMCPToolName`, `EnableMCPParams`, `LazyMCPState`, `StateLazy`, `ConnectFn`, `SetConnectFn`, `lazyTools`, `enabledLazyMCPs`, `ActionToggleLazyMCP`, `SetEntryEnabled`, `ClientInfo.IsLazy`, `LazyIcon` or `filterLazyMCPTools`, outside `MCPToggleContent` and `MessageTypeMCPToggle` with their decoder and context-filter cases.
+- [x] A session containing `mcp_toggle` messages and `enable_mcp` calls loads and continues, and a model call to `enable_mcp` in it comes back as an error tool result and the turn carries on (regression test through `repairToolCall`).
+- [x] A lazy server absent from the route map is listed directly once connected (test).
+- [x] Enter on a deferred server in the palette connects it, whether or not its route is known yet.
+- [x] In a real session driven through the `terminal` MCP, a lazy server shows `deferred` in the palette and `anvil_info`, connects on its first catalogue search, then shows `connected`; the palette offers no lazy toggle.
+- [x] `task lint` and `go test ./...` pass.
+- [x] ADR 0008 exists, ADR 0002 says it is superseded by 0008, and `AGENTS.md`, `internal/ui/AGENTS.md`, `GLOSSARY.md`, `docs/configuration.md`, the `anvil-config` and `anvil-cache-triage` skills, the `LazyDescription` comment and `schema.json` describe lazy servers as connecting on first use through the catalogue, mentioning `enable_mcp` only as history; this doc moves to `plans/completed/`.
 
 **Context Files:**
 - `internal/config/load.go`: `ValidateMCPRoutes`, and where load runs it.
