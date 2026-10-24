@@ -285,7 +285,7 @@ The set of operations a frontend (the TUI or the CLI) performs against a running
 
 ## Write Gate
 
-The write tool's refusal to overwrite a file whose current content the session hasn't seen, either because it was never read or because it changed on disk since. The refusal shows the model the current content, so it counts as a read and an immediate retry goes through.
+The write tool's refusal to overwrite a file whose current content the session hasn't seen, either because it was never read or because it changed on disk since. The refusal shows the model the current content, so it counts as a read and an immediate retry goes through. Empty files are never refused, since overwriting one loses nothing.
 
 - **Code:** `writeGate` (`internal/agent/tools/write.go`), backed by content hashes in `filetracker.Service`
 - **Not:** permission check. The gate runs before the write permission request.

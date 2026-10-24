@@ -120,6 +120,35 @@ func TestWriteToolGateBlocksNeverSeenFileThenRetrySucceeds(t *testing.T) {
 	require.Equal(t, "new content\n", string(b))
 }
 
+func TestWriteToolEmptyExistingFileIsUngated(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	outsideDir := t.TempDir()
+	tests := map[string]string{
+		"inside working dir":  filepath.Join(workingDir, "note.md"),
+		"outside working dir": filepath.Join(outsideDir, "note.md"),
+	}
+	for name, filePath := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			require.NoError(t, os.WriteFile(filePath, nil, 0o644))
+			perms := &capturingPermissionService{}
+			tool := NewWriteTool(nil, perms, newMockFileTracker(), workingDir)
+
+			resp := runWrite(t, tool, filePath, "hello\n")
+			require.False(t, resp.IsError, resp.Content)
+			require.Len(t, perms.requests, 1, "an empty file has no content to disclose, so no read is requested")
+			require.Equal(t, WriteToolName, perms.requests[0].ToolName)
+
+			b, err := os.ReadFile(filePath)
+			require.NoError(t, err)
+			require.Equal(t, "hello\n", string(b))
+		})
+	}
+}
+
 func TestWriteToolGateBlocksExternalChangeThenRetrySucceeds(t *testing.T) {
 	t.Parallel()
 
