@@ -31,18 +31,21 @@ var (
 	_ list.Focusable      = (*toolDetailOutputItem)(nil)
 )
 
-// detailRenderConfigurable groups the optional methods on a tool item that
-// the drill-in detail view needs to configure before rendering. Implemented
-// by baseToolMessageItem via embedding.
+// renderState is how a tool item is set to render. The drill-in changes it
+// while it renders the item's output, then puts all of it back, so the
+// item in the chat looks as it did.
+type renderState struct {
+	compact       bool
+	expanded      bool
+	noTruncate    bool
+	oneLineHeader bool
+}
+
+// detailRenderConfigurable is a tool item whose render state the drill-in
+// can read and set. Implemented by baseToolMessageItem via embedding.
 type detailRenderConfigurable interface {
-	SetCompact(bool)
-	SetExpandedContent(bool)
-	IsExpandedContent() bool
-	SetNoTruncate(bool)
-	IsNoTruncate() bool
-	SetOneLineHeader(bool)
-	IsOneLineHeader() bool
-	IsCompact() bool
+	renderState() renderState
+	setRenderState(renderState)
 }
 
 // BuildToolDetailItems returns multiple independently expandable list items
@@ -627,27 +630,18 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 		return stripFirstLine(output)
 	}
 
-	wasCompact := cfg.IsCompact()
-	wasExpanded := cfg.IsExpandedContent()
-	wasNoTruncate := cfg.IsNoTruncate()
-	wasOneLineHeader := cfg.IsOneLineHeader()
-	cfg.SetCompact(false)
-	cfg.SetExpandedContent(o.expanded)
-	// Always use NoTruncate in the drill-in so diff lines wrap instead
-	// of being clipped with "…". Height truncation is controlled
-	// separately by the expanded flag.
-	cfg.SetNoTruncate(true)
-	// The header's first line is dropped below, so any more would show
-	// the input again under Output.
-	cfg.SetOneLineHeader(true)
-
+	was := cfg.renderState()
+	cfg.setRenderState(renderState{
+		expanded: o.expanded,
+		// Lines wrap instead of being clipped with "…". Height
+		// truncation is controlled separately by expanded.
+		noTruncate: true,
+		// The header's first line is dropped below, so any more would
+		// show the input again under Output.
+		oneLineHeader: true,
+	})
 	output := o.source.RawRender(width)
-
-	// Restore original state.
-	cfg.SetOneLineHeader(wasOneLineHeader)
-	cfg.SetNoTruncate(wasNoTruncate)
-	cfg.SetExpandedContent(wasExpanded)
-	cfg.SetCompact(wasCompact)
+	cfg.setRenderState(was)
 
 	return stripFirstLine(output)
 }

@@ -367,28 +367,23 @@ func (t *baseToolMessageItem) SetCompact(compact bool) {
 	t.Bump()
 }
 
-// SetNoTruncate enables or disables line-level truncation for rendering.
-func (t *baseToolMessageItem) SetNoTruncate(v bool) {
-	t.noTruncate = v
+// renderState implements detailRenderConfigurable.
+func (t *baseToolMessageItem) renderState() renderState {
+	return renderState{
+		compact:       t.isCompact,
+		expanded:      t.expandedContent,
+		noTruncate:    t.noTruncate,
+		oneLineHeader: t.oneLineHeader,
+	}
+}
+
+// setRenderState implements detailRenderConfigurable.
+func (t *baseToolMessageItem) setRenderState(s renderState) {
+	t.isCompact = s.compact
+	t.expandedContent = s.expanded
+	t.noTruncate = s.noTruncate
+	t.oneLineHeader = s.oneLineHeader
 	t.clearCache()
-}
-
-// IsNoTruncate reports whether line-level truncation is off.
-func (t *baseToolMessageItem) IsNoTruncate() bool {
-	return t.noTruncate
-}
-
-// SetOneLineHeader keeps the header on one line when the content is
-// expanded.
-func (t *baseToolMessageItem) SetOneLineHeader(v bool) {
-	t.oneLineHeader = v
-	t.clearCache()
-}
-
-// IsOneLineHeader reports whether the header stays on one line when the
-// content is expanded.
-func (t *baseToolMessageItem) IsOneLineHeader() bool {
-	return t.oneLineHeader
 }
 
 // IsCompact reports whether this tool is currently in compact rendering mode.
@@ -683,11 +678,6 @@ func (t *baseToolMessageItem) ToggleExpanded() bool {
 func (t *baseToolMessageItem) SetExpandedContent(expanded bool) {
 	t.expandedContent = expanded
 	t.clearCache()
-}
-
-// IsExpandedContent reports whether the tool's content is shown in full.
-func (t *baseToolMessageItem) IsExpandedContent() bool {
-	return t.expandedContent
 }
 
 // ToolDrillIn returns this item as a ToolMessageItem for drill-in navigation.

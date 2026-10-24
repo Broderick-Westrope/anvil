@@ -470,8 +470,10 @@ func TestToolDetailOutputRestoresSourceRenderFlags(t *testing.T) {
 	source := helperToolItem(t, "grep", mustJSON(t, map[string]any{"pattern": pattern}), result, ToolStatusSuccess)
 	source.(Expandable).ToggleExpanded()
 	cfg := source.(detailRenderConfigurable)
-	cfg.SetOneLineHeader(true)
-	cfg.SetNoTruncate(true)
+	set := cfg.renderState()
+	set.oneLineHeader = true
+	set.noTruncate = true
+	cfg.setRenderState(set)
 
 	before := ansi.Strip(source.Render(60))
 	require.NotContains(t, squash(before), squash(pattern), "one line can't hold the whole pattern")
@@ -481,8 +483,7 @@ func TestToolDetailOutputRestoresSourceRenderFlags(t *testing.T) {
 	items[len(items)-1].Render(60)
 
 	require.Equal(t, before, ansi.Strip(source.Render(60)))
-	require.True(t, cfg.IsOneLineHeader())
-	require.True(t, cfg.IsNoTruncate())
+	require.Equal(t, set, cfg.renderState())
 }
 
 // Headers, breadcrumbs and job notices built from text the model or a
