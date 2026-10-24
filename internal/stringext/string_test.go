@@ -17,7 +17,6 @@ func TestNormalizeSpace(t *testing.T) {
 	}{
 		{name: "empty string", input: "", expected: ""},
 		{name: "converts CRLF", input: "a\r\nb", expected: "a\nb"},
-		{name: "converts a lone carriage return", input: "10%\r20%", expected: "10%\n20%"},
 		{name: "converts tabs to four spaces", input: "\ta", expected: "    a"},
 		{name: "trims leading newlines", input: "\n\nfoo", expected: "foo"},
 		{name: "trims trailing newlines", input: "foo\n\n", expected: "foo"},

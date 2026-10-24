@@ -757,7 +757,7 @@ func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) 
 	var msg string
 	switch opts.Status {
 	case ToolStatusError:
-		msg = toolErrorContent(sty, opts.Result, width)
+		msg = toolResultErrorContent(sty, opts.Result, width, opts.NoTruncate)
 	case ToolStatusCanceled:
 		msg = sty.Tool.StateCancelled.Render("Canceled.")
 	case ToolStatusAwaitingPermission:
@@ -770,22 +770,31 @@ func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) 
 	return msg, true
 }
 
-// toolErrorContent formats an error message with an ERROR or WARN tag.
+// toolErrorContent formats an error message with an ERROR or WARN tag, cut
+// to one line.
 func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int) string {
+	return toolResultErrorContent(sty, result, width, false)
+}
+
+// toolResultErrorContent formats an error message with an ERROR or WARN
+// tag. With noTruncate, as in the drill-in, the whole message wraps beside
+// the tag instead of being cut to one line.
+func toolResultErrorContent(sty *styles.Styles, result *message.ToolResult, width int, noTruncate bool) string {
 	if result == nil {
 		return ""
 	}
-	errContent := strings.ReplaceAll(result.Content, "\n", " ")
-	if strings.Contains(errContent, "User denied permission") {
-		deniedTag := sty.Tool.WarnTag.Render("WARN")
-		deniedTagWidth := lipgloss.Width(deniedTag)
-		errContent = ansi.Truncate(errContent, width-deniedTagWidth-3, "…")
-		return fmt.Sprintf("%s %s", deniedTag, sty.Tool.WarnMessage.Render(errContent))
+	tag, msgStyle := sty.Tool.ErrorTag.Render("ERROR"), sty.Tool.ErrorMessage
+	if strings.Contains(result.Content, "User denied permission") {
+		tag, msgStyle = sty.Tool.WarnTag.Render("WARN"), sty.Tool.WarnMessage
 	}
-	errTag := sty.Tool.ErrorTag.Render("ERROR")
-	tagWidth := lipgloss.Width(errTag)
-	errContent = ansi.Truncate(errContent, width-tagWidth-3, "…")
-	return fmt.Sprintf("%s %s", errTag, sty.Tool.ErrorMessage.Render(errContent))
+	tagWidth := lipgloss.Width(tag)
+	if !noTruncate {
+		errContent := ansi.Truncate(oneLineSpace.Replace(result.Content), width-tagWidth-3, "…")
+		return fmt.Sprintf("%s %s", tag, msgStyle.Render(errContent))
+	}
+	errContent := stringext.NormalizeSpace(lineSpace.Replace(result.Content))
+	body := msgStyle.Width(max(1, width-tagWidth-3)).Render(errContent)
+	return tag + " " + indentLines(body, 0, tagWidth+1)
 }
 
 // toolIcon returns the status icon for a tool call.
@@ -941,7 +950,9 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 
 // toolOutputPlainContent renders plain text with optional expansion support.
 func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
-	content = stringext.NormalizeSpace(content)
+	// A progress bar's carriage returns each end a line, so none reaches
+	// the terminal.
+	content = stringext.NormalizeSpace(lineSpace.Replace(content))
 	lines := strings.Split(content, "\n")
 
 	maxLines := collapsedMaxLines(len(lines))
@@ -978,7 +989,9 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 
 // toolOutputCodeContent renders code with syntax highlighting and line numbers.
 func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded, noTruncate bool) string {
-	content = stringext.NormalizeSpace(content)
+	// A lone carriage return becomes a space, not a line, so the numbers
+	// stay the file's own, and none reaches the terminal.
+	content = strings.ReplaceAll(stringext.NormalizeSpace(content), "\r", " ")
 
 	lines := strings.Split(content, "\n")
 	maxLines := collapsedMaxLines(len(lines))
@@ -1375,7 +1388,7 @@ func roundedEnumerator(lPadding, width int) tree.Enumerator {
 
 // toolOutputMarkdownContent renders markdown content with optional truncation.
 func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
-	content = stringext.NormalizeSpace(content)
+	content = stringext.NormalizeSpace(lineSpace.Replace(content))
 
 	renderer := common.QuietMarkdownRenderer(sty, width)
 	mu := common.LockMarkdownRenderer(renderer)

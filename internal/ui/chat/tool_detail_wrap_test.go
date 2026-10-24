@@ -50,6 +50,7 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	}
 	statuses := map[string]ToolStatus{
 		"success":             ToolStatusSuccess,
+		"error":               ToolStatusError,
 		"awaiting permission": ToolStatusAwaitingPermission,
 	}
 
@@ -61,8 +62,8 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 						t.Run(fmt.Sprintf("%s/%s/%s/%s/expanded=%v", name, inputName, statusName, resultName, expanded), func(t *testing.T) {
 							t.Parallel()
 							var result *message.ToolResult
-							if status == ToolStatusSuccess {
-								result = &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output, Metadata: meta}
+							if status != ToolStatusAwaitingPermission {
+								result = &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output, Metadata: meta, IsError: status == ToolStatusError}
 							}
 							// A diff lays out side by side once it is wide
 							// enough, so its text can't be compared across
@@ -97,6 +98,7 @@ func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded, check
 			for _, width := range []int{1, 5, 8, 40, 80, 121} {
 				rendered := item.Render(width)
 				require.NotContains(t, rendered, "\r", "width %d, focused %v: %s sends a carriage return", width, focused, item.ID())
+				require.NotContains(t, rendered, "\t", "width %d, focused %v: %s sends a tab, which is measured as no columns", width, focused, item.ID())
 				for i, line := range strings.Split(rendered, "\n") {
 					require.LessOrEqual(t, lipgloss.Width(line), width,
 						"width %d, focused %v: line %d of %s overflows: %q", width, focused, i, item.ID(), line)
@@ -512,5 +514,50 @@ func TestOtherHeaderTextFlattensWhitespace(t *testing.T) {
 		require.NotContains(t, rendered, "\t", name)
 		words := strings.ToLower(strings.Join(strings.Fields(ansi.Strip(rendered)), " "))
 		require.Contains(t, words, "first second third fourth", name)
+	}
+}
+
+// A drill-in shows an error in full, wrapped beside its tag, where the chat
+// cuts it to one line.
+func TestToolDetailOutputWrapsErrors(t *testing.T) {
+	t.Parallel()
+
+	text := strings.Repeat("something went wrong ", 10) + "END"
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "bash", Content: text, IsError: true}
+	source := helperToolItem(t, "bash", `{"command":"false"}`, result, ToolStatusError)
+
+	sty := styles.TokyoNight()
+	items := BuildToolDetailItems(&sty, source, nil)
+	var lines []string
+	for _, line := range strings.Split(ansi.Strip(items[len(items)-1].Render(60)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	require.Greater(t, len(lines), 1, "the error must wrap for this to test anything")
+	require.Contains(t, lines[0], "ERROR")
+	col := strings.Index(lines[0], "something")
+	require.Greater(t, col, strings.Index(lines[0], "ERROR"))
+	for i, line := range lines[1:] {
+		require.Equal(t, strings.Repeat(" ", col), line[:col], "line %d isn't aligned under the message", i+1)
+		require.NotEqual(t, byte(' '), line[col], "line %d is indented past the message", i+1)
+	}
+	require.Contains(t, squash(strings.Join(lines, "\n")), squash(text))
+}
+
+// Cut to one line, an error leaves the same margin it always has.
+func TestToolErrorContentCutsToOneLine(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	for tag, text := range map[string]string{
+		"ERROR": strings.Repeat("boom ", 30),
+		"WARN":  "User denied permission " + strings.Repeat("x", 100),
+	} {
+		out := toolErrorContent(&sty, &message.ToolResult{Content: text}, 60)
+		require.True(t, strings.HasPrefix(strings.TrimSpace(ansi.Strip(out)), tag), "%q", ansi.Strip(out))
+		require.NotContains(t, out, "\n")
+		require.Equal(t, 58, lipgloss.Width(out), "%q", ansi.Strip(out))
+		require.True(t, strings.HasSuffix(strings.TrimRight(ansi.Strip(out), " "), "…"))
 	}
 }
