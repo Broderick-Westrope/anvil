@@ -747,8 +747,9 @@ Currently `handleSelectModel` writes `config.ScopeGlobal`
 other session and every future session. That is the bug.
 
 **Do not add a `sessions` column.** The codebase already has a better,
-established pattern. `deriveLazyMCPState` (`internal/agent/lazy_mcp.go:25`)
-derives branch-scoped state by replaying message history, and — critically —
+established pattern. `deriveLazyMCPState` (ADR 0002; removed with
+`enable_mcp` by ADR 0008, so read it in git history) derived branch-scoped
+state by replaying message history, and — critically —
 Anvil *already writes* a `MessageTypeModelChange` breadcrumb on every large-model
 switch (`internal/ui/model/ui.go:2537-2560`). Nothing reads it. It is display-only
 today.

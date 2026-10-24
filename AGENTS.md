@@ -137,7 +137,8 @@ Terms with a specific meaning in this codebase are defined in
   listed directly like any unrouted server.
   Nothing tracks per-branch enable state; old sessions' `mcp_toggle`
   messages still decode but nothing reads them. See
-  `docs/adr/0008-remove-lazy-loading.md`.
+  `docs/adr/0008-remove-lazy-loading.md` and
+  `plans/completed/design-2026-10-24-remove-lazy-direct-mcp.md`.
 - **MCP tool catalogue**: each MCP server resolves once per process to a
   route, `direct` (in the tool list) or `catalogue`, from the snapshot
   `mcp.Initialize` records before closing `initDone`

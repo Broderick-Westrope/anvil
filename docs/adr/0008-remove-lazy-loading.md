@@ -48,3 +48,5 @@ their children in every session tree.
   listed directly, like any unrouted server, until the next restart routes
   it through the catalogue.
 - A resumed session that calls `enable_mcp` gets an unknown-tool error.
+
+Design: `plans/completed/design-2026-10-24-remove-lazy-direct-mcp.md`.
