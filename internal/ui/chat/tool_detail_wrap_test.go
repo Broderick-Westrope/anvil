@@ -319,3 +319,20 @@ func TestCollapsedHeaderFlattensNewlines(t *testing.T) {
 	items := BuildToolDetailItems(&sty, source, nil)
 	require.NotContains(t, ansi.Strip(items[len(items)-1].Render(80)), "PATSECOND")
 }
+
+// Rendering a drill-in leaves its source as it was, so the item in the
+// chat still wraps its header over every line it needs when expanded.
+func TestToolDetailOutputLeavesSourceHeaderExpandable(t *testing.T) {
+	t.Parallel()
+
+	command := "echo " + strings.Repeat("lorem ipsum ", 12)
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "bash", Content: "out"}
+	source := helperToolItem(t, "bash", mustJSON(t, map[string]any{"command": command}), result, ToolStatusSuccess)
+
+	sty := styles.TokyoNight()
+	items := BuildToolDetailItems(&sty, source, nil)
+	items[len(items)-1].Render(60)
+
+	source.(Expandable).ToggleExpanded()
+	require.Contains(t, squash(source.Render(60)), squash(command))
+}
