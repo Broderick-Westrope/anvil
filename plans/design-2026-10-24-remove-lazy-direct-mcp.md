@@ -18,8 +18,7 @@
   - The config error in `ValidateMCPRoutes`.
   - Removing `enable_mcp` and everything that exists only for it (see Design).
   - Folding `mcp.StateLazy` into `mcp.StateConnected`.
-  - Hiding old `mcp_toggle` nodes in the /tree dialog.
-  - Docs: a new ADR 0008, ADR 0002 marked superseded by it, a pointer from ADR 0007's consequences, `AGENTS.md`, `GLOSSARY.md`, `docs/configuration.md` (the `direct` row of the route table, the "Changed" note and the `route: "direct"` paragraph under Lazy Loading).
+  - Docs: a new ADR 0008, ADR 0002 marked superseded by it, a pointer from ADR 0007's consequences, `AGENTS.md`, `internal/ui/AGENTS.md` (which lists an MCP toggle among the actions the navigation guard refuses, `:146`), `GLOSSARY.md` (the Lazy MCP entry, and Tool Access at `:204`, which names lazy MCPs as their own category), `docs/configuration.md` (the `direct` row of the route table, the "Changed" note and the `route: "direct"` paragraph under Lazy Loading).
   - Text the model or editor reads: the builtin `anvil-config` skill (`internal/skills/builtin/anvil-config/SKILL.md`, which today tells the model lazy plus direct keeps `enable_mcp`), the `LazyDescription` comment and jsonschema description (`config.go:341-346`) and the generated `schema.json`, both of which still say the server connects eagerly and its tools stay hidden until enabled, and the `anvil-cache-triage` skill (`.agents/skills/anvil-cache-triage/SKILL.md`, `references/interpretation.md`), which names `enable_mcp`, `filterLazyMCPTools` and a "pre-declare lazy MCP tools" fix.
 - Out:
   - **Renaming `lazy_description`.** It still means "connect on first use" and supplies the server's catalogue description; a rename is churn across configs for no behaviour change.
@@ -37,17 +36,18 @@
 
 *Removal.* These exist only for `enable_mcp` and go:
 
-- `tools.NewEnableMCPTool`, its template, `tools.ConnectFn`, `LazyMCPState` and its context helpers.
+- `tools.NewEnableMCPTool`, `EnableMCPParams`, its template, `tools.ConnectFn`, `LazyMCPState` and its context helpers. `authRequiredResponse` lives in `enable_mcp.go` but the catalogue uses it (`catalogue.go:251`, `:271`), so it moves to `catalogue.go`, and its tests (`enable_mcp_auth_test.go`) move with it, using a catalogue tool name.
 - `deriveLazyMCPState`, `filterLazyMCPTools`, `lazyServerNames` and `reconnectDeferredServers` in `internal/agent/lazy_mcp.go`; the `lazyState` field and its setup in `runOwned`; the filtering in `turn.go` and `RequestOverhead`; the lazy-state check in `mcpInstructions`.
 - `mcpListing.lazyTools` and the workflow agent's deletions from it (with their comment, `workflow_agent.go:209-212`), `agentMCPTools.enableMCPTool`, `coordinator.connectDeferredMCP`, and `SetConnectFn` with the `connectFn` field and the test mock's method. `refreshMCPTools` stays: `RefreshMCPTools` still uses it.
-- In `mcp`: `ClientInfo.IsLazy`, which nothing sets, and the stale "first enable" comment (`init.go:296-297`).
-- In the UI: `ActionToggleLazyMCP` and the palette's lazy toggle key and help, `enabledLazyMCPs`, `pendingEnableMCPs`, `deriveEnabledLazyMCPs` and `applyLazyMCPMessageParts`, the palette entry's `IsLazy`/`Enabled` fields with their labels ("lazy", "✓ enabled", "✓ deferred (pending)") and their resets in `applyMCPRoute`, the sidebar's `StateLazy` handling (`ui/model/mcp.go:38`, `:110`), and `Resource.LazyIcon`.
+- In `mcp`: `ClientInfo.IsLazy`, which nothing sets, and the comments that describe the removed flow (`init.go:296-297`, `:465`, `:757`, and `catalogue.go:210`).
+- In the UI: `ActionToggleLazyMCP` and the palette's lazy toggle key and help, `enabledLazyMCPs`, `pendingEnableMCPs`, `deriveEnabledLazyMCPs` and `applyLazyMCPMessageParts`, `MCPPalette.SetEntryEnabled` and `UI.updateMCPPaletteEntry`, the palette entry's `IsLazy`/`Enabled` fields with their labels ("lazy", "✓ enabled", "✓ deferred (pending)") and their resets in `applyMCPRoute`, the sidebar's `StateLazy` handling and the `isCatalogue` closure that feeds it (`ui/model/mcp.go:20-38`, `:110`), and `Resource.LazyIcon`.
+- In `.golangci.yml`: the gocognit exclusion for `deriveEnabledLazyMCPs` (`:133`), and the one for `(*MCPPalette).handleNavKey` (`:117`) if that function drops under the limit once the lazy toggle case goes.
 
 *Palette Enter.* Enter on a `StateDeferred` entry always sends `ActionHardToggleMCP{Enable: true}`, which connects it through `ConnectDeferred`. Today a deferred entry without the `Catalogue` flag goes to the lazy toggle, and that still happens before routes are ready, since `applyMCPRoute` leaves the flag unset while a route is pending (`ui.go:5268`). With the fold below, `Catalogue` no longer feeds any label and can go.
 
-*StateLazy.* `StateLazy` means "connected but not enabled" (`anvil_info.go:232`). Without enabling it is indistinguishable from `StateConnected`, and it's already unreliable: list-changed handlers move a lazy server to `StateConnected` (`tools.go:243`, `resources.go:41,84`, `prompts.go:108`), and the palette already shows a connected catalogue server as "connected" (`mcp_palette.go:115`). The two places that set it on connect (`init.go:529`, `:644`) set `StateConnected` instead. Every reader that branches on it (`catalogue.go:233,356`, `mcpInstructions`, the palette, and `routeFor`, which checks lazy before state) already treats both the same. A lazy server reads `deferred` until its first search connects it, then `connected`, in the palette, the sidebar and `anvil_info`; `anvil_info` also starts showing its tool counts and connect time, since `ConnectedAt` is only set for `StateConnected` (`init.go:709`). Removing the enum value renumbers `StateDeferred`; `State` is never persisted.
+*StateLazy.* `StateLazy` means "connected but not enabled" (`anvil_info.go:232`). Without enabling it is indistinguishable from `StateConnected`, and it's already unreliable: list-changed handlers move a lazy server to `StateConnected` (`tools.go:243`, `resources.go:41,84`, `prompts.go:108`), and the palette already shows a connected catalogue server as "connected" (`mcp_palette.go:115`). The two places that set it on connect (`init.go:529`, `:644`) set `StateConnected` instead. Every reader that branches on it (`catalogue.go:233,356`, `mcpInstructions`, the palette, and `routeFor`, which checks lazy before state) already treats both the same. A lazy server reads `deferred` in the palette and `anvil_info` until its first search connects it, then `connected`; the sidebar shows its offline icon until then (`StateDeferred` takes its default case, `ui/model/mcp.go:112`). `anvil_info` also starts showing its tool counts and connect time, since `ConnectedAt` is only set for `StateConnected` (`init.go:709`). Removing the enum value renumbers `StateDeferred`; `State` is never persisted.
 
-*Old sessions.* `MCPToggleContent` and `MessageTypeMCPToggle` stay as inert types: the decoder still reads them (`message.go:904`) and `message/tree.go:74` still keeps them out of context. They join `hiddenMessageTypes` in the /tree dialog (`dialog/tree.go:68`), which already walks parent chains through hidden nodes, so old toggles stop showing as entries with no meaning. A resumed session whose history shows `enable_mcp` calls may call it again: `repairToolCall` finds nothing to forward and returns `errNoRepair`, and the call ends as an error tool result. The catalogue tools' description already lists the servers to use instead.
+*Old sessions.* `MCPToggleContent` and `MessageTypeMCPToggle` stay as inert types: the decoder still reads them (`message.go:904`) and `message/tree.go:74` still keeps them out of context. The /tree dialog already hides them, since they're stored with an empty role and it only shows user and assistant messages (`dialog/tree.go:102`). A resumed session whose history shows `enable_mcp` calls may call it again: `repairToolCall` finds nothing to forward and returns `errNoRepair`, and the call ends as an error tool result. The catalogue tools' description already lists the servers to use instead.
 
 **Decisions:**
 
@@ -78,13 +78,13 @@
 **Success Criteria:**
 - [ ] Loading a config whose server sets both `lazy_description` and `route: "direct"` fails with an error naming the server and both fixes; `lazy_description` with `route` unset, `auto` or `catalogue` loads.
 - [ ] A reload that introduces the combination is rejected and the running config is unchanged.
-- [ ] Outside `MCPToggleContent`, `MessageTypeMCPToggle`, their decoder and tree cases, ADRs 0002 and 0007 and `plans/`, the repo has no references to `enable_mcp`, `EnableMCPToolName`, `LazyMCPState`, `StateLazy`, `ConnectFn`, `SetConnectFn`, `lazyTools`, `enabledLazyMCPs`, `ActionToggleLazyMCP`, `ClientInfo.IsLazy`, `LazyIcon` or `filterLazyMCPTools`.
-- [ ] A session containing `mcp_toggle` messages and `enable_mcp` calls loads and continues; the toggles don't appear in the /tree dialog; a model call to `enable_mcp` in it comes back as an error tool result and the turn carries on.
+- [ ] Non-test Go code has no references to `enable_mcp`, `EnableMCPToolName`, `EnableMCPParams`, `LazyMCPState`, `StateLazy`, `ConnectFn`, `SetConnectFn`, `lazyTools`, `enabledLazyMCPs`, `ActionToggleLazyMCP`, `SetEntryEnabled`, `ClientInfo.IsLazy`, `LazyIcon` or `filterLazyMCPTools`, outside `MCPToggleContent` and `MessageTypeMCPToggle` with their decoder and context-filter cases.
+- [ ] A session containing `mcp_toggle` messages and `enable_mcp` calls loads and continues, and a model call to `enable_mcp` in it comes back as an error tool result and the turn carries on (regression test through `repairToolCall`).
 - [ ] A lazy server absent from the route map is listed directly once connected (test).
 - [ ] Enter on a deferred server in the palette connects it, whether or not its route is known yet.
 - [ ] In a real session driven through the `terminal` MCP, a lazy server shows `deferred` in the palette and `anvil_info`, connects on its first catalogue search, then shows `connected`; the palette offers no lazy toggle.
 - [ ] `task lint` and `go test ./...` pass.
-- [ ] ADR 0008 exists, ADR 0002 says it is superseded by 0008, and `AGENTS.md`, `GLOSSARY.md`, `docs/configuration.md`, the `anvil-config` and `anvil-cache-triage` skills, the `LazyDescription` comment and `schema.json` describe lazy servers as connecting on first use through the catalogue; this doc moves to `plans/completed/`.
+- [ ] ADR 0008 exists, ADR 0002 says it is superseded by 0008, and `AGENTS.md`, `internal/ui/AGENTS.md`, `GLOSSARY.md`, `docs/configuration.md`, the `anvil-config` and `anvil-cache-triage` skills, the `LazyDescription` comment and `schema.json` describe lazy servers as connecting on first use through the catalogue, mentioning `enable_mcp` only as history; this doc moves to `plans/completed/`.
 
 **Context Files:**
 - `internal/config/load.go`: `ValidateMCPRoutes`, and where load runs it.
@@ -101,7 +101,7 @@
 - `internal/ui/model/ui.go`, `internal/ui/model/mcp.go`, `internal/ui/dialog/mcp_palette.go`: the UI state, sidebar and palette.
 - `internal/message/content.go`, `internal/message/tree.go`: the inert toggle type and its context filter.
 - `docs/adr/0002-lazy-mcp-state-from-messages.md`, `docs/adr/0007-mcp-tool-catalogue.md`: the records this supersedes and amends.
-- `internal/ui/dialog/tree.go`: `hiddenMessageTypes`.
+- `internal/ui/model/mcp.go`, `internal/ui/dialog/tree.go`: the sidebar, and the tree's role filter that already hides toggles.
 - `internal/skills/builtin/anvil-config/SKILL.md`, `.agents/skills/anvil-cache-triage/`: skills that describe the removed flow.
 - `internal/config/config.go`, `schema.json`: the `LazyDescription` field docs.
 - `internal/agent/mcp_routes.go`: the unrouted-server rule.
