@@ -238,11 +238,11 @@ type coordinator struct {
 
 	// leases holds the child sessions task calls are running in.
 	leases subagentLeases
-	// subagentRetryDelays are the waits before each automatic resume of a
-	// failed subagent; nil means defaultSubagentRetryDelays.
-	subagentRetryDelays []time.Duration
-	subagentEventsOnce  sync.Once
-	subagentEvents      *pubsub.Broker[SubagentSteersReturned]
+	// retryDelays are the waits before each automatic resume of a run
+	// that failed transiently; nil means defaultRetryDelays.
+	retryDelays        []time.Duration
+	subagentEventsOnce sync.Once
+	subagentEvents     *pubsub.Broker[SubagentSteersReturned]
 	// returned holds steers handed back until the UI takes them.
 	returnedMu sync.Mutex
 	returned   []SubagentSteersReturned

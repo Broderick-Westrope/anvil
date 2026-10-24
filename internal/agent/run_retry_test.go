@@ -63,7 +63,7 @@ func TestClassifySubagentFailure(t *testing.T) {
 			if tc.cancelCall {
 				cancel()
 			}
-			retry, reason := classifySubagentFailure(ctx, tc.err)
+			retry, reason := classifyRunFailure(ctx, tc.err)
 			require.Equal(t, tc.retry, retry)
 			if retry {
 				require.NotEmpty(t, reason)
@@ -74,7 +74,7 @@ func TestClassifySubagentFailure(t *testing.T) {
 
 func TestSubagentFailureReasonNamesTheStatus(t *testing.T) {
 	t.Parallel()
-	_, reason := classifySubagentFailure(t.Context(), fmt.Errorf("x: %w", &fantasy.ProviderError{StatusCode: 503, Title: "overloaded"}))
+	_, reason := classifyRunFailure(t.Context(), fmt.Errorf("x: %w", &fantasy.ProviderError{StatusCode: 503, Title: "overloaded"}))
 	require.Equal(t, "503 overloaded", reason)
 }
 
@@ -132,7 +132,7 @@ func TestLocalPersistenceStillMarksAStorageFailureThatRacedACancel(t *testing.T)
 func TestSubagentRetryDelayCapsTheProviderHint(t *testing.T) {
 	t.Parallel()
 	err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: map[string]string{"retry-after": "3600"}}
-	require.Equal(t, maxSubagentRetryDelay, withProviderHint(err, 5*time.Second))
+	require.Equal(t, maxRetryDelay, withProviderHint(err, 5*time.Second))
 }
 
 func TestSubagentRetryDelaySurvivesAbsurdHints(t *testing.T) {
@@ -146,7 +146,7 @@ func TestSubagentRetryDelaySurvivesAbsurdHints(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			err := &fantasy.ProviderError{StatusCode: 429, ResponseHeaders: map[string]string{"retry-after": hint, "retry-after-ms": hint}}
-			require.Equal(t, maxSubagentRetryDelay, withProviderHint(err, 5*time.Second))
+			require.Equal(t, maxRetryDelay, withProviderHint(err, 5*time.Second))
 		})
 	}
 }
