@@ -81,6 +81,7 @@ func TestWorkflowControlsNeedTheService(t *testing.T) {
 	require.ErrorIs(t, w.WorkflowPause("s"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowResume("s"), ErrWorkflowsUnavailable)
 	require.ErrorIs(t, w.WorkflowAbort("s"), ErrWorkflowsUnavailable)
+	require.False(t, w.WorkflowRunning("s"))
 }
 
 func TestWorkflowControlsReachTheService(t *testing.T) {

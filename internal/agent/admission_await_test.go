@@ -548,3 +548,39 @@ func queueLen(a *admission, id string) int {
 	defer a.mu.Unlock()
 	return len(a.queues[id])
 }
+
+// Once the app is shutting down, nothing queued starts after the running
+// turn, and the queue is left as it was.
+func TestNothingQueuedStartsOnceTheLifetimeEnds(t *testing.T) {
+	t.Parallel()
+
+	lifetime, shutdown := context.WithCancel(t.Context())
+	a := newAdmission(lifetime)
+	entered, release := make(chan struct{}), make(chan struct{})
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "first", run: blockingRun("A", entered, release)})
+	}()
+	<-entered
+	var ran atomic.Int32
+	queuedRun := func(context.Context) (*fantasy.AgentResult, error) {
+		ran.Add(1)
+		return textResult("queued"), nil
+	}
+	for _, prompt := range []string{"second", "third"} {
+		_, err := a.submit(t.Context(), "s", submission{prompt: prompt, run: queuedRun})
+		require.NoError(t, err)
+	}
+	require.Equal(t, 2, queueLen(a, "s"))
+
+	shutdown()
+	close(release)
+	select {
+	case <-firstDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the running turn never finished")
+	}
+	require.Zero(t, ran.Load())
+	require.Equal(t, 2, queueLen(a, "s"))
+}

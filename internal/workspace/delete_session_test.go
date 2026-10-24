@@ -35,6 +35,7 @@ func TestASessionCantBeDeletedWhileItsRunIsGoing(t *testing.T) {
 	require.NoError(t, os.WriteFile(script, []byte(`function main() { return ask("go on?") }`), 0o644))
 	require.NoError(t, svc.Start(ctx, workflowhost.Invocation{CommandID: "project:demo", CommandName: "demo", Source: "project", SessionID: invoker.ID, ScriptPath: script}))
 	asked := next(t, events, workflowhost.EventAsk)
+	require.True(t, ws.WorkflowRunning(invoker.ID))
 
 	require.ErrorIs(t, ws.DeleteSession(ctx, invoker.ID), session.ErrWorkflowRunning)
 	_, err = f.Sessions.Get(ctx, invoker.ID)
@@ -43,6 +44,7 @@ func TestASessionCantBeDeletedWhileItsRunIsGoing(t *testing.T) {
 	require.NoError(t, svc.Respond(asked.RequestID, "yes"))
 	next(t, events, workflowhost.EventFinished)
 	require.Eventually(t, func() bool { return !svc.Running(invoker.ID) }, time.Second, 10*time.Millisecond)
+	require.False(t, ws.WorkflowRunning(invoker.ID))
 	require.NoError(t, ws.DeleteSession(ctx, invoker.ID))
 }
 

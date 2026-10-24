@@ -219,3 +219,71 @@ func TestAForksCopiesArentListedAgainInPromptHistory(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"asked once", "typed to the builder"}, texts)
 }
+
+func TestCopyBranchOfOnlyAnUnfinishedExchangeCopiesNothing(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	reply := add(t, svc, source, "", message.Assistant, message.TextContent{Text: "half a th"})
+
+	leaf, end, err := svc.CopyBranch(t.Context(), reply.ID, newSession(t, q))
+	require.NoError(t, err)
+	require.Empty(t, leaf)
+	require.Empty(t, end)
+}
+
+func TestCopyBranchKeepsAToolExchangeTheReplyFinished(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	u := add(t, svc, source, "", message.User, message.TextContent{Text: "hello"})
+	call := add(t, svc, source, u.ID, message.Assistant,
+		message.ToolCall{ID: "c1", Name: "view", Input: "{}", Finished: true}, message.Finish{Reason: message.FinishReasonToolUse})
+	result := add(t, svc, source, call.ID, message.Tool, message.ToolResult{ToolCallID: "c1", Content: "ok"})
+	reply := add(t, svc, source, result.ID, message.Assistant, message.TextContent{Text: "done"}, message.Finish{Reason: message.FinishReasonEndTurn})
+
+	leaf, end, err := svc.CopyBranch(t.Context(), reply.ID, newSession(t, q))
+	require.NoError(t, err)
+	require.Equal(t, reply.ID, end)
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Len(t, copied, 4)
+}
+
+// A part that refers to a message off the copied path is left as it is,
+// and doesn't stop the parts after it being remapped.
+func TestCopyBranchRemapsEveryPartThatRefersToTheCopiedPath(t *testing.T) {
+	t.Parallel()
+
+	svc, q, source := newTestService(t)
+	kept := add(t, svc, source, "", message.User, message.TextContent{Text: "kept"})
+	compaction := func(id string) string {
+		return `{"type":"compaction","data":{"summary":"s","first_kept_entry_id":"` + id + `","tokens_before":0}}`
+	}
+	summary := func(id string) string {
+		return `{"type":"branch_summary","data":{"summary":"s","from_id":"` + id + `"}}`
+	}
+	withParts := func(parent, raw string) message.Message {
+		m, err := svc.Create(t.Context(), source, message.CreateMessageParams{
+			Role: message.User, ParentMessageID: parent, MessageType: message.MessageTypeCompaction,
+			Parts: []message.ContentPart{message.CompactionContent{Summary: "s"}},
+		})
+		require.NoError(t, err)
+		require.NoError(t, q.UpdateMessage(t.Context(), db.UpdateMessageParams{ID: m.ID, Parts: raw}))
+		return m
+	}
+	first := withParts(kept.ID, "["+compaction("elsewhere")+","+summary(kept.ID)+"]")
+	second := withParts(first.ID, "["+summary("elsewhere")+","+compaction(kept.ID)+"]")
+
+	leaf, _, err := svc.CopyBranch(t.Context(), second.ID, newSession(t, q))
+	require.NoError(t, err)
+	copied, err := svc.GetBranchPath(t.Context(), leaf)
+	require.NoError(t, err)
+	require.Len(t, copied, 3)
+	keptCopy := copied[0].ID
+
+	require.Equal(t, "elsewhere", copied[1].Parts[0].(message.CompactionContent).FirstKeptEntryID)
+	require.Equal(t, keptCopy, copied[1].Parts[1].(message.BranchSummaryContent).FromID)
+	require.Equal(t, "elsewhere", copied[2].Parts[0].(message.BranchSummaryContent).FromID)
+	require.Equal(t, keptCopy, copied[2].Parts[1].(message.CompactionContent).FirstKeptEntryID)
+}
