@@ -38,6 +38,7 @@ type detailRenderConfigurable interface {
 	SetCompact(bool)
 	SetExpandedContent(bool)
 	SetNoTruncate(bool)
+	SetOneLineHeader(bool)
 	IsCompact() bool
 }
 
@@ -627,10 +628,14 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 	// of being clipped with "…". Height truncation is controlled
 	// separately by the expanded flag.
 	cfg.SetNoTruncate(true)
+	// The header's first line is dropped below, so any more would show
+	// the input again under Output.
+	cfg.SetOneLineHeader(true)
 
 	output := o.source.RawRender(width)
 
 	// Restore original state.
+	cfg.SetOneLineHeader(false)
 	cfg.SetNoTruncate(false)
 	cfg.SetExpandedContent(false)
 	cfg.SetCompact(wasCompact)

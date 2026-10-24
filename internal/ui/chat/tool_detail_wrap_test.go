@@ -25,11 +25,12 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	multi := long + "\n" + word + "\n" + long
 	output := multi + "\n" + strings.Repeat("x", 300)
 
+	// Agents, agentic fetch and todos have no tool drill-in.
 	tools := []string{
 		"bash", "view", "edit", "multiedit", "write", "grep", "glob", "ls",
-		"fetch", "agentic_fetch", "download", "sourcegraph", "todos",
-		"lsp_diagnostics", "lsp_references", "job_output", "job_list",
-		"mcp_server_tool", "task", "unknown_tool",
+		"fetch", "download", "sourcegraph", "lsp_diagnostics",
+		"lsp_references", "job_output", "job_list", "mcp_server_tool",
+		"unknown_tool",
 	}
 	inputs := map[string]string{
 		"raw":    long + word,
@@ -59,7 +60,11 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 }
 
 // requireDetailItemsFit renders each of source's drill-in items, focused
-// and not, at a range of widths, and fails on any line wider than one.
+// and not, at a range of widths, and fails on any line wider than one. From
+// 40 columns up, no item but the header and dividers (which drop hints and
+// rule characters by design) may drop text to fit: a cut line would pass
+// the width check, so its text is compared with a render wide enough to
+// need no wrapping.
 func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded bool) {
 	t.Helper()
 	sty := styles.TokyoNight()
@@ -71,10 +76,18 @@ func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded bool) 
 			if f, ok := item.(interface{ SetFocused(bool) }); ok {
 				f.SetFocused(focused)
 			}
+			whole := squashBody(item.Render(2000))
 			for _, width := range []int{1, 5, 8, 40, 80, 121} {
-				for i, line := range strings.Split(item.Render(width), "\n") {
+				rendered := item.Render(width)
+				for i, line := range strings.Split(rendered, "\n") {
 					require.LessOrEqual(t, lipgloss.Width(line), width,
 						"width %d, focused %v: line %d of %s overflows: %q", width, focused, i, item.ID(), line)
+				}
+				if _, ruled := item.(*toolDetailSectionItem); ruled {
+					continue
+				}
+				if _, header := item.(*toolDetailHeaderItem); !header && width >= 40 {
+					require.Equal(t, whole, squashBody(rendered), "width %d, focused %v: %s lost text", width, focused, item.ID())
 				}
 			}
 		}
@@ -86,6 +99,16 @@ func mustJSON(t *testing.T, v any) string {
 	b, err := json.Marshal(v)
 	require.NoError(t, err)
 	return string(b)
+}
+
+// squashBody squashes rendered without the focus bar, which is drawn once
+// per line, so a wrapped render has more of it.
+func squashBody(rendered string) string {
+	lines := strings.Split(rendered, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Cut(line, MessageLeftPaddingTotal, lipgloss.Width(line))
+	}
+	return squash(strings.Join(lines, "\n"))
 }
 
 // squash strips styling and all whitespace, so wrapped text compares equal

@@ -125,6 +125,9 @@ type ToolRenderOpts struct {
 	IsSpinning      bool
 	Status          ToolStatus
 	NoTruncate      bool
+	// OneLineHeader keeps the header on one line when the content is
+	// expanded, for a caller that drops the header's line.
+	OneLineHeader bool
 	// MessageCreatedAt is when the assistant message carrying the tool call
 	// was created, in whole seconds; zero when unknown.
 	MessageCreatedAt time.Time
@@ -203,6 +206,7 @@ type baseToolMessageItem struct {
 	anim            *anim.Anim
 	expandedContent bool
 	noTruncate      bool
+	oneLineHeader   bool
 	resultVersion   uint64
 	// messageCreatedAt is when the assistant message carrying the tool
 	// call was created.
@@ -369,6 +373,13 @@ func (t *baseToolMessageItem) SetNoTruncate(v bool) {
 	t.clearCache()
 }
 
+// SetOneLineHeader keeps the header on one line when the content is
+// expanded.
+func (t *baseToolMessageItem) SetOneLineHeader(v bool) {
+	t.oneLineHeader = v
+	t.clearCache()
+}
+
 // IsCompact reports whether this tool is currently in compact rendering mode.
 func (t *baseToolMessageItem) IsCompact() bool {
 	return t.isCompact
@@ -439,6 +450,7 @@ func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
 			IsSpinning:       t.isSpinning(),
 			Status:           t.computeStatus(),
 			NoTruncate:       t.noTruncate,
+			OneLineHeader:    t.oneLineHeader,
 			MessageCreatedAt: t.messageCreatedAt,
 			Now:              now,
 			Duration:         t.timerDuration(now),
@@ -818,10 +830,10 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 		}
 	}
 
-	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
+	if width >= 0 && !opts.expandsHeader() {
 		return sty.Tool.ParamMain.Render(ansi.Truncate(output, width, "…"))
 	}
-	if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
+	if opts.expandsHeader() && width > 0 && lipgloss.Width(output) > width {
 		// Let Lip Gloss do the wrapping rather than wrapping and styling in
 		// separate steps. A parameter is often syntax highlighted, and a
 		// wrap falls wherever the width runs out, usually part-way through a
@@ -848,6 +860,12 @@ func capLineWidths(s string, width int) string {
 		lines[i] = ansi.Truncate(line, width, "")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// expandsHeader reports whether the header shows its parameters in full,
+// over as many lines as they need.
+func (o *ToolRenderOpts) expandsHeader() bool {
+	return o != nil && o.ExpandedContent && !o.OneLineHeader
 }
 
 // toolHeader builds the tool header line: "● ToolName params..."
