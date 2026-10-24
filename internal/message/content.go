@@ -57,10 +57,8 @@ const (
 	MessageTypeLabel               MessageType = "label"
 	MessageTypeModelChange         MessageType = "model_change"
 	MessageTypeThinkingLevelChange MessageType = "thinking_level_change"
-	// MessageTypeMCPToggle marks the palette's lazy MCP toggles in old
-	// sessions. Nothing writes or reads them any more (ADR 0008); the type
-	// stays so those sessions still decode and the toggles stay out of
-	// context.
+	// MessageTypeMCPToggle is kept so old sessions' lazy MCP toggles
+	// decode and stay out of context (ADR 0008).
 	MessageTypeMCPToggle MessageType = "mcp_toggle"
 	// MessageTypeJobEvent is a user-role notice about background job
 	// events. It is sent to the model like any user message.

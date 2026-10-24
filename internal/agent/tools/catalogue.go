@@ -248,8 +248,8 @@ func (c *catalogue) ready(ctx context.Context, server, caller string) (string, e
 // authRequiredMessage tells the model that server's OAuth token must be
 // renewed by a human. The catalogue returns it as a result, not an error:
 // the call wasn't malformed, and an error pushes models toward retry
-// loops. The wording tells the model not to retry tool this turn and not
-// to try authenticating itself.
+// loops. The wording tells the model not to retry the tool this turn and
+// not to try authenticating itself.
 func authRequiredMessage(server, tool string) string {
 	return fmt.Sprintf(
 		"MCP '%s' cannot be used: its authentication has expired "+
