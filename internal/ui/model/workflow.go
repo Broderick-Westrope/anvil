@@ -280,16 +280,15 @@ func isControl(ev workflowhost.Event) bool {
 // finish closes what the run left open and reports how it ended. Its node
 // shows the same outcome from then on.
 func (w *workflowFeature) finish(ev workflowhost.Event) tea.Cmd {
-	live, ok := w.live[ev.SessionID]
-	if ok && live != ev.RunID && ev.RunID != "" {
-		// The live run is taken to be over, its finish lost, so its
-		// requests end with it.
-		w.closeRequests(w.requests.finish(ev.SessionID, live, true))
+	// A run's finish also ends the run that was live, its own finish taken
+	// to be lost, or, when none was (the run was never heard from), the
+	// provisional invocation, which is the finished run's. A finish with no
+	// run (refused before it had one) is only the provisional invocation's.
+	var ended []string
+	if ev.RunID != "" {
+		ended = append(ended, w.live[ev.SessionID])
 	}
-	// A run heard from before has no provisional invocation of its own;
-	// one never heard from is the provisional invocation. When the live run
-	// was another one, the session's requests were all closed above.
-	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, ok))
+	w.closeRequests(w.requests.finish(ev.SessionID, ev.RunID, ended...))
 	delete(w.live, ev.SessionID)
 	outcome := ev.Message
 	if ev.Status == workflowhost.StatusCompleted {

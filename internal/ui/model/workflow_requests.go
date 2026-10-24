@@ -1,6 +1,10 @@
 package model
 
-import "github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+import (
+	"slices"
+
+	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
+)
 
 // workflowRequests tracks the approval and ask requests of each session's
 // current invocation: a workflow command being approved, then the run it
@@ -96,22 +100,23 @@ func (r *workflowRequests) answer(ev workflowhost.Event) {
 	}
 }
 
-// finish forgets sessionID's invocation when the finish of runID ("" for
-// an invocation that ended before its run started) is its own, and
-// returns the IDs of its requests still open. seen reports whether runID's
-// events arrived before.
+// finish forgets sessionID's invocation when it belongs to one of the
+// runs ending, and returns the IDs of its requests still open. runID is the
+// run that finished ("" for an invocation that ended before its run
+// started); also names others ending with it, such as a live run whose own
+// finish was lost, or "" for a provisional invocation the finished run
+// owns.
 //
 // The host frees a session before it reports the finish, so the finish of
 // a run already seen can arrive after the next invocation's approval; that
 // invocation is kept. A provisional invocation still owns the finish of a
 // run never seen: shutdown can end a run before it reports starting.
-func (r *workflowRequests) finish(sessionID, runID string, seen bool) []string {
+func (r *workflowRequests) finish(sessionID, runID string, also ...string) []string {
 	inv := r.bySession[sessionID]
 	if inv == nil {
 		return nil
 	}
-	own := inv.runID == runID || (inv.runID == "" && !seen)
-	if !own {
+	if inv.runID != runID && !slices.Contains(also, inv.runID) {
 		return nil
 	}
 	return r.drop(sessionID)

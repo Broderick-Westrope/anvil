@@ -131,11 +131,13 @@ func (a *admission) submitAwait(ctx context.Context, id string, job submission) 
 	// which is the job itself unless earlier work is still waiting. Prompts
 	// waiting on an idle session were held back by a failed turn; silent
 	// work runs past them and leaves them held, as it does behind a turn.
+	// (A script's turn is never left waiting on an idle session: it's
+	// always handed the session.)
 	a.queues[id] = append(a.queues[id], job)
 	if a.owners[id] == nil && a.held[id] == 0 {
 		q := a.queues[id]
 		i, holding := 0, false
-		if job.silent && !slices.ContainsFunc(q, isScriptTurn) {
+		if job.silent {
 			i = slices.IndexFunc(q, func(j submission) bool { return j.silent })
 			holding = slices.ContainsFunc(q, func(j submission) bool { return !j.silent })
 		}
