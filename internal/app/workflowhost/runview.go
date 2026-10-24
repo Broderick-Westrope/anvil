@@ -220,8 +220,9 @@ func jsonText(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
 	}
+	// A null decodes as a string above, to "".
 	var buf bytes.Buffer
-	if json.Compact(&buf, raw) != nil || buf.String() == "null" {
+	if json.Compact(&buf, raw) != nil {
 		return ""
 	}
 	return buf.String()

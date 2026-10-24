@@ -1647,3 +1647,199 @@ func TestServiceRunViewSurvivesABadlyTypedCall(t *testing.T) {
 	require.Contains(t, titles, "kept reachable|")
 	require.Contains(t, titles, "|42")
 }
+
+// runViewEvents records events for a run of its own and returns its view.
+func runViewOf(t *testing.T, h *serviceHarness, runID string, events ...workflow.Event) workflowhost.RunView {
+	t.Helper()
+	ctx := h.fixture.Context
+	require.NoError(t, h.store.StartRun(ctx, workflowhost.RunRecord{ID: runID, Command: "project:demo", InvokingSessionID: h.session}))
+	rec := h.store.Recorder(runID)
+	for _, ev := range events {
+		ev.At = time.Now()
+		require.NoError(t, rec.Record(ctx, ev))
+	}
+	view, ok, err := h.svc.RunView(ctx, runID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	return view
+}
+
+func TestServiceRunViewOfNoSuchRun(t *testing.T) {
+	h := newServiceHarness(t, true)
+	_, ok, err := h.svc.RunView(h.fixture.Context, "no-such-run")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+// A null where text belongs shows as nothing rather than "null".
+func TestServiceRunViewShowsNullAsNothing(t *testing.T) {
+	h := newServiceHarness(t, true)
+	view := runViewOf(t, h, "run-null",
+		workflow.Event{Seq: 1, Primitive: "ask", Phase: workflow.PhaseStarted, Args: json.RawMessage(`{"question":null}`)},
+		workflow.Event{Seq: 1, Primitive: "ask", Phase: workflow.PhaseCompleted, Result: json.RawMessage(`null`)},
+		workflow.Event{Seq: 2, Primitive: "ask", Phase: workflow.PhaseStarted, Args: json.RawMessage(`{"question":"q"}`)},
+		workflow.Event{Seq: 2, Primitive: "ask", Phase: workflow.PhaseCompleted, Result: json.RawMessage(`{"a": [1, 2]}`)},
+	)
+	items := view.Phases[0].Items
+	require.Equal(t, "", items[0].Question)
+	require.Equal(t, "", items[0].Answer)
+	require.Equal(t, `{"a":[1,2]}`, items[1].Answer, "other JSON shows compacted")
+}
+
+func TestServiceRunViewSumsTheCostOfTheRunsSessions(t *testing.T) {
+	h := newServiceHarness(t, true)
+	ctx := h.fixture.Context
+	h.start(t, h.write(t, `function main() { session.new({title: "a"}); session.new({title: "b"}) }`), "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	owned, err := h.fixture.Sessions.ListByWorkflowRun(ctx, done.RunID)
+	require.NoError(t, err)
+	require.Len(t, owned, 2)
+	require.NoError(t, h.fixture.Sessions.AddCost(ctx, owned[0].ID, 0.25))
+	require.NoError(t, h.fixture.Sessions.AddCost(ctx, owned[1].ID, 0.5))
+
+	view, _, err := h.svc.RunView(ctx, done.RunID)
+	require.NoError(t, err)
+	require.InDelta(t, 0.75, view.Cost, 1e-9)
+}
+
+func TestRunViewWaitingForUser(t *testing.T) {
+	t.Parallel()
+
+	ask := func(status workflowhost.Status) workflowhost.RunItem {
+		return workflowhost.RunItem{Kind: workflowhost.RunItemAsk, Status: status}
+	}
+	tests := map[string]struct {
+		view workflowhost.RunView
+		want bool
+	}{
+		"a question waiting": {
+			view: workflowhost.RunView{Status: workflowhost.StatusRunning, Phases: []workflowhost.RunPhase{
+				{Items: []workflowhost.RunItem{ask(workflowhost.StatusCompleted)}},
+				{Items: []workflowhost.RunItem{{Kind: workflowhost.RunItemAgent, Status: workflowhost.StatusRunning}, ask(workflowhost.StatusRunning)}},
+			}},
+			want: true,
+		},
+		"only answered questions": {
+			view: workflowhost.RunView{Status: workflowhost.StatusRunning, Phases: []workflowhost.RunPhase{{Items: []workflowhost.RunItem{ask(workflowhost.StatusCompleted)}}}},
+		},
+		"something else running": {
+			view: workflowhost.RunView{Status: workflowhost.StatusRunning, Phases: []workflowhost.RunPhase{{Items: []workflowhost.RunItem{{Kind: workflowhost.RunItemAgent, Status: workflowhost.StatusRunning}}}}},
+		},
+		"a finished run with a question left open": {
+			view: workflowhost.RunView{Status: workflowhost.StatusAborted, Phases: []workflowhost.RunPhase{{Items: []workflowhost.RunItem{ask(workflowhost.StatusRunning)}}}},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.view.WaitingForUser())
+		})
+	}
+}
+
+// failingMarkers can't write a workflow's marker.
+type failingMarkers struct{ message.Service }
+
+func (s failingMarkers) Create(ctx context.Context, sessionID string, params message.CreateMessageParams) (message.Message, error) {
+	if params.MessageType == message.MessageTypeWorkflowRun {
+		return message.Message{}, errors.New("disk full")
+	}
+	return s.Service.Create(ctx, sessionID, params)
+}
+
+func TestServiceFailsARunItCouldntMark(t *testing.T) {
+	h := newServiceHarness(t, true, func(d *workflowhost.Deps) { d.Messages = failingMarkers{d.Messages} })
+	h.start(t, h.write(t, `function main() { return "ran" }`), "")
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusFailed, done.Status, "a run with no marker can't be reached, so it doesn't run")
+	require.Contains(t, done.Message, "disk full")
+}
+
+func TestServiceForkOfTheInvokerNeedsItsMarker(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.start(t, h.write(t, `function main() {
+  ask("go?")
+  try { session.current().fork() } catch (e) { return e.message }
+}`), "")
+	asked := h.next(t, workflowhost.EventAsk)
+	require.NoError(t, h.store.SetMarker(h.fixture.Context, asked.RunID, ""))
+	require.NoError(t, h.svc.Respond(asked.RequestID, "yes"))
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+	require.Contains(t, string(done.Result), "has no marker to fork from")
+}
+
+// unremovable can't take back a session it made.
+type unremovable struct{ session.Service }
+
+func (unremovable) Discard(context.Context, string) error { return errors.New("database is locked") }
+
+func TestServiceWarnsOnlyWhenItCantRemoveAHalfMadeFork(t *testing.T) {
+	for name, tc := range map[string]struct {
+		sessions func(session.Service) session.Service
+		warned   bool
+	}{
+		"removed":          {sessions: func(s session.Service) session.Service { return s }},
+		"can't be removed": {sessions: func(s session.Service) session.Service { return unremovable{s} }, warned: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := &lockedBuffer{}
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			h := newServiceHarness(t, true, func(d *workflowhost.Deps) {
+				d.Messages = brokenCopies{d.Messages}
+				d.Sessions = tc.sessions(d.Sessions)
+			})
+			h.start(t, h.write(t, `function main() { try { session.current().fork() } catch (e) { return e.message } }`), "")
+			h.next(t, workflowhost.EventFinished)
+			require.Equal(t, tc.warned, strings.Contains(logs.String(), "Failed to remove an unfinished workflow session"))
+		})
+	}
+}
+
+// A run's own sessions, and a session waiting on its run's approval, are
+// in use by a run.
+func TestServiceRunningCountsEverySessionARunUses(t *testing.T) {
+	t.Run("a session the run made", func(t *testing.T) {
+		h := newServiceHarness(t, true)
+		h.start(t, h.write(t, `function main() { const s = session.new(); return ask(s.id) }`), "")
+		asked := h.next(t, workflowhost.EventAsk)
+		require.True(t, h.svc.Running(asked.Question))
+		require.NoError(t, h.svc.Respond(asked.RequestID, "x"))
+		h.next(t, workflowhost.EventFinished)
+	})
+	t.Run("a session whose run waits for approval", func(t *testing.T) {
+		h := newServiceHarness(t, false)
+		h.start(t, h.write(t, `function main() { return 1 }`), "")
+		approval := h.next(t, workflowhost.EventApproval)
+		require.True(t, h.svc.Running(h.session))
+		require.NoError(t, h.svc.Respond(approval.RequestID, workflowhost.AnswerDeny))
+		h.next(t, workflowhost.EventFinished)
+	})
+}
+
+// Pausing stops the run issuing primitives, and resuming lets it go on;
+// the view's record alone isn't enough.
+func TestServicePauseStopsTheRunAndResumeLetsItGoOn(t *testing.T) {
+	h := newServiceHarness(t, true)
+	h.start(t, h.write(t, `function main() { const a = ask("go?"); status("after"); return a }`), "")
+	asked := h.next(t, workflowhost.EventAsk)
+	require.NoError(t, h.svc.Pause(asked.RunID))
+	require.NoError(t, h.svc.Respond(asked.RequestID, "yes"))
+
+	quiet := time.After(300 * time.Millisecond)
+	for waiting := true; waiting; {
+		select {
+		case ev := <-h.events:
+			require.NotEqual(t, workflowhost.EventFinished, ev.Payload.Kind, "a paused run went on")
+		case <-quiet:
+			waiting = false
+		}
+	}
+	require.NoError(t, h.svc.Resume(asked.RunID))
+	done := h.next(t, workflowhost.EventFinished)
+	require.Equal(t, workflowhost.StatusCompleted, done.Status, done.Message)
+}
