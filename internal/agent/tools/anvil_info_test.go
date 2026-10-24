@@ -171,7 +171,6 @@ func TestAnvilInfo_MCPStates(t *testing.T) {
 		"b-plain":    {State: mcp.StateConnected, Counts: mcp.Counts{Tools: 5, Resources: 6}},
 		"c-err":      {State: mcp.StateError, Error: errors.New("boom")},
 		"d-bare-err": {State: mcp.StateError},
-		"e-lazy":     {State: mcp.StateLazy},
 		"f-starting": {State: mcp.StateStarting, Counts: mcp.Counts{Tools: 9}, ConnectedAt: connectedAt},
 		"g-deferred": {State: mcp.StateDeferred},
 	}
@@ -185,7 +184,6 @@ func TestAnvilInfo_MCPStates(t *testing.T) {
 		"b-plain = connected (5 tools, 6 resources)\n"+
 		"c-err = error: boom\n"+
 		"d-bare-err = error\n"+
-		"e-lazy = lazy (connected but not enabled)\n"+
 		"f-starting = starting\n"+
 		"g-deferred = deferred\n"+
 		"\n", b.String())
@@ -669,23 +667,23 @@ func TestAnvilInfo_MCPConfiguredServers(t *testing.T) {
 		want       string
 	}{
 		"running servers are not listed as configured": {
-			states: map[string]mcp.ClientInfo{"github": {State: mcp.StateLazy}},
+			states: map[string]mcp.ClientInfo{"github": {State: mcp.StateDeferred}},
 			configured: config.MCPs{
 				"zeta":   {},
 				"github": {},
 				"fs":     {Disabled: true},
 				"alpha":  {},
 			},
-			want: "[mcp]\ngithub = lazy (connected but not enabled)\n\n[mcp_configured]\nalpha = not_started\nfs = disabled\nzeta = not_started\n\n",
+			want: "[mcp]\ngithub = deferred\n\n[mcp_configured]\nalpha = not_started\nfs = disabled\nzeta = not_started\n\n",
 		},
 		"without states every configured server is listed": {
 			configured: config.MCPs{"github": {}, "fs": {Disabled: true}},
 			want:       "[mcp_configured]\nfs = disabled\ngithub = not_started\n\n",
 		},
 		"every configured server running": {
-			states:     map[string]mcp.ClientInfo{"github": {State: mcp.StateLazy}},
+			states:     map[string]mcp.ClientInfo{"github": {State: mcp.StateDeferred}},
 			configured: config.MCPs{"github": {}},
-			want:       "[mcp]\ngithub = lazy (connected but not enabled)\n\n",
+			want:       "[mcp]\ngithub = deferred\n\n",
 		},
 		"nothing configured or running": {
 			want: "",

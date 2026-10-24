@@ -181,11 +181,6 @@ type (
 		Instructions string
 		Source       string
 	}
-	// ActionToggleLazyMCP is dispatched when a lazy MCP is toggled.
-	ActionToggleLazyMCP struct {
-		ServerName string
-		Enabled    bool
-	}
 	// ActionHardToggleMCP is dispatched to enable or disable an MCP server.
 	ActionHardToggleMCP struct {
 		ServerName string

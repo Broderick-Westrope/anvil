@@ -207,11 +207,10 @@ func (c *catalogue) serverTools(ctx context.Context, server, caller string) (str
 	return instructions, tools, nil
 }
 
-// ready brings server to a usable state, following enable_mcp's handling
-// of each connection state, and returns its instructions. It waits at
-// most once for another caller's connect and connects at most once
-// itself: a waiter whose connect failed reports it rather than trying
-// again.
+// ready brings server to a usable state and returns its instructions.
+// It waits at most once for another caller's connect and connects at
+// most once itself: a waiter whose connect failed reports it rather than
+// trying again.
 func (c *catalogue) ready(ctx context.Context, server, caller string) (string, error) {
 	info, ok := mcp.GetState(server)
 	if !ok {
@@ -230,7 +229,7 @@ func (c *catalogue) ready(ctx context.Context, server, caller string) (string, e
 	}
 	info, _ = mcp.GetState(server)
 	switch info.State {
-	case mcp.StateConnected, mcp.StateLazy:
+	case mcp.StateConnected:
 		if info.Client == nil {
 			return "", nil
 		}
@@ -246,9 +245,27 @@ func (c *catalogue) ready(ctx context.Context, server, caller string) (string, e
 	}
 }
 
+// authRequiredMessage tells the model that server's OAuth token must be
+// renewed by a human. The catalogue returns it as a result, not an error:
+// the call wasn't malformed, and an error pushes models toward retry
+// loops. The wording tells the model not to retry the tool this turn and
+// not to try authenticating itself.
+func authRequiredMessage(server, tool string) string {
+	return fmt.Sprintf(
+		"MCP '%s' cannot be used: its authentication has expired "+
+			"and only a human can renew it. The user has been notified "+
+			"in the UI. Do not retry %s for '%s' this turn and "+
+			"do not attempt to authenticate yourself. Tell the user "+
+			"that '%s' needs re-authentication, then continue with "+
+			"whatever part of the task does not need it."+
+			" (If this is a non-interactive session, the user must run "+
+			"`anvil mcp auth %s`.)",
+		server, tool, server, server, server)
+}
+
 func stateErrorProblem(server string, info mcp.ClientInfo, caller string) error {
 	if info.NeedsAuth {
-		return errUnusable{authRequiredResponse(server, caller).Content}
+		return errUnusable{authRequiredMessage(server, caller)}
 	}
 	reason := "unknown error"
 	if info.Error != nil {
@@ -268,7 +285,7 @@ func (c *catalogue) connect(ctx context.Context, server, caller string) error {
 	case errors.Is(err, mcp.ErrAlreadyConnecting):
 		return c.settle(ctx, server)
 	case mcp.NeedsAuth(err):
-		return errUnusable{authRequiredResponse(server, caller).Content}
+		return errUnusable{authRequiredMessage(server, caller)}
 	default:
 		return errUnusable{fmt.Sprintf("Failed to connect MCP '%s': %s", server, err)}
 	}
@@ -353,7 +370,7 @@ func (c *catalogue) searchConnected(ctx context.Context, query []string) string 
 	byServer := map[string][]CatalogueTool{}
 	for _, server := range c.opts.Servers {
 		info, _ := mcp.GetState(server.Name)
-		if info.State != mcp.StateConnected && info.State != mcp.StateLazy {
+		if info.State != mcp.StateConnected {
 			if matchesAny(query, searchTerms(server.Name+" "+server.Description)) {
 				fmt.Fprintf(&out, "%s (%s) isn't connected yet; pass server=%q to search it.\n", server.Name, server.Description, server.Name)
 			}

@@ -18,6 +18,7 @@ import (
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/testutil/branchfixture"
 )
 
@@ -162,10 +163,10 @@ func TestSubagentConnectsADeferredCatalogueServerOnItsFirstSearch(t *testing.T) 
 	require.Len(t, requests, 4)
 	sub := toolNames(t, requests[1].Body)
 	require.Contains(t, sub, "search_mcp_tools")
-	require.NotContains(t, sub, "enable_mcp", "an auto-routed lazy server is no longer enabled")
 	require.Contains(t, requests[2].Body, "- ping: Replies pong.")
 	info, _ := toolsmcp.GetState(name)
-	require.Equal(t, toolsmcp.StateLazy, info.State)
+	require.Equal(t, toolsmcp.StateConnected, info.State, "a lazy server connects like any other")
+	require.False(t, info.ConnectedAt.IsZero())
 }
 
 func TestWorkflowAgentNamingACatalogueToolGetsItDirectly(t *testing.T) {
@@ -274,4 +275,75 @@ func TestTheFirstPromptUsesTheRouteMapNotThePreSnapshotBuild(t *testing.T) {
 	names := toolNames(t, f.Provider.Requests()[0].Body)
 	require.Contains(t, names, "search_mcp_tools")
 	require.NotContains(t, names, "mcp_catarmed_ping")
+}
+
+func TestAnEnableMCPCallFromAnOldSessionFailsAndTheTurnCarriesOn(t *testing.T) {
+	tests := map[string]struct {
+		cfg config.MCPConfig
+	}{
+		"with a catalogue server":  {cfg: config.MCPConfig{Type: config.MCPHttp, LazyDescription: "Pings things."}},
+		"with only direct servers": {cfg: config.MCPConfig{Type: config.MCPHttp}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			const server = "catoldenable"
+			var calls atomic.Int32
+			mcpCfg := tc.cfg
+			mcpCfg.URL = countingServer(t, &calls)
+			f := newRoutedFixture(t, config.MCPs{server: mcpCfg})
+			session := seedOldEnableMCPSession(t, f, server)
+			f.Provider.Enqueue(
+				branchfixture.Response{ToolName: "enable_mcp", ToolInput: `{"server_name":"catoldenable"}`},
+				branchfixture.Response{Text: "done"},
+			)
+
+			_, err := f.Coordinator.Run(f.Context, session, "enable it like last time")
+			require.NoError(t, err)
+
+			msgs, err := f.Messages.List(f.Context, session)
+			require.NoError(t, err)
+			var results []message.ToolResult
+			for _, msg := range msgs {
+				results = append(results, msg.ToolResults()...)
+			}
+			require.Len(t, results, 2)
+			require.False(t, results[0].IsError, "the stored result is untouched")
+			require.True(t, results[1].IsError, "the new call ends as an error result")
+			require.Contains(t, results[1].Content, "tool not found: enable_mcp")
+			requests := f.Provider.Requests()
+			require.Len(t, requests, 2, "the turn continues after the error")
+			require.Contains(t, requests[0].Body, "Enabled catoldenable MCP", "the stored call is replayed")
+			require.NotContains(t, toolNames(t, requests[1].Body), "enable_mcp")
+			require.Zero(t, calls.Load())
+		})
+	}
+}
+
+// seedOldEnableMCPSession builds a session as the enable_mcp flow left
+// it: a successful enable_mcp call and a palette toggle.
+func seedOldEnableMCPSession(t *testing.T, f *branchfixture.Fixture, server string) string {
+	t.Helper()
+	session := newParent(t, f)
+	create := func(params message.CreateMessageParams) string {
+		msg, err := f.Messages.Create(f.Context, session, params)
+		require.NoError(t, err)
+		return msg.ID
+	}
+	user := create(message.CreateMessageParams{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "enable it"}}})
+	call := create(message.CreateMessageParams{Role: message.Assistant, ParentMessageID: user, Parts: []message.ContentPart{
+		message.ToolCall{ID: "old-enable", Name: "enable_mcp", Input: `{"server_name":"` + server + `"}`, Finished: true},
+		message.Finish{Reason: message.FinishReasonToolUse},
+	}})
+	result := create(message.CreateMessageParams{Role: message.Tool, ParentMessageID: call, Parts: []message.ContentPart{
+		message.ToolResult{ToolCallID: "old-enable", Name: "enable_mcp", Content: "Enabled " + server + " MCP (1 tools available)"},
+	}})
+	reply := create(message.CreateMessageParams{Role: message.Assistant, ParentMessageID: result, Parts: []message.ContentPart{
+		message.TextContent{Text: "enabled"},
+		message.Finish{Reason: message.FinishReasonEndTurn},
+	}})
+	// The palette wrote toggles without a role.
+	create(message.CreateMessageParams{ParentMessageID: reply, MessageType: message.MessageTypeMCPToggle, Parts: []message.ContentPart{
+		message.MCPToggleContent{ServerName: server, Enabled: true},
+	}})
+	return session
 }

@@ -26,10 +26,6 @@ func TestRequestOverhead(t *testing.T) {
 
 	withTool := NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt, Tools: []fantasy.AgentTool{overheadTool(t, "view")}}).RequestOverhead()
 	require.Greater(t, withTool-bare, 500, "counts each visible tool's schema")
-
-	lazy := NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt, Tools: []fantasy.AgentTool{overheadTool(t, "mcp_linear_list")}})
-	lazy.SetMCPListing(mcpListing{lazyTools: map[string]string{"mcp_linear_list": "linear"}})
-	require.Equal(t, bare, lazy.RequestOverhead(), "lazy MCP tools stay hidden until enabled")
 }
 
 func TestRequestOverhead_CountsAnUnencodableToolByNameAndDescription(t *testing.T) {

@@ -95,8 +95,8 @@ If that hit rate is about 85% or more and the remaining misses are
 explained by expected causes (`first_call`, `model_changed`,
 `after_summary`, a branch switch or rewind (`history_rewritten` or
 `history_shortened`), or an occasional `tools_changed` that lines up
-with one `enable_mcp` on a lazy server routed `direct`), the cache is
-healthy. Say so and
+with a Reload Config or a directly listed server reconnecting), the
+cache is healthy. Say so and
 recommend nothing. Escalate `tools_changed` only when it recurs within
 sessions or dominates `tokens_not_reused`.
 

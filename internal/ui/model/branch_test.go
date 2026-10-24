@@ -31,14 +31,13 @@ func newIntegrationUI(t *testing.T, f *branchfixture.Fixture, sessionID string, 
 	require.NoError(t, err)
 
 	m := &UI{
-		state:           uiChat,
-		dialog:          dialog.NewOverlay(),
-		enabledLazyMCPs: make(map[string]bool),
-		com:             com,
-		keyMap:          DefaultKeyMap(),
-		chat:            NewChat(com),
-		focus:           uiFocusMain,
-		session:         &sess,
+		state:   uiChat,
+		dialog:  dialog.NewOverlay(),
+		com:     com,
+		keyMap:  DefaultKeyMap(),
+		chat:    NewChat(com),
+		focus:   uiFocusMain,
+		session: &sess,
 	}
 	m.textarea = textarea.New()
 	m.attachments = attachments.New(

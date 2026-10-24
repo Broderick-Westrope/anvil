@@ -1,6 +1,7 @@
 # 0002: Derive which lazy MCPs are enabled from the branch's messages
 
-**Status:** Accepted
+**Status:** Superseded by [ADR 0008](0008-remove-lazy-loading.md),
+which removed per-branch enable state along with `enable_mcp`.
 **Date:** 2025-06-03
 
 ## Context

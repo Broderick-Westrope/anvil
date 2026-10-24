@@ -27,13 +27,10 @@ internal/
     agent.go                       SessionAgent: runs LLM conversations per session
     coordinator.go                 Coordinator: manages named agents ("coder", "task")
     hooked_tool.go                 Decorator that runs PreToolUse hooks before tool execution
-    lazy_mcp.go                    Lazy MCP state derivation and tool filtering
     prompts.go                     Loads Go-template system prompts
     cacheusage/                    Prompt-cache usage: async step_usage recorder, normalisation, fingerprints
     templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
     tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
-      enable_mcp.go                enable_mcp tool for agent-side lazy MCP activation
-      lazy_mcp_state.go            Thread-safe enabled set for lazy MCPs (per-Run)
       mcp/                         MCP client integration
   hooks/                           Hook engine: runs user shell commands on hook events
     hooks.go                       Decision types, aggregation logic, event constants
@@ -130,17 +127,18 @@ Terms with a specific meaning in this codebase are defined in
   the coordinator level. Hooks run before permission checks. See
   `docs/hooks/README.md` for the user-facing protocol.
 - **Lazy MCPs**: MCP servers with `lazy_description` set in `anvil.json`
-  don't connect at startup. Under the default route they go through the
-  MCP tool catalogue (below); routed `direct`, their tools are excluded
-  from the LLM context until explicitly enabled; the first enable
-  connects them. The `enable_mcp` built-in tool lets the agent activate
-  them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
-  Enabled state is branch-scoped — derived from message history
-  (`deriveLazyMCPState` in `internal/agent/lazy_mcp.go`) so it persists
-  across restarts and survives compaction. `PrepareStep` filters the tool
-  list on every turn. The `LazyMCPState` type in
-  `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
-  See `docs/adr/0002-lazy-mcp-state-from-messages.md`.
+  don't connect at startup (`mcp.StateDeferred`). They go through the MCP
+  tool catalogue (below) and connect on their first search, or when a
+  human presses Enter on them in the MCP palette. `ValidateMCPRoutes`
+  rejects `lazy_description` combined with `route: "direct"`: a lazy
+  server has no tools when the tool list is fixed at startup. A lazy
+  server disabled in config at startup is missing from the route map; if
+  it's re-enabled and connected from the palette before a restart, it's
+  listed directly like any unrouted server.
+  Nothing tracks per-branch enable state; old sessions' `mcp_toggle`
+  messages still decode but nothing reads them. See
+  `docs/adr/0008-remove-lazy-loading.md` and
+  `plans/completed/design-2026-10-24-remove-lazy-direct-mcp.md`.
 - **MCP tool catalogue**: each MCP server resolves once per process to a
   route, `direct` (in the tool list) or `catalogue`, from the snapshot
   `mcp.Initialize` records before closing `initDone`

@@ -55,7 +55,6 @@ func (m *mockSessionAgent) SetModels(large, small Model) {
 func (m *mockSessionAgent) SetProviderConfig(_ config.ProviderConfig) {}
 func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)        {}
 func (m *mockSessionAgent) SetMCPListing(mcpListing)                  {}
-func (m *mockSessionAgent) SetConnectFn(_ tools.ConnectFn)            {}
 func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)       {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)
@@ -1180,7 +1179,9 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 		eager     = "test-tools-eager"
 		lazy      = "test-tools-lazy"
 		eagerPing = "mcp_" + eager + "_ping"
-		lazyPing  = "mcp_" + lazy + "_ping"
+		call      = tools.CallMCPToolToolName
+		describe  = tools.DescribeMCPToolToolName
+		search    = tools.SearchMCPToolsToolName
 	)
 	// An Anthropic OAuth coordinator built by an earlier test turns on the
 	// PascalCase tool names globally.
@@ -1192,63 +1193,48 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 	tests := map[string]struct {
 		allowedMCP map[string][]string
 		want       []string
-		wantLazy   map[string]string
 	}{
 		"no restrictions": {
-			want:     []string{tools.EnableMCPToolName, eagerPing, lazyPing, tools.ViewToolName},
-			wantLazy: map[string]string{lazyPing: lazy},
+			want: []string{call, describe, eagerPing, search, tools.ViewToolName},
 		},
 		"none allowed": {
 			allowedMCP: map[string][]string{},
 			want:       []string{tools.ViewToolName},
-			wantLazy:   map[string]string{},
 		},
 		"whole eager server": {
 			allowedMCP: map[string][]string{eager: nil},
 			want:       []string{eagerPing, tools.ViewToolName},
-			wantLazy:   map[string]string{},
 		},
 		"listed eager tool": {
 			allowedMCP: map[string][]string{eager: {"ping"}},
 			want:       []string{eagerPing, tools.ViewToolName},
-			wantLazy:   map[string]string{},
 		},
 		"other eager tool": {
 			allowedMCP: map[string][]string{eager: {"other"}},
 			want:       []string{tools.ViewToolName},
-			wantLazy:   map[string]string{},
 		},
-		"listed lazy tool": {
+		// A lazy server goes through the catalogue, which filters its
+		// tools with the same allowed() as the eager cases (see
+		// TestTheCatalogueResolvesOnlyTheToolsAllowedMCPNames).
+		"lazy server": {
 			allowedMCP: map[string][]string{lazy: {"ping"}},
-			want:       []string{tools.EnableMCPToolName, lazyPing, tools.ViewToolName},
-			wantLazy:   map[string]string{lazyPing: lazy},
-		},
-		"other lazy tool": {
-			allowedMCP: map[string][]string{lazy: {"other"}},
-			want:       []string{tools.EnableMCPToolName, tools.ViewToolName},
-			wantLazy:   map[string]string{},
+			want:       []string{call, describe, search, tools.ViewToolName},
 		},
 		"unknown server": {
 			allowedMCP: map[string][]string{"missing": nil},
 			want:       []string{tools.ViewToolName},
-			wantLazy:   map[string]string{},
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.ViewToolName}, AllowedMCP: tt.allowedMCP}
-			builtTools, lazyMap, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil, nil)
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
 				names = append(names, tool.Info().Name)
-				if tool.Info().Name == tools.EnableMCPToolName {
-					require.Contains(t, tool.Info().Description, lazy)
-					require.NotContains(t, tool.Info().Description, eager)
-				}
 			}
 			require.Equal(t, tt.want, names)
-			require.Equal(t, tt.wantLazy, lazyMap.lazyTools)
 		})
 	}
 }
@@ -1601,30 +1587,24 @@ func TestReloadPluginsReportsPluginWarnings(t *testing.T) {
 	require.Contains(t, c.cfg.Config().Agents, "helper")
 }
 
-// TestConnectDeferredMCP seeds the global MCP state, so it must not run in
+// TestRefreshMCPTools seeds the global MCP state, so it must not run in
 // parallel.
-func TestConnectDeferredMCP(t *testing.T) {
+func TestRefreshMCPTools(t *testing.T) {
 	cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
 	require.NoError(t, err)
 	c := &coordinator{cfg: cfg, agentConfigs: map[string]config.Agent{}}
 
-	_, err = c.connectDeferredMCP(t.Context(), "test-connect-missing")
-	require.ErrorContains(t, err, "not found in state registry")
-
-	const connected = "test-connect-connected"
+	const connected = "test-refresh-connected"
 	toolsmcp.SetStateForTest(connected, toolsmcp.StateConnected)
 	t.Cleanup(func() { toolsmcp.DeleteStateForTest(connected) })
-	_, err = c.connectDeferredMCP(t.Context(), connected)
-	require.ErrorIs(t, err, errOrchestratorAgentNotConfigured, "a connected server goes on to refresh the tools")
+	require.ErrorIs(t, c.RefreshMCPTools(t.Context(), connected), errOrchestratorAgentNotConfigured)
 
 	toolsmcp.SetToolsForTest(connected, &toolsmcp.Tool{Name: "ping"})
 	t.Cleanup(func() { toolsmcp.DeleteToolsForTest(connected) })
 	orch := &toolRecordingSessionAgent{}
 	c.agentConfigs[config.AgentOrchestrator] = config.Agent{ID: config.AgentOrchestrator}
 	c.orchestrator = orch
-	count, err := c.connectDeferredMCP(t.Context(), connected)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
+	require.NoError(t, c.RefreshMCPTools(t.Context(), connected))
 	require.NotEmpty(t, orch.tools, "the rebuilt tools reach the orchestrator")
 }
 

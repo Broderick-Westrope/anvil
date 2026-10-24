@@ -104,7 +104,7 @@ func TestWaitSettledWaitsOutAConnectRetry(t *testing.T) {
 
 	require.NoError(t, <-connected)
 	info := <-settled
-	require.Equal(t, StateLazy, info.State)
+	require.Equal(t, StateConnected, info.State, "a lazy server connects like any other")
 }
 
 func TestWaitSettledWakesWhenTheConnectingMarkClears(t *testing.T) {
@@ -113,7 +113,7 @@ func TestWaitSettledWakesWhenTheConnectingMarkClears(t *testing.T) {
 		states.Del(name)
 		connecting.Del(name)
 	})
-	SetStateForTest(name, StateLazy)
+	SetStateForTest(name, StateConnected)
 	SetConnectingForTest(name, true)
 
 	settled := make(chan time.Time, 1)

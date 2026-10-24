@@ -75,7 +75,8 @@ func TestInitialize_LazyServersSeedDeferred(t *testing.T) {
 }
 
 // TestGetStates_IncludesDeferred verifies that GetStates returns deferred
-// servers alongside connected ones, so palette and enable_mcp can see them.
+// servers alongside connected ones, so the palette and catalogue can see
+// them.
 func TestGetStates_IncludesDeferred(t *testing.T) {
 	const name = "deferred-visible"
 	t.Cleanup(func() { states.Del(name) })
@@ -189,7 +190,7 @@ func TestConnectDeferred_ConcurrentEnable(t *testing.T) {
 
 // TestConnectDeferred_TransientExhaustion_ResetsToDeferred verifies that
 // when both connect attempts fail with transient errors, state is reset
-// to StateDeferred so a later enable_mcp can retry.
+// to StateDeferred so a later use can retry.
 func TestConnectDeferred_TransientExhaustion_ResetsToDeferred(t *testing.T) {
 	const name = "deferred-transient"
 	t.Cleanup(func() {

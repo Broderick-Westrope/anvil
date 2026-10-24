@@ -143,8 +143,8 @@ Optional surfaces, found by type assertion when the feature registers:
   feature's own that makes the agent look busy.
 - `navigationGuard.BlockNavigation` can refuse anything that moves the
   session's leaf: a rewind (`handleNavigateTree`), a return to the
-  pre-branch conversation (`beginBranchReturn`), an MCP toggle, and the
-  model and reasoning metadata writes (`canWriteLeafMetadata`).
+  pre-branch conversation (`beginBranchReturn`), and the model and
+  reasoning metadata writes (`canWriteLeafMetadata`).
 
 A feature never holds `*UI`. It asks `UI` for things through `featureHost`,
 and for workspace calls it declares the narrow interface it needs. Add a

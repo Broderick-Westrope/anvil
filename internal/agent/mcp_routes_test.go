@@ -27,7 +27,6 @@ func TestDeriveMCPRoutes(t *testing.T) {
 		"off":       {Config: with(func(m *config.MCPConfig) { m.Disabled = true }), State: toolsmcp.StateDisabled},
 		"pinned":    {Config: with(func(m *config.MCPConfig) { m.Route = config.MCPRouteDirect }), State: toolsmcp.StateConnected, SentBytes: 90_000},
 		"forced":    {Config: with(func(m *config.MCPConfig) { m.Route = config.MCPRouteCatalogue }), State: toolsmcp.StateConnected, SentBytes: 10},
-		"lazypin":   {Config: with(func(m *config.MCPConfig) { m.LazyDescription = "Old flow."; m.Route = config.MCPRouteDirect }), State: toolsmcp.StateDeferred},
 		"autoexact": {Config: with(func(m *config.MCPConfig) { m.Route = config.MCPRouteAuto }), State: toolsmcp.StateConnected, SentBytes: 1},
 		// Persisted Docker MCP is in config at startup, but is never
 		// routed: it keeps its own renderer and listing.
@@ -44,7 +43,6 @@ func TestDeriveMCPRoutes(t *testing.T) {
 		"lazy":      {auto: true, catalogue: true, reason: "auto: lazy", short: "lazy", description: "Logs."},
 		"pinned":    {catalogue: false, reason: "route: direct", short: "set in config", description: "pinned"},
 		"forced":    {catalogue: true, reason: "route: catalogue", short: "set in config", description: "forced"},
-		"lazypin":   {catalogue: false, reason: "route: direct", short: "set in config", description: "Old flow."},
 		"autoexact": {auto: true, catalogue: false, reason: "auto: 1 bytes, under 12,000", short: "<12 kB", description: "autoexact"},
 	}
 	require.Equal(t, mcpRoutes(want), routes)
