@@ -39,7 +39,9 @@ type detailRenderConfigurable interface {
 	SetExpandedContent(bool)
 	IsExpandedContent() bool
 	SetNoTruncate(bool)
+	IsNoTruncate() bool
 	SetOneLineHeader(bool)
+	IsOneLineHeader() bool
 	IsCompact() bool
 }
 
@@ -624,6 +626,8 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 
 	wasCompact := cfg.IsCompact()
 	wasExpanded := cfg.IsExpandedContent()
+	wasNoTruncate := cfg.IsNoTruncate()
+	wasOneLineHeader := cfg.IsOneLineHeader()
 	cfg.SetCompact(false)
 	cfg.SetExpandedContent(o.expanded)
 	// Always use NoTruncate in the drill-in so diff lines wrap instead
@@ -637,8 +641,8 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 	output := o.source.RawRender(width)
 
 	// Restore original state.
-	cfg.SetOneLineHeader(false)
-	cfg.SetNoTruncate(false)
+	cfg.SetOneLineHeader(wasOneLineHeader)
+	cfg.SetNoTruncate(wasNoTruncate)
 	cfg.SetExpandedContent(wasExpanded)
 	cfg.SetCompact(wasCompact)
 

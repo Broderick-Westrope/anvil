@@ -373,11 +373,22 @@ func (t *baseToolMessageItem) SetNoTruncate(v bool) {
 	t.clearCache()
 }
 
+// IsNoTruncate reports whether line-level truncation is off.
+func (t *baseToolMessageItem) IsNoTruncate() bool {
+	return t.noTruncate
+}
+
 // SetOneLineHeader keeps the header on one line when the content is
 // expanded.
 func (t *baseToolMessageItem) SetOneLineHeader(v bool) {
 	t.oneLineHeader = v
 	t.clearCache()
+}
+
+// IsOneLineHeader reports whether the header stays on one line when the
+// content is expanded.
+func (t *baseToolMessageItem) IsOneLineHeader() bool {
+	return t.oneLineHeader
 }
 
 // IsCompact reports whether this tool is currently in compact rendering mode.

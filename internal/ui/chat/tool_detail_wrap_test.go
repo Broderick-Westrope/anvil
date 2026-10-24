@@ -450,3 +450,29 @@ func TestExpandedHeaderBreaksCarriageReturns(t *testing.T) {
 		})
 	}
 }
+
+// Rendering a drill-in puts back how its source was set to render, not a
+// default. The chat shows only a tool's header, so truncation is read from
+// the item itself.
+func TestToolDetailOutputRestoresSourceRenderFlags(t *testing.T) {
+	t.Parallel()
+
+	pattern := strings.Repeat("lorem ipsum ", 12)
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "out"}
+	source := helperToolItem(t, "grep", mustJSON(t, map[string]any{"pattern": pattern}), result, ToolStatusSuccess)
+	source.(Expandable).ToggleExpanded()
+	cfg := source.(detailRenderConfigurable)
+	cfg.SetOneLineHeader(true)
+	cfg.SetNoTruncate(true)
+
+	before := ansi.Strip(source.Render(60))
+	require.NotContains(t, squash(before), squash(pattern), "one line can't hold the whole pattern")
+
+	sty := styles.TokyoNight()
+	items := BuildToolDetailItems(&sty, source, nil)
+	items[len(items)-1].Render(60)
+
+	require.Equal(t, before, ansi.Strip(source.Render(60)))
+	require.True(t, cfg.IsOneLineHeader())
+	require.True(t, cfg.IsNoTruncate())
+}
