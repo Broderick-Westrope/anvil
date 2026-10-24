@@ -199,3 +199,19 @@ func TestToolDetailParamItemCollapsedHintCountsLines(t *testing.T) {
 
 	require.Contains(t, ansi.Strip(item.Render(80)), "content: "+fmt.Sprintf(assistantMessageTruncateFormat, 3))
 }
+
+// Truncated plain output cuts a long line short on one line, with an
+// ellipsis, and leaves a line that fits alone.
+func TestToolOutputPlainContentTruncatesLongLines(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	long := strings.Repeat("word ", 30)
+	lines := strings.Split(toolOutputPlainContent(&sty, long+"\nshort", 30, true, false), "\n")
+	require.Len(t, lines, 2)
+	require.Equal(t, " "+strings.TrimSpace(ansi.Truncate(long, 28, ""))+"…", strings.TrimRight(ansi.Strip(lines[0]), " "))
+	require.Equal(t, " short", strings.TrimRight(ansi.Strip(lines[1]), " "))
+	for _, line := range lines {
+		require.Equal(t, 30, lipgloss.Width(line))
+	}
+}

@@ -915,10 +915,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 			}
 			continue
 		}
-		ln = " " + ln
-		if lipgloss.Width(ln) > width {
-			ln = ansi.Truncate(ln, width, "…")
-		}
+		ln = ansi.Truncate(" "+ln, width, "…")
 		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
 	}
 
