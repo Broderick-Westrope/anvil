@@ -7,7 +7,7 @@ type MCPRouteInfo struct {
 	Catalogue bool
 	// Reason says why, e.g. "auto: lazy" or "route: direct".
 	Reason string
-	// Short is the reason in a few words, e.g. "lazy" or "under 12 kB".
+	// Short is the reason in a few words, e.g. "lazy" or "<12 kB".
 	Short string
 }
 

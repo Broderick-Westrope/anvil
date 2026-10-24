@@ -15,10 +15,14 @@ terminal sizing, focus transitions, dialog interaction, and keybindings.
 
 ## Setup Check
 
-The `terminal` server is a **lazy MCP** — call `enable_mcp` with
-`terminal` before its tools appear. If `enable_mcp` reports it is unknown,
-the server is not in the user's config; stop and tell them, do not
-improvise a substitute.
+The `terminal` server is a **lazy MCP**, so its tools come through the
+MCP tool catalogue: call `search_mcp_tools` with `server: "terminal"` (it
+connects the server and lists its tools), then run each tool with
+`call_mcp_tool`, `server: "terminal"`. The tool names below
+(`create_session`, `send_control` and so on) are the tools on that server.
+If the server isn't among the catalogue's servers, and no
+`mcp_terminal_*` tools are listed directly either, it isn't in the user's
+config; stop and tell them, do not improvise a substitute.
 
 ## Workflow
 
