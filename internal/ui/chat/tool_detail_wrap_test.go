@@ -23,7 +23,7 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	long := strings.Repeat("lorem ipsum dolor sit amet ", 12)
 	word := strings.Repeat("abcdefghij", 15)
 	multi := long + "\n" + word + "\n" + long
-	output := multi + "\n" + strings.Repeat("x", 300) + "\n10%\r50%\r100%\tdone"
+	output := multi + "\n" + strings.Repeat("x", 300) + "\n10%\r50%\r100%\tdone\vpage\fnext"
 	// Edits read the old and new content, writes a unified diff. Tools
 	// that don't read metadata ignore it.
 	metadata := map[string]string{
@@ -51,7 +51,7 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	}
 	inputs := map[string]string{
 		"raw":              long + word,
-		"raw with returns": "first\rsecond\r\nthird\t" + long,
+		"raw with returns": "first\rsecond\r\nthird\t\v\f" + long,
 		"returns":          mustJSON(t, map[string]any{"command": "first\rsecond\t" + long, "content": "a\r\nb\rc", "odd\r\nkey\rwith\ttab": "v", "shell_id": "AB\r\nSECOND\rTHIRD\tX" + word}),
 		"params":           mustJSON(t, map[string]any{"command": long + word, "file_path": "/tmp/" + word, "content": multi, "count": 3, "nested": map[string]any{"key": long}}),
 	}
@@ -106,6 +106,7 @@ func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded, check
 				rendered := item.Render(width)
 				require.NotContains(t, rendered, "\r", "width %d, focused %v: %s sends a carriage return", width, focused, item.ID())
 				require.NotContains(t, rendered, "\t", "width %d, focused %v: %s sends a tab, which is measured as no columns", width, focused, item.ID())
+				require.False(t, strings.ContainsAny(rendered, "\v\f"), "width %d, focused %v: %s sends a vertical tab or form feed", width, focused, item.ID())
 				for i, line := range strings.Split(rendered, "\n") {
 					require.LessOrEqual(t, lipgloss.Width(line), width,
 						"width %d, focused %v: line %d of %s overflows: %q", width, focused, i, item.ID(), line)
@@ -194,8 +195,14 @@ func TestToolDetailParamItemWrapsLongKey(t *testing.T) {
 	item := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: key, value: "v"}
 
 	out := item.Render(30)
-	for _, line := range strings.Split(out, "\n") {
+	lines := strings.Split(ansi.Strip(out), "\n")
+	for _, line := range lines {
 		require.LessOrEqual(t, lipgloss.Width(line), 30)
+	}
+	// Past the focus bar, every line of the key starts in the same column,
+	// and the value goes below it.
+	for i, line := range lines[:len(lines)-1] {
+		require.True(t, strings.HasPrefix(line[MessageLeftPaddingTotal:], "  k"), "line %d: %q", i, line)
 	}
 	require.Equal(t, squash(key+":v"), squash(out))
 }
@@ -727,4 +734,78 @@ func TestToolDetailOutputKeepsHooksOverHeaderlessOutput(t *testing.T) {
 	require.Contains(t, lines[0], "Hook guard")
 	require.Empty(t, strings.TrimSpace(lines[1]))
 	require.Contains(t, lines[2], "Invalid parameters")
+}
+
+// A lone carriage return in code doesn't start a numbered line, so the
+// numbers stay the file's own.
+func TestToolOutputCodeContentKeepsFileLines(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	out := ansi.Strip(toolOutputCodeContent(&sty, "a.go", "package a\rfunc x() {}\nvar y = 1", 0, 60, true, true))
+	lines := strings.Split(out, "\n")
+	require.Len(t, lines, 2, "%q", out)
+	require.Contains(t, lines[0], "package a func x() {}")
+	require.NotContains(t, out, "\r")
+}
+
+// Markdown output breaks at a carriage return instead of sending one.
+func TestToolOutputMarkdownContentBreaksCarriageReturns(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	out := toolOutputMarkdownContent(&sty, "first\rsecond\n\nthird", 60, true, true)
+	require.NotContains(t, out, "\r")
+	require.Contains(t, ansi.Strip(out), "second")
+}
+
+// A drill-in's error wraps at a fixed margin beside its tag, with no blank
+// lines from the ends of the message.
+func TestToolResultErrorContentWrapsAtMargin(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	text := "\n\n" + strings.Repeat("boom ", 30) + "\n\n"
+	out := toolResultErrorContent(&sty, &message.ToolResult{Content: text}, 60, true)
+	lines := strings.Split(out, "\n")
+	require.Greater(t, len(lines), 1)
+	for i, line := range lines {
+		require.Equal(t, 58, lipgloss.Width(line), "line %d: %q", i, ansi.Strip(line))
+		require.NotEmpty(t, strings.TrimSpace(ansi.Strip(line)), "line %d is blank", i)
+	}
+}
+
+// Edits and writes that fail show their whole error in the drill-in, even
+// when they carry a diff.
+func TestToolDetailOutputWrapsFileErrors(t *testing.T) {
+	t.Parallel()
+
+	text := strings.Repeat("could not write ", 10) + "END"
+	metadata := mustJSON(t, map[string]any{
+		"old_content": "a\n", "new_content": "b\n",
+		"diff": "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n+b",
+	})
+	input := mustJSON(t, map[string]any{
+		"file_path": "/tmp/f", "content": "b", "old_string": "a", "new_string": "b",
+		"edits": []any{map[string]any{"old_string": "a", "new_string": "b"}},
+	})
+	for _, name := range []string{"edit", "multiedit", "write"} {
+		result := &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: text, IsError: true, Metadata: metadata}
+		source := helperToolItem(t, name, input, result, ToolStatusError)
+
+		sty := styles.TokyoNight()
+		items := BuildToolDetailItems(&sty, source, nil)
+		require.Contains(t, squash(items[len(items)-1].Render(60)), squash(text), name)
+	}
+}
+
+// The chat holds a denial reason to the hook's one line.
+func TestHookReasonStaysOnOneLine(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	metadata := hookMetadata(t, map[string]any{"name": "g", "decision": "deny", "reason": "not\nhere"})
+	out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false))
+	require.NotContains(t, out, "\n")
+	require.Contains(t, out, "Denied not here")
 }

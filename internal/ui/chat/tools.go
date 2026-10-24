@@ -816,15 +816,19 @@ func toolIcon(sty *styles.Styles, status ToolStatus) string {
 
 // Text drawn in a tool's header or drill-in goes through one of these
 // first. Tabs become four spaces before the text is measured, since Lip
-// Gloss counts a tab as no columns but draws it as four, and a carriage
-// return, which would send the cursor back over the line, becomes a line
+// Gloss counts a tab as no columns but draws it as four. A carriage return,
+// which would send the cursor back over the line, and a vertical tab or
+// form feed, which many terminals treat as a line feed, become a line
 // break.
 var (
 	// oneLineSpace also turns every line break into a space, for text held
 	// to one line.
-	oneLineSpace = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "    ")
+	oneLineSpace = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\v", " ", "\f", " ", "\t", "    ")
 	// lineSpace keeps line breaks.
-	lineSpace = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\t", "    ")
+	lineSpace = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\v", "\n", "\f", "\n", "\t", "    ")
+	// codeSpace keeps a file's own lines, so its line numbers hold: any
+	// other break becomes a space.
+	codeSpace = strings.NewReplacer("\r", " ", "\v", " ", "\f", " ")
 )
 
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
@@ -991,9 +995,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 
 // toolOutputCodeContent renders code with syntax highlighting and line numbers.
 func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded, noTruncate bool) string {
-	// A lone carriage return becomes a space, not a line, so the numbers
-	// stay the file's own, and none reaches the terminal.
-	content = strings.ReplaceAll(stringext.NormalizeSpace(content), "\r", " ")
+	content = codeSpace.Replace(stringext.NormalizeSpace(content))
 
 	lines := strings.Split(content, "\n")
 	maxLines := collapsedMaxLines(len(lines))
@@ -1156,7 +1158,7 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 }
 
 // hookNameSpace shows a hook name's line breaks as pilcrows, on one line.
-var hookNameSpace = strings.NewReplacer("\r\n", "¶", "\n", "¶", "\r", "¶", "\t", "    ")
+var hookNameSpace = strings.NewReplacer("\r\n", "¶", "\n", "¶", "\r", "¶", "\v", "¶", "\f", "¶", "\t", "    ")
 
 // fitHookLine holds a hook line to width: cut with an ellipsis, or with
 // noTruncate, its detail wrapped under where it starts.
