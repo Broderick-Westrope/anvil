@@ -1388,7 +1388,7 @@ func (c *coordinator) connectDeferredMCP(ctx context.Context, name string) (int,
 
 // refreshMCPTools rebuilds the orchestrator's tool list and lazy MCP
 // tool map after a deferred MCP server has been connected. It pushes
-// the new tools to live agents via SetTools/SetLazyMCPToolMap so the
+// the new tools to live agents via SetTools/SetMCPListing so the
 // same run's next PrepareStep sees the newly registered tools. Returns
 // the number of tools registered for the named server.
 //

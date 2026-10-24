@@ -1256,9 +1256,9 @@ func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
 
 func (a *sessionAgent) RequestOverhead() int {
 	off := tools.NewLazyMCPState(nil)
-	lazy := a.lazyMCPToolMap.Copy()
-	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(lazy, off))
-	for _, tool := range filterLazyMCPTools(a.tools.Copy(), lazy, off) {
+	listing := a.mcpListing.Get()
+	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(listing, off))
+	for _, tool := range filterLazyMCPTools(a.tools.Copy(), listing.lazyTools, off) {
 		info := tool.Info()
 		schema, err := json.Marshal(struct {
 			Name        string   `json:"name"`
