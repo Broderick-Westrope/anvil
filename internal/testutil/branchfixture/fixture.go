@@ -227,9 +227,7 @@ func New(t *testing.T, opts ...Option) *Fixture {
 	cfg.Config().LSP = nil
 	cfg.Config().MCP = nil
 	cfg.Config().Plugins = nil
-	if len(o.mcps) > 0 {
-		connectMCPs(t, ctx, cfg, o.mcps)
-	}
+	connectMCPs(t, ctx, cfg, o.mcps)
 	if len(o.agents) > 0 {
 		pluginDir := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, "agents"), 0o755))
