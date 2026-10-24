@@ -307,7 +307,7 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 		return prefix + suffix
 	}
 
-	truncatedDesc := ansi.Truncate(description, availableWidth, "…")
+	truncatedDesc := ansi.Truncate(collapsedHeaderSpace.Replace(description), availableWidth, "…")
 	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc) + suffix
 }
 

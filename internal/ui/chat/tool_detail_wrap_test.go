@@ -325,29 +325,58 @@ func TestCollapsedHeaderFlattensWhitespace(t *testing.T) {
 	t.Parallel()
 
 	for name, pattern := range map[string]string{
-		"newline":         `first\nPATSECOND`,
-		"crlf":            `first\r\nPATSECOND`,
-		"carriage return": `first\rPATSECOND`,
-		"tab":             `first\t` + strings.Repeat("x", 60) + `PATSECOND`,
+		"newline":         "first\nPATSECOND",
+		"crlf":            "first\r\nPATSECOND",
+		"carriage return": "first\rPATSECOND",
+		"tab":             "first\t" + strings.Repeat("x", 60) + "PATSECOND",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "out"}
-			source := helperToolItem(t, "grep", `{"pattern":"`+pattern+`","path":"/tmp"}`, result, ToolStatusSuccess)
-
-			rendered := source.Render(80)
-			require.NotContains(t, rendered, "\r")
-			header := strings.Split(ansi.Strip(rendered), "\n")
-			require.Len(t, header, 1)
-			require.LessOrEqual(t, lipgloss.Width(rendered), 80)
-			require.Contains(t, header[0], "first ")
+			source := helperToolItem(t, "grep", mustJSON(t, map[string]any{"pattern": pattern, "path": "/tmp"}), result, ToolStatusSuccess)
+			requireOneLineHeader(t, source, pattern)
 
 			sty := styles.TokyoNight()
 			items := BuildToolDetailItems(&sty, source, nil)
 			require.NotContains(t, ansi.Strip(items[len(items)-1].Render(80)), "PATSECOND")
 		})
 	}
+}
+
+// A background bash job's header holds its command to one line too, so
+// the drill-in's Output starts with its own body.
+func TestJobHeaderFlattensWhitespace(t *testing.T) {
+	t.Parallel()
+
+	command := "echo first\r\nPATSECOND"
+	result := &message.ToolResult{
+		ToolCallID: "tc-test", Name: "bash", Content: "out",
+		Metadata: mustJSON(t, map[string]any{"background": true, "shell_id": "abc"}),
+	}
+	input := mustJSON(t, map[string]any{"command": command, "run_in_background": true})
+	source := helperToolItem(t, "bash", input, result, ToolStatusSuccess)
+	requireOneLineHeader(t, source, command)
+
+	sty := styles.TokyoNight()
+	items := BuildToolDetailItems(&sty, source, nil)
+	output := strings.TrimSpace(ansi.Strip(items[len(items)-1].Render(80)))
+	require.True(t, strings.HasPrefix(output, "Command:"), "the header spilled into Output: %q", output)
+}
+
+// requireOneLineHeader checks source's collapsed header is one line within
+// 80 columns, with no carriage return, showing raw with each line break as
+// one space and each tab as four.
+func requireOneLineHeader(t *testing.T, source ToolMessageItem, raw string) {
+	t.Helper()
+
+	rendered := source.Render(80)
+	require.NotContains(t, rendered, "\r")
+	require.LessOrEqual(t, lipgloss.Width(rendered), 80)
+	header := strings.Split(ansi.Strip(rendered), "\n")
+	require.Len(t, header, 1)
+	flat := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "    ").Replace(raw)
+	require.Contains(t, header[0], ansi.Truncate(flat, 20, ""))
 }
 
 // Rendering a drill-in leaves its source as it was, so the item in the
