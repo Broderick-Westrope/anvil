@@ -425,3 +425,28 @@ func TestToolParamListMeasuresFlattenedParams(t *testing.T) {
 	out := toolParamList(&sty, []string{"main", "path", "a" + strings.Repeat("\t", 6)}, 40, nil)
 	require.Equal(t, "main", ansi.Strip(out))
 }
+
+// An expanded header keeps a parameter's line breaks, a carriage return
+// among them, without sending one to the terminal.
+func TestExpandedHeaderBreaksCarriageReturns(t *testing.T) {
+	t.Parallel()
+
+	for name, pattern := range map[string]string{
+		"crlf":            "first\r\nPATSECOND",
+		"carriage return": "first\rPATSECOND",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "out"}
+			source := helperToolItem(t, "grep", mustJSON(t, map[string]any{"pattern": pattern, "path": "/tmp"}), result, ToolStatusSuccess)
+			source.(Expandable).ToggleExpanded()
+
+			rendered := source.Render(80)
+			require.NotContains(t, rendered, "\r")
+			lines := strings.Split(ansi.Strip(rendered), "\n")
+			require.True(t, strings.HasSuffix(strings.TrimRight(lines[0], " "), "first"), "the header breaks after the first line: %q", lines[0])
+			require.Contains(t, lines[1], "PATSECOND")
+		})
+	}
+}

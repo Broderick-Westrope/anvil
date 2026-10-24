@@ -812,6 +812,10 @@ func toolIcon(sty *styles.Styles, status ToolStatus) string {
 // over the header.
 var collapsedHeaderSpace = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "    ")
 
+// expandedHeaderSpace keeps an expanded header's line breaks but turns each
+// carriage return into one, so none reaches the terminal.
+var expandedHeaderSpace = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
 // When opts.ExpandedContent is true, the output wraps instead of truncating,
 // unless opts.OneLineHeader holds it to one line.
@@ -829,15 +833,17 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 		collapsed.ExpandedContent = false
 		opts = &collapsed
 	}
-	if opts == nil || !opts.ExpandedContent {
-		// A collapsed header is one line, whatever its parameters hold,
-		// measured as it will be drawn.
-		flat := make([]string, 0, len(params))
-		for _, param := range params {
-			flat = append(flat, collapsedHeaderSpace.Replace(param))
-		}
-		params = flat
+	// A collapsed header is one line, whatever its parameters hold, and
+	// either kind is measured as it will be drawn.
+	space := collapsedHeaderSpace
+	if opts != nil && opts.ExpandedContent {
+		space = expandedHeaderSpace
 	}
+	spaced := make([]string, 0, len(params))
+	for _, param := range params {
+		spaced = append(spaced, space.Replace(param))
+	}
+	params = spaced
 
 	mainParam := params[0]
 
