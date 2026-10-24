@@ -196,13 +196,13 @@ func TestToolDetailStaticItemWraps(t *testing.T) {
 	require.Equal(t, squash(input), squash(strings.Join(lines, "\n")))
 }
 
-// Untruncated plain output wraps at the width, keeping its indent and all
-// of its text.
+// Untruncated plain output wraps each of its lines at the width, keeping
+// its indent and all of its text.
 func TestToolOutputPlainContentWrapsWhenNotTruncated(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	content := strings.Repeat("word ", 30) + strings.Repeat("y", 70)
+	content := strings.Repeat("word ", 30) + strings.Repeat("y", 70) + "\nsecond line"
 	lines := strings.Split(toolOutputPlainContent(&sty, content, 30, true, true), "\n")
 	require.Greater(t, len(lines), 2)
 	for _, line := range lines {
