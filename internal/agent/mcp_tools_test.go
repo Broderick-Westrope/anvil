@@ -147,8 +147,8 @@ func TestALazyServerMissingFromTheRouteMapIsListedOnceConnected(t *testing.T) {
 	toolsmcp.SetOAuthRename(false)
 	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
 	cfg := connectMCPServers(t, map[string]string{lazy: "Unrouted says hi."}, lazy)
-	// An empty route map is how a server that appeared after startup,
-	// such as one added by a reload, is handled.
+	// An empty route map is how a server missing from the startup
+	// snapshot, such as one disabled in config at startup, is handled.
 	c := &coordinator{cfg: cfg, routes: mcpRoutes{}}
 	built, listing, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil, nil)
 	require.NoError(t, err)

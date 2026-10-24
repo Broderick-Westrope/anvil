@@ -36,8 +36,8 @@ type mcpRoute struct {
 // mcpRoutes maps each server in the startup snapshot to its route. It is
 // derived once per process and never written afterwards, so the tool
 // list and catalogue descriptions stay fixed. A server missing from it
-// (disabled in config at startup, Docker MCP, added by a reload) is
-// listed directly once connected.
+// (disabled in config at startup, Docker MCP) is listed directly once
+// connected.
 type mcpRoutes map[string]mcpRoute
 
 // deriveMCPRoutes applies the route rule to every enabled server in the

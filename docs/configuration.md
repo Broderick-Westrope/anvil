@@ -258,9 +258,9 @@ server's route and why. Set `route` to override it:
 Routes don't change while Anvil runs: a server that grows past the limit,
 reconnects or is toggled in the palette keeps its route until restart, and
 `anvil_info` notes a direct server that has since grown past the limit.
-Servers that appear after startup (Docker MCP, a server added by a config
-reload, one enabled from the palette after starting disabled) are listed
-directly once connected.
+Servers missing from the startup routes (Docker MCP, or one disabled in
+the config at startup and connected later) are listed directly once
+connected.
 
 To take the catalogue tools away from an agent, leave the servers out of
 its `mcps:`, add `"!call_mcp_tool"` (and the other two) to a negative
@@ -288,11 +288,10 @@ A lazy server goes through the catalogue and connects on its first
 search. To connect it sooner, select it in the MCP palette (Ctrl+P → "MCP
 Servers") and press Enter.
 
-Routes are decided at startup, so a lazy server that wasn't enabled then
-(added by a config reload, or disabled at startup and enabled later) isn't
-in the catalogue. It connects only when you press Enter on it in the
-palette, and its tools are then listed directly, schemas and all, until
-Anvil restarts.
+Routes are decided at startup, so a lazy server that was `disabled` then
+isn't in the catalogue. If you re-enable it in the config and connect it
+from the palette before restarting, its tools are listed directly, schemas
+and all, until Anvil restarts.
 
 A lazy server can't be routed `direct`: it isn't connected when the tool
 list is fixed at startup, so Anvil refuses to load a config that sets both

@@ -43,9 +43,8 @@ their children in every session tree.
   task against 6.8 through the catalogue on Opus. Plain `route: "direct"`
   without `lazy_description` still lists a server's tools, at the cost of
   its schemas on every request.
-- A lazy server that appears after startup (enabled from the palette
-  after starting disabled, or added by a reload) isn't in the route map or
-  the catalogue. It connects only from the palette, and is then listed
-  directly, like any unrouted server, until the next restart routes it
-  through the catalogue.
+- A lazy server disabled in config at startup isn't in the route map. If
+  it's re-enabled and connected from the palette before a restart, it's
+  listed directly, like any unrouted server, until the next restart routes
+  it through the catalogue.
 - A resumed session that calls `enable_mcp` gets an unknown-tool error.

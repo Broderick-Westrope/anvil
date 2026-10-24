@@ -132,10 +132,9 @@ Terms with a specific meaning in this codebase are defined in
   human presses Enter on them in the MCP palette. `ValidateMCPRoutes`
   rejects `lazy_description` combined with `route: "direct"`: a lazy
   server has no tools when the tool list is fixed at startup. A lazy
-  server that appears after startup (enabled from the palette after
-  starting disabled, or added by a reload) is missing from the route map
-  and the catalogue: it connects only from the palette, then is listed
-  directly like any unrouted server until restart.
+  server disabled in config at startup is missing from the route map; if
+  it's re-enabled and connected from the palette before a restart, it's
+  listed directly like any unrouted server.
   Nothing tracks per-branch enable state; old sessions' `mcp_toggle`
   messages still decode but nothing reads them. See
   `docs/adr/0008-remove-lazy-loading.md`.
