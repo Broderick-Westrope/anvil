@@ -604,12 +604,19 @@ func TestToolDetailOutputKeepsHookLines(t *testing.T) {
 	require.Contains(t, output, "body")
 
 	lines := strings.Split(output, "\n")
+	blank := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			blank++
+		}
+	}
+	require.Equal(t, 1, blank, "one blank line between the hooks and the output: %q", output)
 	col := lipgloss.Width(lines[0][:strings.Index(lines[0], "Denied")])
 	require.Greater(t, col, 0)
 	require.Equal(t, strings.Repeat(" ", col), lines[1][:col], "the reason wraps under where the detail starts: %q", lines[1])
 
 	header := strings.Split(ansi.Strip(source.Render(60)), "\n")
-	require.True(t, strings.HasPrefix(strings.TrimSpace(header[0]), "Hook guard"), "the chat still shows the hooks above the header")
+	require.True(t, strings.HasPrefix(strings.TrimSpace(header[0]), "Hook "), "the chat still shows the hooks above the header: %q", header[0])
 	require.True(t, strings.HasSuffix(strings.TrimRight(header[0], " "), "…"), "the chat cuts the reason to one line: %q", header[0])
 }
 
@@ -645,4 +652,79 @@ func TestExpandedHeaderWidensTabs(t *testing.T) {
 	source.(Expandable).ToggleExpanded()
 
 	require.Contains(t, ansi.Strip(source.Render(80)), "P        Q")
+}
+
+// hookMetadata is a tool result's metadata for one hook that ran.
+func hookMetadata(t *testing.T, hook map[string]any) string {
+	t.Helper()
+	return mustJSON(t, map[string]any{"hook": map[string]any{
+		"hook_count": 1, "decision": hook["decision"], "hooks": []any{hook},
+	}})
+}
+
+// The chat cuts a hook's name before its denial reason, since the reason
+// says why; the drill-in, which wraps the reason, keeps the name whole.
+func TestHookLineRoomForReason(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	const name = "/usr/local/bin/hooks/guard.sh"
+	const reason = "rm -rf is not allowed in this repository, use trash"
+	metadata := hookMetadata(t, map[string]any{"name": name, "decision": "deny", "reason": reason})
+
+	chat := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false))
+	require.Contains(t, chat, "Denied "+reason)
+	require.NotContains(t, chat, name)
+	require.LessOrEqual(t, lipgloss.Width(chat), 80)
+
+	drill := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, true))
+	require.Contains(t, drill, name)
+	require.Contains(t, squash(drill), squash(reason))
+}
+
+// A hook's matcher and line breaks in its reason never push the decision
+// and reason out of the line.
+func TestHookLineHoldsMatcherAndReason(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	const reason = "not\r\nhere"
+	metadata := hookMetadata(t, map[string]any{
+		"name": "g", "matcher": strings.Repeat("Bash|Edit|", 8), "decision": "deny", "reason": reason,
+	})
+
+	for _, noTruncate := range []bool{false, true} {
+		out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, noTruncate))
+		require.NotContains(t, out, "\n", "noTruncate %v", noTruncate)
+		require.Contains(t, out, "Denied not here", "noTruncate %v", noTruncate)
+	}
+}
+
+// With no width to fit, a hook line is left whole.
+func TestHookLineWithoutWidth(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	reason := strings.Repeat("long ", 40)
+	metadata := hookMetadata(t, map[string]any{"name": "g", "decision": "deny", "reason": reason})
+
+	require.Contains(t, ansi.Strip(toolOutputHookIndicator(&sty, metadata, 0, false)), reason)
+}
+
+// A drill-in keeps both the hooks and a tool's output when the output
+// starts without a header, as an error for unreadable input does.
+func TestToolDetailOutputKeepsHooksOverHeaderlessOutput(t *testing.T) {
+	t.Parallel()
+
+	metadata := hookMetadata(t, map[string]any{"name": "guard", "decision": "allow"})
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "job_output", Content: "x", Metadata: metadata}
+	source := helperToolItem(t, "job_output", "not json", result, ToolStatusSuccess)
+
+	sty := styles.TokyoNight()
+	items := BuildToolDetailItems(&sty, source, nil)
+	lines := strings.Split(ansi.Strip(items[len(items)-1].Render(80)), "\n")
+	require.Len(t, lines, 3, "hooks, a blank line, then the output: %q", lines)
+	require.Contains(t, lines[0], "Hook guard")
+	require.Empty(t, strings.TrimSpace(lines[1]))
+	require.Contains(t, lines[2], "Invalid parameters")
 }

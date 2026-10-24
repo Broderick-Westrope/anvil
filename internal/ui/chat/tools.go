@@ -464,10 +464,12 @@ func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
 			Duration:         t.timerDuration(now),
 		})
 
-		// Prepend hook indicator if hooks ran for this tool call.
-		if t.result != nil {
-			if hookLine := toolOutputHookIndicator(t.sty, t.result.Metadata, toolItemWidth, t.noTruncate); hookLine != "" {
-				content = withHookLines(content, hookLine, t.oneLineHeader)
+		// Prepend hook indicator if hooks ran for this tool call. A
+		// caller that drops the header's line (the drill-in) draws them
+		// itself, since they'd sit above the header here.
+		if t.result != nil && !t.oneLineHeader {
+			if hookLine := toolOutputHookIndicator(t.sty, t.result.Metadata, toolItemWidth, false); hookLine != "" {
+				content = hookLine + "\n\n" + content
 			}
 		}
 
@@ -1071,21 +1073,12 @@ func toolOutputSkillContent(sty *styles.Styles, name, description string) string
 	))
 }
 
-// withHookLines puts hook lines above a tool's content, or under its header
-// for a caller that drops the header's line (the drill-in), so the hooks
-// are what survive rather than the header.
-func withHookLines(content, hookLines string, underHeader bool) string {
-	if !underHeader {
-		return hookLines + "\n\n" + content
-	}
-	header, rest, _ := strings.Cut(content, "\n")
-	return header + "\n" + hookLines + "\n" + rest
-}
-
 // toolOutputHookIndicator renders hook indicator lines from tool metadata.
 // Returns empty string if no hook metadata is present. Hook names are
-// sanitized (newlines replaced with ¶) and truncated to fit the available
-// horizontal space.
+// sanitized (newlines replaced with ¶) and, like matchers, cut to fit the
+// available horizontal space. A line still too wide is cut with an
+// ellipsis, or with noTruncate has its detail wrapped under where it
+// starts.
 func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noTruncate bool) string {
 	if metadata == "" {
 		return ""
@@ -1101,11 +1094,16 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 		return ""
 	}
 
-	// Sanitize names (replace newlines with ¶) and compute max widths
-	// for the name, matcher, and detail columns so they align. The name
-	// column is capped at maxHookNameWidth characters.
-	const maxHookNameWidth = 30
+	// Sanitize names (replace newlines with ¶) and matchers, and compute
+	// max widths for the name, matcher, and detail columns so they align.
+	// The name column is capped at maxHookNameWidth characters and the
+	// matcher column at maxHookMatcherWidth.
+	const (
+		maxHookNameWidth    = 30
+		maxHookMatcherWidth = 20
+	)
 	sanitizedNames := make([]string, len(h.Hooks))
+	matchers := make([]string, len(h.Hooks))
 	details := make([]string, len(h.Hooks))
 	maxNameWidth := 0
 	maxMatcherWidth := 0
@@ -1116,12 +1114,8 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 		if w > maxNameWidth {
 			maxNameWidth = w
 		}
-		if hi.Matcher != "" {
-			mw := lipgloss.Width(sty.Tool.HookMatcher.Render(oneLineSpace.Replace(hi.Matcher)))
-			if mw > maxMatcherWidth {
-				maxMatcherWidth = mw
-			}
-		}
+		matchers[i] = ansi.Truncate(oneLineSpace.Replace(hi.Matcher), maxHookMatcherWidth, "…")
+		maxMatcherWidth = max(maxMatcherWidth, lipgloss.Width(sty.Tool.HookMatcher.Render(matchers[i])))
 		details[i] = hookDetail(sty, hi)
 		if dw := lipgloss.Width(details[i]); dw > maxDetailWidth {
 			maxDetailWidth = dw
@@ -1141,9 +1135,12 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 			fixed += 1 + maxMatcherWidth
 		}
 		fixed += 1 + lipgloss.Width(sty.Tool.HookArrow.Render(styles.ArrowRightIcon)) + 1
-		// A detail too long for the line is cut or wrapped, so it needs
-		// only enough room to read.
-		fixed += min(maxDetailWidth, minParamValueWidth)
+		// A detail that wraps needs only enough room to read; one that's
+		// cut keeps all the room it needs, since it is what says why.
+		if noTruncate {
+			maxDetailWidth = min(maxDetailWidth, minParamValueWidth)
+		}
+		fixed += maxDetailWidth
 		if budget := width - fixed; budget < maxNameWidth {
 			maxNameWidth = max(1, budget)
 		}
@@ -1152,7 +1149,7 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 	var lines []string
 	for i, hi := range h.Hooks {
 		name := truncateHookName(sanitizedNames[i], maxNameWidth)
-		line := renderHookLine(sty, hi, name, details[i], maxNameWidth, maxMatcherWidth)
+		line := renderHookLine(sty, hi, name, matchers[i], details[i], maxNameWidth, maxMatcherWidth)
 		lines = append(lines, fitHookLine(line, details[i], width, noTruncate))
 	}
 	return strings.Join(lines, "\n")
@@ -1164,7 +1161,7 @@ var hookNameSpace = strings.NewReplacer("\r\n", "¶", "\n", "¶", "\r", "¶", "\
 // fitHookLine holds a hook line to width: cut with an ellipsis, or with
 // noTruncate, its detail wrapped under where it starts.
 func fitHookLine(line, detail string, width int, noTruncate bool) string {
-	if width <= 0 || lipgloss.Width(line) <= width {
+	if width <= 0 {
 		return line
 	}
 	if !noTruncate {
@@ -1210,14 +1207,14 @@ func isLikelyPath(s string) bool {
 }
 
 // renderHookLine renders a single hook indicator line with aligned columns.
-func renderHookLine(sty *styles.Styles, hi hooks.HookInfo, rawName, detail string, maxNameWidth, maxMatcherWidth int) string {
+func renderHookLine(sty *styles.Styles, hi hooks.HookInfo, rawName, rawMatcher, detail string, maxNameWidth, maxMatcherWidth int) string {
 	name := sty.Tool.HookName.Render(rawName)
 	namePad := strings.Repeat(" ", max(0, maxNameWidth-lipgloss.Width(name)))
 
 	var matcherPart string
 	if maxMatcherWidth > 0 {
-		if hi.Matcher != "" {
-			matcher := sty.Tool.HookMatcher.Render(oneLineSpace.Replace(hi.Matcher))
+		if rawMatcher != "" {
+			matcher := sty.Tool.HookMatcher.Render(rawMatcher)
 			matcherPad := strings.Repeat(" ", maxMatcherWidth-lipgloss.Width(matcher))
 			matcherPart = " " + matcher + matcherPad
 		} else {

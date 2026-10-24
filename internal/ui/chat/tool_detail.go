@@ -640,10 +640,22 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 		// show the input again under Output.
 		oneLineHeader: true,
 	})
-	output := o.source.RawRender(width)
+	output := stripFirstLine(o.source.RawRender(width))
 	cfg.setRenderState(was)
 
-	return stripFirstLine(output)
+	// The source leaves hooks out for a header kept to one line, so they
+	// aren't dropped with it; they go first, wrapped in full.
+	var hooks string
+	if r, ok := o.source.(interface{ Result() *message.ToolResult }); ok && r.Result() != nil {
+		hooks = toolOutputHookIndicator(o.sty, r.Result().Metadata, width-MessageLeftPaddingTotal, true)
+	}
+	if hooks == "" {
+		return output
+	}
+	if !strings.HasPrefix(output, "\n") {
+		output = "\n" + output
+	}
+	return hooks + "\n" + output
 }
 
 // stripFirstLine removes the first line from output (the tool header/summary).
