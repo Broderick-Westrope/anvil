@@ -520,3 +520,12 @@ func TestOtherHeaderTextFlattensWhitespace(t *testing.T) {
 		require.Contains(t, words, "first second third fourth", name)
 	}
 }
+
+// A CRLF is one line break, not two, and a lone carriage return is one too.
+func TestHeaderSpaceReplacers(t *testing.T) {
+	t.Parallel()
+
+	const text = "a\r\nb\rc\nd\te"
+	require.Equal(t, "a b c d    e", oneLineSpace.Replace(text))
+	require.Equal(t, "a\nb\nc\nd    e", lineSpace.Replace(text))
+}
