@@ -199,7 +199,8 @@ Terms with a specific meaning in this codebase are defined in
   the duration once it reaches 10s (`internal/ui/chat/tool_timer.go`,
   refreshed by the elapsed tick in `internal/ui/model/tool_timer.go`).
   Design: `plans/completed/design-2026-10-18-tool-call-timer.md`.
-- **Branch summaries**: rewinding past an assistant reply offers a
+- **Branch summaries**: rewinding past an assistant reply, or away from
+  an earlier branch summary to anywhere but its parent, offers a
   summarizer agent (frontmatter `branch_summarizer: true`; the built-in
   is `templates/agents/branch-summarizer.md`) that summarises the branch
   left behind. `internal/agent/branchsummary` holds the pure parts: the

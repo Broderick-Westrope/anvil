@@ -67,9 +67,16 @@ func TestAbandoned(t *testing.T) {
 func TestWorthwhile(t *testing.T) {
 	t.Parallel()
 
+	summary := func(id, parent string) message.Message {
+		return message.Message{
+			ID: id, Role: message.User, MessageType: message.MessageTypeBranchSummary, ParentMessageID: parent,
+			Parts: []message.ContentPart{message.BranchSummaryContent{Summary: "s"}},
+		}
+	}
 	tests := map[string]struct {
-		rng  []message.Message
-		want bool
+		rng    []message.Message
+		target string
+		want   bool
 	}{
 		"empty":               {want: false},
 		"user message only":   {rng: []message.Message{msg("u", message.User, text("hi"))}, want: false},
@@ -83,11 +90,20 @@ func TestWorthwhile(t *testing.T) {
 			ID: "c", Role: message.Assistant, MessageType: message.MessageTypeCompaction,
 			Parts: []message.ContentPart{message.CompactionContent{Summary: "s"}},
 		}}, want: false},
+		"earlier branch summary": {
+			rng: []message.Message{summary("s", "t1"), msg("u", message.User, text("hi"))}, target: "y", want: true,
+		},
+		"stepping off a summary onto its parent": {
+			rng: []message.Message{summary("s", "t1")}, target: "t1", want: false,
+		},
+		"a reply after a summary under the target": {
+			rng: []message.Message{summary("s", "t1"), msg("u", message.User, text("hi")), msg("a", message.Assistant, text("hello"))}, target: "t1", want: true,
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, tc.want, branchsummary.Worthwhile(tc.rng))
+			require.Equal(t, tc.want, branchsummary.Worthwhile(tc.rng, tc.target))
 		})
 	}
 }
