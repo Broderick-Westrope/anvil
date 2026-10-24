@@ -325,17 +325,6 @@ func TestBranchSummary_StartError(t *testing.T) {
 	require.Equal(t, util.InfoTypeError, infos[0].Type)
 }
 
-func TestBranchSummary_RunningShowsNoPanel(t *testing.T) {
-	t.Parallel()
-	b := newBranchSummaryFixture(t)
-	b.runPicked()
-
-	require.Nil(t, b.f.Panel(), "the live agent item shows the run")
-
-	b.event(branchsummaries.StateStored, "summary-1", nil)
-	require.Nil(t, b.f.Panel())
-}
-
 func TestBranchSummary_EndsWithoutASummaryRemoveTheLiveItem(t *testing.T) {
 	t.Parallel()
 
@@ -474,25 +463,26 @@ func TestBranchSummary_PaletteCancelsARunningSummary(t *testing.T) {
 	require.Equal(t, []string{"sess-1"}, b.ws.cancelled)
 	infos := b.event(branchsummaries.StateCancelled, "", nil)
 	require.Len(t, infos, 1)
-	require.Nil(t, b.f.Panel())
 }
 
-func TestBranchSummary_FailureShowsUntilDismissed(t *testing.T) {
+func TestBranchSummary_FailureSaysWhyAndStaysUntilDismissed(t *testing.T) {
 	t.Parallel()
 	b := newBranchSummaryFixture(t)
 	b.runPicked()
 
-	b.event(branchsummaries.StateFailed, "", errors.New("provider exploded"))
+	infos := b.event(branchsummaries.StateFailed, "", errors.New("provider exploded\nstack"))
 
-	panel := b.f.Panel()
-	require.NotNil(t, panel)
-	require.Contains(t, ansi.Strip(panel.Render(120)), "provider exploded")
+	require.Len(t, infos, 1)
+	require.Equal(t, util.InfoTypeWarn, infos[0].Type)
+	require.Equal(t, "Branch summary failed: provider exploded", infos[0].Msg)
+	require.Equal(t, chat.ToolStatusError, b.liveItem(t).Status())
 	entries := b.f.PaletteEntries()
 	require.Len(t, entries, 1)
 	cmd, ok := b.f.HandleAction(entries[0].Action())
 	require.True(t, ok)
 	b.run(cmd)
-	require.Nil(t, b.f.Panel())
+	require.Empty(t, b.host.chatItems)
+	require.Empty(t, b.f.PaletteEntries())
 	require.Empty(t, b.ws.discarded)
 }
 
@@ -505,7 +495,6 @@ func TestBranchSummary_StaleEndSaysSo(t *testing.T) {
 
 	require.Len(t, infos, 1)
 	require.Contains(t, infos[0].Msg, "moved on")
-	require.Nil(t, b.f.Panel())
 	require.Empty(t, b.f.PaletteEntries())
 }
 
@@ -603,7 +592,6 @@ func TestBranchSummary_ALostEndEventDoesNotLeaveTheRunStuck(t *testing.T) {
 
 	b.f.Observe(spinner.TickMsg{})
 
-	require.Nil(t, b.f.Panel())
 	require.Empty(t, b.f.PaletteEntries())
 	require.Positive(t, b.host.relayouts)
 }
@@ -614,7 +602,6 @@ func TestBranchSummary_AnEndEventAfterReconcilingStillCounts(t *testing.T) {
 	b.runPicked()
 	b.ws.running["sess-1"] = false
 	b.f.Observe(spinner.TickMsg{})
-	require.Nil(t, b.f.Panel())
 
 	b.event(branchsummaries.StateStored, "summary-1", nil)
 
@@ -660,7 +647,7 @@ func TestBranchSummary_ANewRewindClearsAFailure(t *testing.T) {
 
 	b.rewind("a2", "a1")
 
-	require.Nil(t, b.f.Panel())
+	require.Empty(t, b.f.PaletteEntries())
 }
 
 func TestBranchSummary_CancelKeysClaimedOnlyForTheSummaryAlone(t *testing.T) {
@@ -844,18 +831,6 @@ func TestBranchSummary_DismissNeedsAFinishedSummary(t *testing.T) {
 		require.Len(t, b.host.chatItems, 1)
 		require.Len(t, b.f.PaletteEntries(), 1)
 	})
-}
-
-func TestBranchSummary_FailurePanelKeepsItsHintWhenNarrow(t *testing.T) {
-	t.Parallel()
-	b := newBranchSummaryFixture(t)
-	b.runPicked()
-	b.event(branchsummaries.StateFailed, "", errors.New("provider exploded with a long story"))
-
-	out := ansi.Strip(b.f.Panel().Render(40))
-
-	require.Equal(t, "Branch summary · pr-sum…  ctrl+p dismiss", out)
-	require.Equal(t, 40, ansi.StringWidth(out))
 }
 
 func TestBranchSummary_AMessageElsewhereKeepsDiscard(t *testing.T) {

@@ -152,8 +152,10 @@ focus on, then press **Enter**. **Escape** cancels the branch itself and returns
 The summary runs in the background as a subagent, in the chat where you'll send your next message. You can
 keep typing while it works; a message you send queues behind it and lands after it. Once it's done:
 
-- It shows the summary under the subagent's header, cut to four lines until you expand it. Press
-  **→** or **l** on it, or click it, to open the summarizer's own session.
+- It shows as a subagent like any other. Press **→** or **l** on it, or click it, to open the
+  summarizer's own session and read the summary.
+- If it fails, the subagent is marked failed and the status bar says why. **Ctrl+P → Dismiss Branch
+  Summary Error** removes it.
 - It records what the tangent's tool calls did: files changed, and each `git`, `gh` and `wtp` command
   with how it ended and the SHAs and pull request URLs it printed. These come from the commands
   themselves, not the model.

@@ -7,8 +7,6 @@ import (
 	"log/slog"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/google/uuid"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
@@ -20,7 +18,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
-	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 )
 
@@ -45,7 +42,6 @@ type branchSummaryRun struct {
 	agent     string
 	state     branchsummaries.State
 	summaryID string
-	err       error
 	// lost is set when the service no longer runs a summary this UI still
 	// shows as running: its end event was dropped, or hasn't arrived yet.
 	// A lost run shows nothing, but a late end event still applies.
@@ -80,7 +76,6 @@ type actionBranchSummaryDismiss struct{}
 
 var (
 	_ feature         = (*branchSummaryFeature)(nil)
-	_ panelFeature    = (*branchSummaryFeature)(nil)
 	_ paletteFeature  = (*branchSummaryFeature)(nil)
 	_ cancelFeature   = (*branchSummaryFeature)(nil)
 	_ navigationGuard = (*branchSummaryFeature)(nil)
@@ -323,8 +318,8 @@ func (b *branchSummaryFeature) run(sessionID string) *branchSummaryRun {
 }
 
 // markLost marks the runs shown as running that the service has finished
-// as lost, so a dropped end event can't leave a panel stuck, and relays
-// out when one changed.
+// as lost, so a dropped end event can't leave the palette offering to
+// cancel, and relays out when one changed.
 func (b *branchSummaryFeature) markLost() {
 	changed := false
 	for sessionID, r := range b.runs {
@@ -362,11 +357,13 @@ func (b *branchSummaryFeature) event(ev branchsummaries.Event) tea.Cmd {
 		}
 		r.state, r.summaryID = ev.State, ev.SummaryID
 	case branchsummaries.StateFailed:
-		r.state, r.err = ev.State, ev.Err
+		r.state = ev.State
+		reason := chat.FirstLine(ev.Err.Error())
 		if item := b.live[r.childID]; item != nil {
 			delete(b.live, r.childID)
-			item.SetFailed(chat.FirstLine(ev.Err.Error()))
+			item.SetFailed(reason)
 		}
+		return util.ReportWarn("Branch summary failed: " + reason)
 	case branchsummaries.StateCancelled:
 		b.end(ev.SessionID, r)
 		return util.ReportInfo("Branch summary cancelled.")
@@ -470,33 +467,4 @@ func (b *branchSummaryFeature) PaletteEntries() []*dialog.CommandItem {
 		title = "Dismiss Branch Summary Error"
 	}
 	return []*dialog.CommandItem{dialog.NewCommandItem(b.com.Styles, id, title, "", action)}
-}
-
-// Panel implements panelFeature: one line after the summary failed. A
-// running summary shows as its chat item instead.
-func (b *branchSummaryFeature) Panel() panelView {
-	r := b.run(b.host.SessionID())
-	if r == nil || r.state != branchsummaries.StateFailed {
-		return nil
-	}
-	return branchSummaryPanel{styles: b.com.Styles, agent: r.agent, err: r.err}
-}
-
-type branchSummaryPanel struct {
-	styles *styles.Styles
-	agent  string
-	err    error
-}
-
-func (branchSummaryPanel) Lines() int { return 1 }
-
-func (p branchSummaryPanel) Render(width int) string {
-	t := p.styles
-	sep := t.Pills.HelpText.Render(" · ")
-	line := t.Pills.TodoLabel.Render("Branch summary") + sep + t.Pills.TodoProgress.Render(p.agent) + sep +
-		t.Pills.QueueLabel.Render("failed: "+chat.FirstLine(p.err.Error()))
-	hint := t.Pills.HelpKey.Render("ctrl+p") + " " + t.Pills.HelpText.Render("dismiss")
-	available := width - lipgloss.Width(hint) - 2
-	line = ansi.Truncate(line, max(available, 0), "…")
-	return ansi.Truncate(line+"  "+hint, width, "…")
 }
