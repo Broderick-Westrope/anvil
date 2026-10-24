@@ -71,9 +71,8 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	// since it is a concise human-readable label. When expanded, show the
 	// raw command with newlines preserved.
 	mainParam := params.Description
-	expanded := opts.ExpandedContent && !opts.OneLineHeader
-	if mainParam == "" || expanded {
-		mainParam = b.displayCommand(sty, params, expanded)
+	if mainParam == "" || opts.ExpandedContent {
+		mainParam = b.displayCommand(sty, params, opts.ExpandedContent)
 	}
 	toolParams := []string{mainParam}
 	if params.RunInBackground {
