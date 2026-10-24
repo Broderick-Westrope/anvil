@@ -338,19 +338,18 @@ type MCPConfig struct {
 	// name and reject unknown clients with 403.
 	ClientName string `json:"clientName,omitempty" jsonschema:"description=OAuth client name sent during dynamic client registration (default: Anvil MCP Client)"`
 
-	// LazyDescription makes this MCP server's tools lazy-loaded. The
-	// server still connects eagerly at startup, but its tools and
-	// instructions are excluded from the LLM context until explicitly
-	// enabled by the agent or human. The value is surfaced to the LLM
-	// so it can decide when to enable the server.
-	LazyDescription string `json:"lazy_description,omitempty" jsonschema:"description=Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"`
+	// LazyDescription defers this MCP server's connection until first
+	// use and routes it through the MCP tool catalogue, where the value
+	// introduces the server to the LLM. It can't be combined with route
+	// "direct".
+	LazyDescription string `json:"lazy_description,omitempty" jsonschema:"description=Short description shown to the LLM; when set the server connects on first use and is reached through the MCP tool catalogue (not allowed with route direct)"`
 
 	// Route chooses whether the server's tools are listed directly or
 	// reached through the MCP tool catalogue. Empty means auto.
 	Route MCPRoute `json:"route,omitempty" jsonschema:"description=How the server's tools reach the model: auto lists small connected servers directly and routes the rest through the catalogue,enum=auto,enum=catalogue,enum=direct,default=auto"`
 }
 
-// IsLazy reports whether the MCP server's tools are lazy-loaded.
+// IsLazy reports whether the MCP server connects on first use.
 func (m MCPConfig) IsLazy() bool {
 	return m.LazyDescription != ""
 }

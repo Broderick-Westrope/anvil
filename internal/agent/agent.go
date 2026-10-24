@@ -114,7 +114,6 @@ type SessionAgent interface {
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
 	SetMCPListing(listing mcpListing)
-	SetConnectFn(fn tools.ConnectFn)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
 	CancelAll()
@@ -134,7 +133,7 @@ type SessionAgent interface {
 	// RequestOverhead is the size, in characters, of what every request
 	// this agent sends carries besides the conversation: its system
 	// prompt, with the MCP instructions a run adds, and the schemas of the
-	// tools its model sees, with every lazy MCP server off.
+	// tools its model sees.
 	RequestOverhead() int
 }
 
@@ -152,7 +151,6 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 	mcpListing         *csync.Value[mcpListing]
-	connectFn          *csync.Value[tools.ConnectFn]
 	// runningSteps holds the assistant message IDs of steps in flight.
 	// The coordinator shares one set between all its agents.
 	runningSteps *csync.Map[string, struct{}]
@@ -266,7 +264,6 @@ func NewSessionAgent(
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
 		mcpListing:           csync.NewValue(mcpListing{}),
-		connectFn:            csync.NewValue[tools.ConnectFn](nil),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
@@ -341,27 +338,10 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	t.leaf = currentSession.LeafMessageID
 	t.parentSessionID = currentSession.ParentSessionID
 
-	msgs, raw, err := a.getSessionMessages(ctx, currentSession)
+	msgs, _, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return a.abortSetup(ctx, fmt.Errorf("failed to get session messages: %w", err))
 	}
-
-	// Derive the lazy MCP state from conversation history and inject
-	// into the context so tool handlers can query it.
-	initialEnabled := deriveLazyMCPState(raw)
-	// A catalogue server enabled before it was routed through the
-	// catalogue stays off: its tools are never listed.
-	for server := range t.mcpListing.catalogue {
-		delete(initialEnabled, server)
-	}
-	t.lazyState = tools.NewLazyMCPState(initialEnabled)
-	ctx = tools.WithLazyMCPState(ctx, t.lazyState)
-
-	// Reconnect replayed-enabled deferred servers. This runs at Run
-	// start (not session load) so browsing history never triggers
-	// connections. Failures are non-fatal: the server is downgraded
-	// to not-enabled for this run.
-	reconnectDeferredServers(ctx, a.connectFn.Get(), initialEnabled, t.lazyState)
 
 	agent := t.newAgent(agentTools, a.systemPrompt.Get())
 
@@ -1323,15 +1303,9 @@ func (a *sessionAgent) SetMCPListing(listing mcpListing) {
 	a.mcpListing.Set(listing)
 }
 
-func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
-	a.connectFn.Set(fn)
-}
-
 func (a *sessionAgent) RequestOverhead() int {
-	off := tools.NewLazyMCPState(nil)
-	listing := a.mcpListing.Get()
-	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(listing, off))
-	for _, tool := range filterLazyMCPTools(a.tools.Copy(), listing.lazyTools, off) {
+	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(a.mcpListing.Get()))
+	for _, tool := range a.tools.Copy() {
 		info := tool.Info()
 		schema, err := json.Marshal(struct {
 			Name        string   `json:"name"`

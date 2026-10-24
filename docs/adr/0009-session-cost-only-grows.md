@@ -1,4 +1,4 @@
-# 0008: Session cost only grows, through explicit deltas
+# 0009: Session cost only grows, through explicit deltas
 
 **Status:** Accepted
 **Date:** 2026-10-18

@@ -1156,9 +1156,6 @@ func (c *coordinator) buildToolsWithState(
 	mcpTools := c.newAgentMCPTools(access, hookRunner, isSubAgent)
 	listed, listing := mcpTools.listed(namedTools)
 	filteredTools = append(filteredTools, listed...)
-	if enableMCP := mcpTools.enableMCPTool(c.connectDeferredMCP); enableMCP != nil {
-		filteredTools = append(filteredTools, enableMCP)
-	}
 
 	// Wrap tools with hook interception for the top-level agent only.
 	// Sub-agents run without hook interception to avoid firing the user's
@@ -1400,60 +1397,35 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	orch.SetTools(agentTools)
 	orch.SetMCPListing(listing)
 
-	// Inject the connect callback so the agent can reconnect replayed
-	// deferred servers at Run start.
-	orch.SetConnectFn(c.connectDeferredMCP)
-
 	// Invalidate lazily-built agents so they rebuild with new model config.
 	c.agents.Reset(make(map[string]SessionAgent))
 
 	return nil
 }
 
-// connectDeferredMCP connects the deferred MCP server name and rebuilds the
-// tool list, so the same run's next PrepareStep sees the newly registered
-// tools. It returns the number of tools registered for the server.
-func (c *coordinator) connectDeferredMCP(ctx context.Context, name string) (int, error) {
-	if err := toolsmcp.ConnectDeferred(ctx, name, c.cfg); err != nil {
-		return 0, err
-	}
-	return c.refreshMCPTools(ctx, name)
-}
-
-// refreshMCPTools rebuilds the orchestrator's tool list and lazy MCP
-// tool map after a deferred MCP server has been connected. It pushes
-// the new tools to live agents via SetTools/SetMCPListing so the
-// same run's next PrepareStep sees the newly registered tools. Returns
-// the number of tools registered for the named server.
+// RefreshMCPTools rebuilds the orchestrator's tool list after an MCP
+// server has been (re)connected, and pushes it to the live agent so the
+// same run's next PrepareStep sees the new tools.
 //
 // NOTE: This only updates the orchestrator agent. Sub-agents (task
 // agents) are not updated and will not see the new tools until
-// rebuilt. This is an accepted limitation — sub-agents are
-// short-lived and rarely need newly-connected MCP tools mid-run.
-func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, error) {
+// rebuilt. This is an accepted limitation: sub-agents are short-lived
+// and rarely need newly-connected MCP tools mid-run.
+func (c *coordinator) RefreshMCPTools(ctx context.Context, name string) error {
 	orchestratorCfg, ok := c.orchestratorConfig()
 	if !ok {
-		return 0, errOrchestratorAgentNotConfigured
+		return errOrchestratorAgentNotConfigured
 	}
 
 	agentTools, listing, err := c.buildTools(ctx, orchestratorCfg, 3)
 	if err != nil {
-		return 0, fmt.Errorf("rebuilding tools after MCP connect: %w", err)
+		return fmt.Errorf("rebuild tools after connecting MCP %s: %w", name, err)
 	}
 
 	orch := c.getOrchestrator()
 	orch.SetTools(agentTools)
 	orch.SetMCPListing(listing)
-
-	return len(toolsmcp.ServerTools(name)), nil
-}
-
-// RefreshMCPTools rebuilds the orchestrator's tool list after an MCP
-// server has been (re)connected. It is the exported entry point for
-// callers outside the agent package (e.g. workspace).
-func (c *coordinator) RefreshMCPTools(ctx context.Context, name string) error {
-	_, err := c.refreshMCPTools(ctx, name)
-	return err
+	return nil
 }
 
 func (c *coordinator) QueuedPrompts(sessionID string) int {

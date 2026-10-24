@@ -33,7 +33,6 @@ type turn struct {
 	providerCfg  config.ProviderConfig
 	promptPrefix string
 	mcpListing   mcpListing
-	lazyState    *tools.LazyMCPState
 	injected     *injectedMessages
 	runID        string
 	// parentSessionID is set for child sessions.
@@ -127,11 +126,10 @@ func (t *turn) sessionTitle() string {
 	return t.session.Title
 }
 
-// newAgent builds the model agent for this turn. Lazy MCP tools that
-// aren't enabled are left out, along with their server instructions.
+// newAgent builds the model agent for this turn, with the listed MCP
+// servers' instructions in its system prompt.
 func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fantasy.Agent {
-	agentTools = filterLazyMCPTools(agentTools, t.mcpListing.lazyTools, t.lazyState)
-	if s := mcpInstructions(t.mcpListing, t.lazyState); s != "" {
+	if s := mcpInstructions(t.mcpListing); s != "" {
 		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
 	}
 	return fantasy.NewAgent(
@@ -313,12 +311,8 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 		prepared.Messages[i].ProviderOptions = nil
 	}
 
-	// Use latest tools (updated by SetTools when MCP tools change),
-	// filtering out lazy MCP tools that haven't been enabled.
-	prepared.Tools = withCachedLastTool(
-		t.timed(filterLazyMCPTools(a.tools.Copy(), t.mcpListing.lazyTools, t.lazyState)),
-		a.getCacheControlOptions(),
-	)
+	// Use latest tools (updated by SetTools when MCP tools change).
+	prepared.Tools = withCachedLastTool(t.timed(a.tools.Copy()), a.getCacheControlOptions())
 
 	if a.jobEvents != nil {
 		noticeMsg, deliverErr := a.deliverJobEvents(callContext, t.call.SessionID, t.currentLeaf())

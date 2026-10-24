@@ -444,7 +444,7 @@ and Middleware-Based Filtering patterns above:
 }
 ```
 
-Key files: `internal/agent/lazy_mcp.go` (state derivation and filtering),
+Key files (the first two were removed by ADR 0008): `internal/agent/lazy_mcp.go` (state derivation and filtering),
 `internal/agent/tools/enable_mcp.go` (agent-side tool),
 `internal/ui/dialog/mcp_palette.go` (human-side dialog).
 

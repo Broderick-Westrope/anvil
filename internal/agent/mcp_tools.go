@@ -7,18 +7,15 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
 )
 
 // mcpListing is what building an agent's tool list decided about MCP
 // servers, for its turns to apply.
 type mcpListing struct {
-	// lazyTools maps each listed tool of a lazy server to the server, so
-	// turns can hide it until the server is enabled.
-	lazyTools map[string]string
-	// catalogue holds the catalogue-routed servers. Replayed enables of
-	// them are ignored, and calls to their tools by direct name are
-	// forwarded to call_mcp_tool.
+	// catalogue holds the catalogue-routed servers. Calls to their tools
+	// by direct name are forwarded to call_mcp_tool.
 	catalogue map[string]bool
 	// named holds the catalogue servers with a tool listed because a
 	// workflow agent named it. That agent never searches, so their
@@ -27,6 +24,29 @@ type mcpListing struct {
 	// routed lists every server in the route map, in name order, so a
 	// direct-name call can be matched to its server.
 	routed []string
+}
+
+// mcpInstructions joins the instructions of connected MCP servers in name
+// order, leaving out catalogue servers (search results carry theirs). The
+// order is fixed so the system prompt is identical across runs and its
+// prompt cache stays valid.
+func mcpInstructions(listing mcpListing) string {
+	states := toolsmcp.GetStates()
+	var instructions strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(states)) {
+		server := states[name]
+		if server.State != toolsmcp.StateConnected {
+			continue
+		}
+		if listing.catalogue[name] && !listing.named[name] {
+			continue
+		}
+		if s := server.Client.InitializeResult().Instructions; s != "" {
+			instructions.WriteString(s)
+			instructions.WriteString("\n\n")
+		}
+	}
+	return instructions.String()
 }
 
 // agentMCPTools builds one agent's MCP tools. The tool list and the
@@ -71,7 +91,7 @@ func (m agentMCPTools) wrap(agentTools []fantasy.AgentTool) []fantasy.AgentTool 
 // those of servers not routed through the catalogue, plus any tool named
 // in named (a workflow agent's explicit tool list), whatever its route.
 func (m agentMCPTools) listed(named []string) ([]fantasy.AgentTool, mcpListing) {
-	listing := mcpListing{lazyTools: map[string]string{}, catalogue: map[string]bool{}, named: map[string]bool{}}
+	listing := mcpListing{catalogue: map[string]bool{}, named: map[string]bool{}}
 	if m.routes == nil {
 		return nil, listing
 	}
@@ -79,7 +99,6 @@ func (m agentMCPTools) listed(named []string) ([]fantasy.AgentTool, mcpListing) 
 		listing.catalogue[server] = true
 	}
 	listing.routed = slices.Sorted(maps.Keys(m.routes))
-	cfg := m.c.cfg.Config()
 	var out []fantasy.AgentTool
 	for _, tool := range m.allowed() {
 		if m.routes.isCatalogue(tool.MCP()) {
@@ -89,29 +108,8 @@ func (m agentMCPTools) listed(named []string) ([]fantasy.AgentTool, mcpListing) 
 			listing.named[tool.MCP()] = true
 		}
 		out = append(out, tool)
-		if mcpCfg, ok := cfg.MCP[tool.MCP()]; ok && mcpCfg.IsLazy() {
-			listing.lazyTools[tool.Name()] = tool.MCP()
-		}
 	}
 	return out, listing
-}
-
-// enableMCPTool returns enable_mcp for the lazy servers the agent may use
-// that aren't routed through the catalogue, or nil when there are none.
-func (m agentMCPTools) enableMCPTool(connect tools.ConnectFn) fantasy.AgentTool {
-	if m.routes == nil {
-		return nil
-	}
-	lazyMCPs := map[string]string{}
-	for name, mcpCfg := range m.c.cfg.Config().MCP {
-		if mcpCfg.IsLazy() && !m.routes.isCatalogue(name) && m.access.allowsMCPServer(name) {
-			lazyMCPs[name] = mcpCfg.LazyDescription
-		}
-	}
-	if len(lazyMCPs) == 0 {
-		return nil
-	}
-	return tools.NewEnableMCPTool(lazyMCPs, connect)
 }
 
 // catalogueTools returns the catalogue tools when at least one

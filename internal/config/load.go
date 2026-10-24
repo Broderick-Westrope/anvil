@@ -1324,13 +1324,22 @@ func (c *Config) ValidateHooks() error {
 }
 
 // ValidateMCPRoutes rejects an MCP server whose route isn't one Anvil
-// knows. An empty route means auto.
+// knows, and a lazy server routed direct: a lazy server isn't connected
+// when the tool list is fixed at startup, so it has nothing to list. An
+// empty route means auto.
 func (c *Config) ValidateMCPRoutes() error {
 	for _, name := range slices.Sorted(maps.Keys(c.MCP)) {
-		switch c.MCP[name].Route {
-		case "", MCPRouteAuto, MCPRouteCatalogue, MCPRouteDirect:
+		server := c.MCP[name]
+		switch server.Route {
+		case "", MCPRouteAuto, MCPRouteCatalogue:
+		case MCPRouteDirect:
+			if server.IsLazy() {
+				return fmt.Errorf("mcp %q: lazy_description and route \"direct\" can't be combined; "+
+					"remove route to reach it through the catalogue, or remove lazy_description "+
+					"to connect it at startup and list it directly", name)
+			}
 		default:
-			return fmt.Errorf("mcp %q: unknown route %q (want auto, catalogue or direct)", name, c.MCP[name].Route)
+			return fmt.Errorf("mcp %q: unknown route %q (want auto, catalogue or direct)", name, server.Route)
 		}
 	}
 	return nil

@@ -143,8 +143,8 @@ Optional surfaces, found by type assertion when the feature registers:
   feature's own that makes the agent look busy.
 - `navigationGuard.BlockNavigation` can refuse anything that moves the
   session's leaf: a rewind (`handleNavigateTree`), a return to the
-  pre-branch conversation (`beginBranchReturn`), an MCP toggle, and the
-  model and reasoning metadata writes (`canWriteLeafMetadata`).
+  pre-branch conversation (`beginBranchReturn`), and the model and
+  reasoning metadata writes (`canWriteLeafMetadata`).
 - `preemptInputFeature.PreemptInput` is offered key presses and pastes
   once no dialog is open, before upstream's Esc, focus and paste
   handling. Use it only for an input surface that must own keys the chat
