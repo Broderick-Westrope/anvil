@@ -1,6 +1,8 @@
 package model
 
 import (
+	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -428,7 +430,7 @@ func TestADrilledInBuilderMakesRoomForTheEditor(t *testing.T) {
 	f.u.state = uiChat
 	f.drillIntoBuilder(t)
 	f.u.updateLayoutAndSize()
-	require.Positive(t, f.u.layout.editor.Dy(), "the editor has room under a builder")
+	require.Equal(t, f.u.textarea.Height()+editorHeightMargin, f.u.layout.editor.Dy(), "the editor has room under a builder")
 
 	f.u.focus = uiFocusMain
 	f.press(tea.KeyPressMsg{Code: tea.KeyLeft})
@@ -772,9 +774,322 @@ func TestARunningRunOnScreenIsReloadedWithoutAnnouncements(t *testing.T) {
 	next.Phases = append(next.Phases, workflowhost.RunPhase{Step: "audit", Detail: "pass 2"})
 	f.ws.views["run-1"] = next
 
+	for range workflowRunReloadTicks - 1 {
+		_, cmd := f.u.refreshRunningWorkflowRuns()
+		f.run(cmd)
+	}
+	require.NotContains(t, ansi.Strip(f.node(t).Render(100)), "audit", "a tick between reloads loads nothing")
+
+	_, cmd := f.u.refreshRunningWorkflowRuns()
+	f.run(cmd)
+	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "audit · pass 2")
+}
+
+func TestAWorkflowRunViewThatDidntLoadIsntShown(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		views map[string]workflowhost.RunView
+		err   error
+	}{
+		"the run isn't there": {},
+		"loading it failed":   {views: map[string]workflowhost.RunView{"run-1": runningView()}, err: errors.New("database is locked")},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newWorkflowFixture(t)
+			f.ws.views, f.ws.viewErr = tc.views, tc.err
+			f.markerArrives()
+
+			require.False(t, f.node(t).HasView())
+			_, ok := f.u.workflowRuns.view("run-1")
+			require.False(t, ok)
+		})
+	}
+}
+
+// Not parallel: it swaps the default logger.
+func TestOnlyAFailedWorkflowRunLoadIsLogged(t *testing.T) {
+	rec := &warnRecorder{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	rec.mu.Lock()
+	require.Empty(t, rec.warns, "a load that worked logs nothing")
+	rec.mu.Unlock()
+
+	f.ws.viewErr = errors.New("database is locked")
+	f.run(f.u.loadWorkflowRunView("run-1"))
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	require.Equal(t, []string{"Failed to load workflow run"}, rec.warns)
+}
+
+func TestAWorkflowRunViewReachesOnlyItsOwnNode(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	user := message.Message{ID: "u-1", SessionID: "sess-1", Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "go"}}}
+	other := message.Message{
+		ID: "marker-2", SessionID: "sess-1", Role: message.System, MessageType: message.MessageTypeWorkflowRun,
+		Parts: []message.ContentPart{message.WorkflowRunContent{RunID: "run-2", Command: "demo"}},
+	}
+	for _, msg := range []message.Message{user, other} {
+		_, cmd := f.u.Update(pubsub.Event[message.Message]{Type: pubsub.CreatedEvent, Payload: msg})
+		f.run(cmd)
+	}
+	f.markerArrives()
+
+	require.True(t, f.node(t).HasView())
+	node, ok := f.u.chat.MessageItem("marker-2").(*chat.WorkflowRunMessageItem)
+	require.True(t, ok)
+	require.False(t, node.HasView(), "run-1's view isn't run-2's")
+
+	// The elapsed tick passes over the items that aren't nodes.
+	running, cmd := f.u.refreshRunningWorkflowRuns()
+	f.run(cmd)
+	require.True(t, running)
+	require.False(t, node.HasView())
+}
+
+// A run view whose selection falls past its end after the run changes
+// selects its last row, rather than nothing.
+func TestWorkflowRunViewKeepsASelectionPastItsNewEndOnItsLastRow(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView()}
+	f.markerArrives()
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	view := f.u.drillStack[0].chat
+	view.SetSelected(view.Len() - 1)
+	require.Positive(t, view.Selected())
+
+	shorter := runningView()
+	shorter.Phases = shorter.Phases[:1]
+	f.ws.views["run-1"] = shorter
+	f.event(workflowhost.Event{Kind: workflowhost.EventChanged, RunID: "run-1", Command: "demo", SessionID: "sess-1"})
+
+	require.Equal(t, 3, view.Len())
+	require.Equal(t, 2, view.Selected())
+}
+
+// A selection on the first row is a selection like any other: the view
+// keeps where it's scrolled to.
+func TestWorkflowRunViewWithItsFirstRowSelectedKeepsItsScroll(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	long := runningView()
+	for i := range 30 {
+		long.Phases = append(long.Phases, workflowhost.RunPhase{Step: "round", Detail: time.Duration(i).String()})
+	}
+	f.ws.views = map[string]workflowhost.RunView{"run-1": long}
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-1", Label: "/demo"})
+	f.run(cmd)
+	view := f.u.drillStack[0].chat
+	view.SetSelected(0)
+	view.ScrollBy(5)
+	before := view.list.Offset()
+	require.Positive(t, before)
+
+	more := long
+	more.Phases = append(append([]workflowhost.RunPhase{}, long.Phases...), workflowhost.RunPhase{Step: "review"})
+	f.ws.views["run-1"] = more
+	f.event(workflowhost.Event{Kind: workflowhost.EventChanged, RunID: "run-1", Command: "demo", SessionID: "sess-1"})
+
+	require.Equal(t, before, view.list.Offset())
+	require.Equal(t, 0, view.Selected())
+}
+
+// copyOfMarker is the run's marker as a fork copies it into sessionID.
+func copyOfMarker(id, sessionID, runID string) message.Message {
+	return message.Message{
+		ID: id, SessionID: sessionID, Role: message.System, MessageType: message.MessageTypeWorkflowRun,
+		Parts: []message.ContentPart{message.WorkflowRunContent{RunID: runID, Command: "demo"}},
+	}
+}
+
+func TestARunsNodeInASessionOpenOverItsViewFollowsTheRun(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	builder := f.u.drillStack[1].chat
+	builder.SetMessages(f.u.messagesToChatItems([]message.Message{copyOfMarker("copy-1", "sess-2", "run-1")})...)
+
+	next := runningView()
+	next.Phases = append(next.Phases, workflowhost.RunPhase{Step: "review", Detail: "pass 1/3"})
+	f.ws.views["run-1"] = next
+	f.event(workflowhost.Event{Kind: workflowhost.EventChanged, RunID: "run-1", Command: "demo", SessionID: "sess-1"})
+
+	node, ok := builder.MessageItem("copy-1").(*chat.WorkflowRunMessageItem)
+	require.True(t, ok)
+	require.Contains(t, ansi.Strip(node.Render(100)), "review · pass 1/3")
+}
+
+// A session opened over a running run's view keeps its own items, and the
+// running nodes in it are reloaded like any others.
+func TestASessionOpenOverARunViewKeepsItsItemsAndReloadsItsNodes(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	f.drillIntoBuilder(t)
+	other := runningView()
+	other.RunID = "run-3"
+	f.ws.views["run-3"] = other
+	builder := f.u.drillStack[1].chat
+	items := f.u.messagesToChatItems([]message.Message{copyOfMarker("marker-3", "sess-2", "run-3")})
+	builder.SetMessages(items...)
+	f.run(f.u.loadWorkflowRunNodes(items))
+
+	next := other
+	next.Phases = append(append([]workflowhost.RunPhase{}, other.Phases...), workflowhost.RunPhase{Step: "audit", Detail: "pass 2"})
+	f.ws.views["run-3"] = next
 	for range workflowRunReloadTicks {
 		_, cmd := f.u.refreshRunningWorkflowRuns()
 		f.run(cmd)
 	}
-	require.Contains(t, ansi.Strip(f.node(t).Render(100)), "audit · pass 2")
+
+	require.Equal(t, 1, builder.Len(), "the session isn't laid out as a run view")
+	node, ok := builder.MessageItem("marker-3").(*chat.WorkflowRunMessageItem)
+	require.True(t, ok)
+	require.Contains(t, ansi.Strip(node.Render(100)), "audit · pass 2")
+}
+
+func TestAFinishedRunsOpenViewIsntReloaded(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	done := runningView()
+	done.RunID, done.Status = "run-2", workflowhost.StatusCompleted
+	f.ws.views = map[string]workflowhost.RunView{"run-1": runningView(), "run-2": done}
+	f.markerArrives()
+	_, cmd := f.u.Update(util.WorkflowRunDrillInMsg{RunID: "run-2", Label: "/demo"})
+	f.run(cmd)
+	view := f.u.drillStack[0].chat
+	rows := view.Len()
+
+	changed := done
+	changed.Phases = append(append([]workflowhost.RunPhase{}, done.Phases...), workflowhost.RunPhase{Step: "review"})
+	f.ws.views["run-2"] = changed
+	for range workflowRunReloadTicks {
+		_, cmd := f.u.refreshRunningWorkflowRuns()
+		f.run(cmd)
+	}
+	require.Equal(t, rows, view.Len())
+}
+
+func TestAFinishedRunsNodeDoesntStartTheElapsedTick(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFixture(t)
+	done := runningView()
+	done.Status, done.FinishedAt = workflowhost.StatusCompleted, done.StartedAt.Add(time.Minute)
+	f.ws.views = map[string]workflowhost.RunView{"run-1": done}
+	f.markerArrives()
+
+	require.True(t, f.node(t).HasView())
+	require.False(t, f.u.elapsedTickRunning)
+}
+
+func TestWorkflowControlsWithNothingInViewActOnTheLatestRunningRun(t *testing.T) {
+	t.Parallel()
+
+	at := func(runID string, sec int64) workflowhost.RunView {
+		v := runningView()
+		v.RunID, v.StartedAt = runID, time.Unix(sec, 0)
+		return v
+	}
+	elsewhere := at("run-8", 99)
+	elsewhere.InvokingSessionID = "sess-other"
+	finished := at("run-9", 99)
+	finished.Status = workflowhost.StatusCompleted
+
+	tests := map[string]struct {
+		views []workflowhost.RunView
+		want  string
+	}{
+		"the latest start wins over a larger run ID": {views: []workflowhost.RunView{at("run-1", 10), at("run-2", 0)}, want: "run-1"},
+		"a tie on start goes to the larger run ID":   {views: []workflowhost.RunView{at("run-1", 0), at("run-2", 0)}, want: "run-2"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newWorkflowFixture(t)
+			f.u.workflowRuns.views = map[string]workflowhost.RunView{"run-8": elsewhere, "run-9": finished}
+			for _, v := range tc.views {
+				f.u.workflowRuns.views[v.RunID] = v
+			}
+			// Map order varies between ranges, so asking many times covers
+			// the orders the views can be met in.
+			for range 64 {
+				target, ok := uiWorkflowViews{f.u}.TargetRun()
+				require.True(t, ok)
+				require.Equal(t, tc.want, target.RunID)
+			}
+		})
+	}
+}
+
+func TestWorkflowControlsActOnNoRunOutsideTheUsersSession(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(f *workflowFixture){
+		"a subagent is open": func(f *workflowFixture) {
+			f.u.drillStack = append(f.u.drillStack, drillInEntry{sessionID: "child", chat: NewChat(f.u.com)})
+		},
+		"no session is open": func(f *workflowFixture) {
+			f.u.session = nil
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newWorkflowFixture(t)
+			f.u.workflowRuns.views = map[string]workflowhost.RunView{"run-1": runningView()}
+			_, ok := uiWorkflowViews{f.u}.TargetRun()
+			require.True(t, ok, "the run is controlled from the session that started it")
+
+			setup(f)
+			_, ok = uiWorkflowViews{f.u}.TargetRun()
+			require.False(t, ok)
+		})
+	}
+}
+
+func TestStartingAWorkflowSettlesAPendingBranchReturn(t *testing.T) {
+	t.Parallel()
+
+	earlier := &branchReturnSnapshot{sessionID: "sess-1", leafID: "earlier"}
+	pending := &branchReturnSnapshot{sessionID: "sess-1", leafID: "old"}
+	tests := map[string]struct {
+		pending, ret, want *branchReturnSnapshot
+	}{
+		"a pending branch is chosen":            {pending: pending, want: pending},
+		"without one, the earlier return stays": {ret: earlier, want: earlier},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newWorkflowFixture(t)
+			f.u.pendingBranch, f.u.branchReturn = tc.pending, tc.ret
+			f.run(f.u.tryExecuteSlashCommand("/demo track downloads"))
+
+			require.Len(t, f.ws.starts, 1)
+			require.Nil(t, f.u.pendingBranch)
+			require.Same(t, tc.want, f.u.branchReturn)
+		})
+	}
 }

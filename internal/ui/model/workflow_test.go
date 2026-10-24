@@ -562,6 +562,8 @@ type runNodeWorkspace struct {
 	missing     map[string][]string
 	loadErr     map[string]error
 	views       map[string]workflowhost.RunView
+	// viewErr fails every load of a run's view.
+	viewErr error
 	// busy marks sessions with a run in flight; cancelled and historyFor
 	// record what was cancelled and whose prompt history was loaded.
 	busy       map[string]bool
@@ -573,7 +575,7 @@ type runNodeWorkspace struct {
 
 func (w *runNodeWorkspace) WorkflowRunView(_ context.Context, runID string) (workflowhost.RunView, bool, error) {
 	view, ok := w.views[runID]
-	return view, ok, nil
+	return view, ok, w.viewErr
 }
 
 func newRunNodeWorkspace() *runNodeWorkspace {
@@ -588,6 +590,7 @@ func (w *runNodeWorkspace) AgentIsSessionBusy(id string) bool       { return w.b
 func (w *runNodeWorkspace) AgentIsBusy() bool                       { return w.anyBusy }
 func (w *runNodeWorkspace) AgentQueuedPrompts(id string) int        { return w.queued[id] }
 func (*runNodeWorkspace) AgentQueuedPromptsList(string) []string    { return nil }
+func (*runNodeWorkspace) AgentSubagentRunning(string) bool          { return false }
 func (*runNodeWorkspace) WorkingDir() string                        { return "/work" }
 func (*runNodeWorkspace) SetComposerState(string, bool, bool, bool) {}
 func (*runNodeWorkspace) ListSessionJobs(string) []shell.JobInfo    { return nil }

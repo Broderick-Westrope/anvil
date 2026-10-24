@@ -396,3 +396,18 @@ func TestWorkflowRepublishedApprovalIsShownOnce(t *testing.T) {
 	require.False(t, f.requestOpen("req-1"), "an answered approval must not reopen")
 	require.Equal(t, [][2]string{{"req-1", workflowhost.AnswerApprove}}, f.ws.responds)
 }
+
+// A finish without a run ID is an invocation's that ended before its run
+// started; it says nothing about the run live in the session.
+func TestARunlessFinishLeavesTheLiveRunsRequestsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowFeatureFixture(t)
+	ask := askFor("ask-1", "Which repo?")
+	ask.RunID = "run-1"
+	f.event(ask)
+	require.True(t, f.requestOpen("ask-1"))
+
+	f.event(finishedIn("sess-1", "", workflowhost.StatusDenied))
+	require.True(t, f.requestOpen("ask-1"))
+}
