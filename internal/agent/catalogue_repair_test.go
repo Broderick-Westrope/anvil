@@ -89,3 +89,43 @@ func TestRepairPrefersTheServerWhoseCaseMatches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `{"server":"jira","tool":"get","arguments":{}}`, got.Input)
 }
+
+func TestRepairForwardsToTheLongestMatchingServer(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		routed []string
+		name   string
+		want   string
+	}{
+		"a server that doesn't match is skipped": {
+			routed: []string{"alpha", "beta"}, name: "mcp_beta_get", want: `{"server":"beta","tool":"get","arguments":{}}`,
+		},
+		"a name no longer than a prefix doesn't match it": {
+			routed: []string{"data", "data_dog"}, name: "mcp_data_dog_", want: `{"server":"data","tool":"dog_","arguments":{}}`,
+		},
+		"a longer server wins over a shorter one whose case matches": {
+			routed: []string{"Data_dog", "data"}, name: "mcp_data_dog_search", want: `{"server":"Data_dog","tool":"search","arguments":{}}`,
+		},
+		"at equal length the case-exact server wins when listed first": {
+			routed: []string{"JIRA", "jira"}, name: "mcp_JIRA_get", want: `{"server":"JIRA","tool":"get","arguments":{}}`,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			catalogue := map[string]bool{}
+			for _, server := range tc.routed {
+				catalogue[server] = true
+			}
+			repair := repairToolCall(mcpListing{catalogue: catalogue, routed: tc.routed})
+
+			got, err := repair(t.Context(), fantasy.ToolCallRepairOptions{
+				OriginalToolCall: fantasy.ToolCallContent{ToolName: tc.name, Input: `{}`},
+				AvailableTools:   []fantasy.AgentTool{namedTool{name: tools.CallMCPToolToolName}},
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got.Input)
+		})
+	}
+}

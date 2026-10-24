@@ -1616,7 +1616,24 @@ func TestConnectDeferredMCP(t *testing.T) {
 	t.Cleanup(func() { toolsmcp.DeleteStateForTest(connected) })
 	_, err = c.connectDeferredMCP(t.Context(), connected)
 	require.ErrorIs(t, err, errOrchestratorAgentNotConfigured, "a connected server goes on to refresh the tools")
+
+	toolsmcp.SetToolsForTest(connected, &toolsmcp.Tool{Name: "ping"})
+	t.Cleanup(func() { toolsmcp.DeleteToolsForTest(connected) })
+	orch := &toolRecordingSessionAgent{}
+	c.agentConfigs[config.AgentOrchestrator] = config.Agent{ID: config.AgentOrchestrator}
+	c.orchestrator = orch
+	count, err := c.connectDeferredMCP(t.Context(), connected)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	require.NotEmpty(t, orch.tools, "the rebuilt tools reach the orchestrator")
 }
+
+type toolRecordingSessionAgent struct {
+	mockSessionAgent
+	tools []fantasy.AgentTool
+}
+
+func (a *toolRecordingSessionAgent) SetTools(tools []fantasy.AgentTool) { a.tools = tools }
 
 func TestGetProviderOptionsTopKExtraBody(t *testing.T) {
 	// "ollama" has a registered discover.Enricher, so it is treated as a

@@ -80,13 +80,14 @@ func TestCoordinatorMCPRoutesFlagsADirectServerThatGrew(t *testing.T) {
 		{Server: pinned, Reason: "route: direct", Short: "set in config"},
 	}, before)
 
-	big := &toolsmcp.Tool{Name: "big", Description: strings.Repeat("x", catalogueThresholdBytes)}
+	// Same-length name as ping, so the server grows to exactly the threshold.
+	big := &toolsmcp.Tool{Name: "pong", Description: strings.Repeat("x", catalogueThresholdBytes-toolsmcp.SentToolBytes(grown))}
 	toolsmcp.SetToolsForTest(grown, big)
 	toolsmcp.SetToolsForTest(pinned, big)
 
 	after, _ := c.MCPRoutes()
 	require.False(t, after[0].Catalogue, "the route never changes within a process")
-	require.Equal(t, "auto: 84 bytes, under 12,000; now 12,083 bytes, past 12,000, so it moves to the catalogue at the next restart", after[0].Reason)
+	require.Equal(t, "auto: 84 bytes, under 12,000; now 12,000 bytes, not under 12,000, so it moves to the catalogue at the next restart", after[0].Reason)
 	require.Equal(t, "under 12 kB, now 12 kB", after[0].Short)
 	require.Equal(t, "route: direct", after[1].Reason)
 }

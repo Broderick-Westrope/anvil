@@ -116,3 +116,25 @@ func TestNamingOneCatalogueToolKeepsTheServerRoutedThroughTheCatalogue(t *testin
 	require.True(t, listing.catalogue[server], "other tools on it still forward through call_mcp_tool")
 	require.Contains(t, mcpInstructions(listing, nil), "Named says hi.", "it never searches, so it gets the instructions")
 }
+
+func TestACatalogueServerDoesNotHideTheDirectServersAfterIt(t *testing.T) {
+	const catalogue, direct = "test-order-a", "test-order-b"
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
+	cfg := connectMCPServers(t, map[string]string{catalogue: "", direct: ""})
+	m := cfg.Config().MCP[catalogue]
+	m.Route = config.MCPRouteCatalogue
+	cfg.Config().MCP[catalogue] = m
+	c := &coordinator{cfg: cfg}
+
+	built, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil, nil)
+
+	require.NoError(t, err)
+	var names []string
+	for _, tool := range built {
+		names = append(names, tool.Info().Name)
+	}
+	require.NotContains(t, names, "mcp_"+catalogue+"_ping")
+	require.Contains(t, names, "mcp_"+direct+"_ping")
+}
