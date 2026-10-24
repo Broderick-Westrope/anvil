@@ -126,7 +126,9 @@ type ToolRenderOpts struct {
 	Status          ToolStatus
 	NoTruncate      bool
 	// OneLineHeader keeps the header on one line when the content is
-	// expanded, for a caller that drops the header's line.
+	// expanded, for a caller that drops the header's line. toolParamList
+	// enforces it, so a header built without that has to hold itself to
+	// one line.
 	OneLineHeader bool
 	// MessageCreatedAt is when the assistant message carrying the tool call
 	// was created, in whole seconds; zero when unknown.
@@ -367,8 +369,8 @@ func (t *baseToolMessageItem) SetCompact(compact bool) {
 	t.Bump()
 }
 
-// renderState implements detailRenderConfigurable.
-func (t *baseToolMessageItem) renderState() renderState {
+// currentRenderState implements detailRenderConfigurable.
+func (t *baseToolMessageItem) currentRenderState() renderState {
 	return renderState{
 		compact:       t.isCompact,
 		expanded:      t.expandedContent,
@@ -672,12 +674,6 @@ func (t *baseToolMessageItem) ToggleExpanded() bool {
 	t.clearCache()
 	t.Bump()
 	return t.expandedContent
-}
-
-// SetExpandedContent explicitly sets the expanded content state.
-func (t *baseToolMessageItem) SetExpandedContent(expanded bool) {
-	t.expandedContent = expanded
-	t.clearCache()
 }
 
 // ToolDrillIn returns this item as a ToolMessageItem for drill-in navigation.

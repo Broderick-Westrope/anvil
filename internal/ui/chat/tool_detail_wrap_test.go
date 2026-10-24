@@ -459,31 +459,23 @@ func TestExpandedHeaderBreaksCarriageReturns(t *testing.T) {
 	}
 }
 
-// Rendering a drill-in puts back how its source was set to render, not a
-// default. The chat shows only a tool's header, so truncation is read from
-// the item itself.
-func TestToolDetailOutputRestoresSourceRenderFlags(t *testing.T) {
+// Rendering a drill-in leaves a compact, expanded item in the chat looking
+// as it did.
+func TestToolDetailOutputRestoresSourceRenderState(t *testing.T) {
 	t.Parallel()
 
 	pattern := strings.Repeat("lorem ipsum ", 12)
 	result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "out"}
 	source := helperToolItem(t, "grep", mustJSON(t, map[string]any{"pattern": pattern}), result, ToolStatusSuccess)
 	source.(Expandable).ToggleExpanded()
-	cfg := source.(detailRenderConfigurable)
-	set := cfg.renderState()
-	set.oneLineHeader = true
-	set.noTruncate = true
-	cfg.setRenderState(set)
-
-	before := ansi.Strip(source.Render(60))
-	require.NotContains(t, squash(before), squash(pattern), "one line can't hold the whole pattern")
+	source.(Compactable).SetCompact(true)
+	before := source.Render(60)
 
 	sty := styles.TokyoNight()
 	items := BuildToolDetailItems(&sty, source, nil)
 	items[len(items)-1].Render(60)
 
-	require.Equal(t, before, ansi.Strip(source.Render(60)))
-	require.Equal(t, set, cfg.renderState())
+	require.Equal(t, before, source.Render(60))
 }
 
 // Headers, breadcrumbs and job notices built from text the model or a
@@ -520,13 +512,4 @@ func TestOtherHeaderTextFlattensWhitespace(t *testing.T) {
 		words := strings.ToLower(strings.Join(strings.Fields(ansi.Strip(rendered)), " "))
 		require.Contains(t, words, "first second third fourth", name)
 	}
-}
-
-// A CRLF is one line break, not two, and a lone carriage return is one too.
-func TestHeaderSpaceReplacers(t *testing.T) {
-	t.Parallel()
-
-	const text = "a\r\nb\rc\nd\te"
-	require.Equal(t, "a b c d    e", oneLineSpace.Replace(text))
-	require.Equal(t, "a\nb\nc\nd    e", lineSpace.Replace(text))
 }

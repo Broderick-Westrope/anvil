@@ -44,7 +44,7 @@ type renderState struct {
 // detailRenderConfigurable is a tool item whose render state the drill-in
 // can read and set. Implemented by baseToolMessageItem via embedding.
 type detailRenderConfigurable interface {
-	renderState() renderState
+	currentRenderState() renderState
 	setRenderState(renderState)
 }
 
@@ -630,7 +630,7 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 		return stripFirstLine(output)
 	}
 
-	was := cfg.renderState()
+	was := cfg.currentRenderState()
 	cfg.setRenderState(renderState{
 		expanded: o.expanded,
 		// Lines wrap instead of being clipped with "…". Height
