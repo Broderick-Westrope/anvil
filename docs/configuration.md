@@ -288,6 +288,12 @@ A lazy server goes through the catalogue and connects on its first
 search. To connect it sooner, select it in the MCP palette (Ctrl+P → "MCP
 Servers") and press Enter.
 
+Routes are decided at startup, so a lazy server that wasn't enabled then
+(added by a config reload, or disabled at startup and enabled later) isn't
+in the catalogue. It connects only when you press Enter on it in the
+palette, and its tools are then listed directly, schemas and all, until
+Anvil restarts.
+
 A lazy server can't be routed `direct`: it isn't connected when the tool
 list is fixed at startup, so Anvil refuses to load a config that sets both
 `lazy_description` and `"route": "direct"`. Remove `route` to keep it lazy,

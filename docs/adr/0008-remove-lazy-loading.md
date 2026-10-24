@@ -44,7 +44,8 @@ their children in every session tree.
   without `lazy_description` still lists a server's tools, at the cost of
   its schemas on every request.
 - A lazy server that appears after startup (enabled from the palette
-  after starting disabled, or added by a reload) isn't in the route map,
-  so it's listed directly once connected, like any unrouted server, until
-  the next restart routes it through the catalogue.
+  after starting disabled, or added by a reload) isn't in the route map or
+  the catalogue. It connects only from the palette, and is then listed
+  directly, like any unrouted server, until the next restart routes it
+  through the catalogue.
 - A resumed session that calls `enable_mcp` gets an unknown-tool error.

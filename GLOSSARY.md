@@ -104,7 +104,7 @@ The `disable_default_providers` option and its error message call known provider
 
 ## Lazy MCP
 
-An MCP server with `lazy_description` set. It doesn't connect at startup, goes through the MCP catalogue, and connects on its first search; one that only appears after startup is listed directly once connected. It can't be routed `direct` (see `docs/adr/0008`).
+An MCP server with `lazy_description` set. It doesn't connect at startup, goes through the MCP catalogue, and connects on its first search; one that only appears after startup connects only from the MCP palette and is then listed directly until restart. It can't be routed `direct` (see `docs/adr/0008`).
 
 - **Code:** `MCPConfig.IsLazy` (`internal/config/config.go`), `mcp.StateDeferred`
 - **Not:** disabled MCP. A disabled MCP is off for every session.
