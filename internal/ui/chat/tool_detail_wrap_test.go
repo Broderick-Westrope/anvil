@@ -336,3 +336,19 @@ func TestToolDetailOutputLeavesSourceHeaderExpandable(t *testing.T) {
 	source.(Expandable).ToggleExpanded()
 	require.Contains(t, squash(source.Render(60)), squash(command))
 }
+
+// Rendering a drill-in leaves an item the user expanded in the chat
+// expanded.
+func TestToolDetailOutputKeepsSourceExpanded(t *testing.T) {
+	t.Parallel()
+
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "bash", Content: "out"}
+	source := helperToolItem(t, "bash", `{"command":"echo hi"}`, result, ToolStatusSuccess)
+	source.(Expandable).ToggleExpanded()
+
+	sty := styles.TokyoNight()
+	items := BuildToolDetailItems(&sty, source, nil)
+	items[len(items)-1].Render(60)
+
+	require.False(t, source.(Expandable).ToggleExpanded(), "the source was still expanded, so toggling collapses it")
+}

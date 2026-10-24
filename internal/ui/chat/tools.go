@@ -674,6 +674,11 @@ func (t *baseToolMessageItem) SetExpandedContent(expanded bool) {
 	t.clearCache()
 }
 
+// IsExpandedContent reports whether the tool's content is shown in full.
+func (t *baseToolMessageItem) IsExpandedContent() bool {
+	return t.expandedContent
+}
+
 // ToolDrillIn returns this item as a ToolMessageItem for drill-in navigation.
 func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
 	return t
