@@ -484,3 +484,38 @@ func TestToolDetailOutputRestoresSourceRenderFlags(t *testing.T) {
 	require.True(t, cfg.IsOneLineHeader())
 	require.True(t, cfg.IsNoTruncate())
 }
+
+// Headers, breadcrumbs and job notices built from text the model or a
+// server wrote hold it to one line, with tabs widened and no carriage
+// return.
+func TestOtherHeaderTextFlattensWhitespace(t *testing.T) {
+	t.Parallel()
+
+	const text = "first\r\nsecond\rthird\tfourth"
+	// A notice is split into lines first, so its text can't hold a line
+	// feed.
+	const line = "first second\rthird\tfourth"
+	sty := styles.TokyoNight()
+
+	agent := helperToolItem(t, "task", mustJSON(t, map[string]any{"description": text, "prompt": "p"}), nil, ToolStatusRunning)
+	fetch := helperToolItem(t, "agentic_fetch", mustJSON(t, map[string]any{"prompt": text}), nil, ToolStatusRunning)
+	mcp := helperToolItem(t, "mcp_server_"+text, `{}`, nil, ToolStatusSuccess)
+	pending := helperToolItem(t, "mcp_server_"+text, ``, nil, ToolStatusRunning)
+
+	for name, rendered := range map[string]string{
+		"agent header":      strings.Split(agent.Render(120), "\n")[0],
+		"agent breadcrumb":  agent.(AgentDrillInHandler).AgentDrillInLabel(),
+		"fetch breadcrumb":  fetch.(AgentDrillInHandler).AgentDrillInLabel(),
+		"tool name":         mcp.Render(120),
+		"pending tool name": pending.Render(120),
+		"job unknown event": renderJobNotice(&sty, "- "+line, 120, false),
+		"job description":   renderJobNotice(&sty, "- Job 002 ended, killed (15s): "+line+".", 120, false),
+		"job tail":          renderJobNotice(&sty, "- Job 002 ended, killed (15s): x.\n  "+line, 120, true),
+		"job other line":    renderJobNotice(&sty, line, 120, false),
+	} {
+		require.NotContains(t, rendered, "\r", name)
+		require.NotContains(t, rendered, "\t", name)
+		words := strings.ToLower(strings.Join(strings.Fields(ansi.Strip(rendered)), " "))
+		require.Contains(t, words, "first second third fourth", name)
+	}
+}

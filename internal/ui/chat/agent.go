@@ -429,7 +429,7 @@ func agentBreadcrumbLabel(subagentType, description string) string {
 		name = "Agent"
 	}
 	if description != "" {
-		name += ": " + description
+		name += ": " + oneLineSpace.Replace(description)
 	}
 	return name
 }
@@ -576,7 +576,7 @@ func (a *AgenticFetchToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 func (a *AgenticFetchToolMessageItem) AgentDrillInLabel() string {
 	var params agenticFetchParams
 	_ = json.Unmarshal([]byte(a.toolCall.Input), &params)
-	prompt := ansi.Truncate(params.Prompt, 40, "…")
+	prompt := ansi.Truncate(oneLineSpace.Replace(params.Prompt), 40, "…")
 	return "Fetch: " + prompt
 }
 

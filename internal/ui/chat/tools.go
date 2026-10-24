@@ -747,7 +747,7 @@ func pendingTool(sty *styles.Styles, name string, anim *anim.Anim, nested bool) 
 	if nested {
 		nameStyle = sty.Tool.NameNested
 	}
-	toolName := nameStyle.Render(name)
+	toolName := nameStyle.Render(oneLineSpace.Replace(name))
 
 	var animView string
 	if anim != nil {
@@ -931,7 +931,7 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 	if opts != nil {
 		duration = opts.Duration
 	}
-	toolName := nameStyle.Render(name)
+	toolName := nameStyle.Render(oneLineSpace.Replace(name))
 	prefix := fmt.Sprintf("%s %s ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
 	suffix, remainingWidth := fitToolTimerSuffix(sty, duration, width, prefixWidth)
