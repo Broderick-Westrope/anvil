@@ -86,6 +86,7 @@ func TestSidebarShowsADeferredLazyServerOfflineUntilItConnects(t *testing.T) {
 	icons := u.com.Styles.Resource
 	require.NotEqual(t, icons.OfflineIcon.String(), icons.OnlineIcon.String(), "the icons must differ for this test to mean anything")
 	require.Contains(t, datadog, icons.OfflineIcon.String())
+	require.Contains(t, ansi.Strip(datadog), "deferred", "the sidebar says what the palette and anvil_info say")
 	require.NotContains(t, ansi.Strip(datadog), "tools")
 	require.Contains(t, slack, icons.OnlineIcon.String())
 	require.Contains(t, ansi.Strip(slack), "3 tools")
