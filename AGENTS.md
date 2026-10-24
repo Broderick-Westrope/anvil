@@ -244,7 +244,7 @@ Terms with a specific meaning in this codebase are defined in
   and call links live in the `subagents` and `subagent_calls` tables.
   Session cost only grows, through `AddCost`, `UpdateTitleAndUsage` and
   `RollUpChildCost`; `Session.Save` never writes it. See
-  `docs/adr/0004-session-cost-only-grows.md` and
+  `docs/adr/0008-session-cost-only-grows.md` and
   `plans/completed/design-2026-10-18-subagent-resume-and-steering.md`.
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
   JavaScript script (see `plans/completed/design-2026-10-10-workflows.md`).

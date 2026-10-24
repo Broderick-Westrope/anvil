@@ -334,7 +334,7 @@ the first match wins:
 - **Provider retry hints:** they're honoured up to two minutes, so a quota
   reset hours away can't leave a task call waiting silently.
 - **Cost:** `Session.Save` no longer writes cost; it only grows through
-  explicit deltas (`docs/adr/0004-session-cost-only-grows.md`).
+  explicit deltas (`docs/adr/0008-session-cost-only-grows.md`).
 - **Tokens on a task item:** they're the child session's context size, as
   before, not a per-call sum. Cost and time are per call.
 
