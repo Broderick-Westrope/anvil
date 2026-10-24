@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,22 +54,19 @@ func TestBranchSummaryItem_RunningLooksLikeAnAgent(t *testing.T) {
 	var _ DrillableAgent = item
 }
 
-func TestBranchSummaryItem_StoredShowsTheSummary(t *testing.T) {
+func TestBranchSummaryItem_StoredRendersLikeAnAgent(t *testing.T) {
 	t.Parallel()
+	sty := styles.TokyoNight()
 
 	item := storedBranchSummary(t, branchSummaryText, session.AgentToolSessionID("a1", "call-1"))
+	agentItem := NewAgentToolMessageItem(&sty, item.ToolCall(), item.Result(), false)
 
-	collapsed := ansi.Strip(item.Render(100))
-	require.Contains(t, collapsed, branchSummaryHeader)
-	require.Contains(t, collapsed, "Item 1 done.")
-	require.NotContains(t, collapsed, "docs updated", "collapsed shows only the start")
+	out := item.Render(100)
+	require.Equal(t, agentItem.Render(100), out)
+	require.Contains(t, ansi.Strip(out), branchSummaryHeader)
+	require.NotContains(t, ansi.Strip(out), "Item 1 done.", "the summary is one drill-in away")
 	require.Equal(t, ToolStatusSuccess, item.Status())
 	require.False(t, item.Spinning())
-
-	require.True(t, item.ToggleExpanded())
-	require.Contains(t, ansi.Strip(item.Render(100)), "docs updated")
-	require.False(t, item.ToggleExpanded())
-	require.NotContains(t, ansi.Strip(item.Render(100)), "docs updated")
 }
 
 func TestBranchSummaryItem_StoredIsKeyedLikeTheAgentCall(t *testing.T) {
@@ -104,7 +100,7 @@ func TestBranchSummaryItem_SetSummaryFinishesALiveItem(t *testing.T) {
 	require.Greater(t, item.Version(), before)
 	require.Equal(t, ToolStatusSuccess, item.Status())
 	require.False(t, item.Spinning())
-	require.Contains(t, ansi.Strip(item.Render(100)), "Item 1 done.")
+	require.Equal(t, "Item 1 done.", item.Result().Content)
 }
 
 func TestBranchSummaryItem_SetFailedMarksItAnError(t *testing.T) {
@@ -118,43 +114,7 @@ func TestBranchSummaryItem_SetFailedMarksItAnError(t *testing.T) {
 	require.False(t, item.Spinning())
 	require.True(t, item.Result().IsError)
 	require.Equal(t, "provider exploded", item.Result().Content)
-	require.NotContains(t, ansi.Strip(item.Render(100)), "provider exploded", "the failure panel says why")
-}
-
-func TestBranchSummaryItem_ExpandedWrapsLongLines(t *testing.T) {
-	t.Parallel()
-
-	item := storedBranchSummary(t, "- Pushed to github.com/acme/app/pull/4242 at the very end of a long line, SHA 3f2a9c1e5b7d", "")
-	item.ToggleExpanded()
-
-	out := ansi.Strip(item.Render(60))
-
-	require.Contains(t, strings.ReplaceAll(out, "\n", ""), "3f2a9c1e5b7d", "nothing is cut off once expanded")
-	for line := range strings.SplitSeq(out, "\n") {
-		require.LessOrEqual(t, ansi.StringWidth(line), 60)
-	}
-}
-
-func TestBranchSummaryItem_StripsControlSequences(t *testing.T) {
-	t.Parallel()
-
-	out := storedBranchSummary(t, "safe \x1b]52;c;ZXZpbA==\x07text \x1b[2J", "").Render(80)
-
-	require.NotContains(t, out, "\x1b]52")
-	require.NotContains(t, out, "\x1b[2J")
-	require.Contains(t, ansi.Strip(out), "safe text")
-}
-
-func TestBranchSummaryItem_StripsControlCharacters(t *testing.T) {
-	t.Parallel()
-
-	out := storedBranchSummary(t, "over\rwrite\bbell\x07 done\ttab", "").Render(80)
-
-	require.NotContains(t, out, "\r")
-	require.NotContains(t, out, "\b")
-	require.NotContains(t, out, "\x07")
-	require.NotContains(t, out, "\x01", "control characters are dropped, not replaced")
-	require.Contains(t, ansi.Strip(out), "overwritebell done")
+	require.NotContains(t, ansi.Strip(item.Render(100)), "provider exploded", "the node shows only that it failed")
 }
 
 func TestBranchSummaryItem_Keys(t *testing.T) {
@@ -191,52 +151,4 @@ func TestBranchSummaryItem_Keys(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestBranchSummaryItem_CollapsedMarksCutLines(t *testing.T) {
-	t.Parallel()
-
-	// The agent render is a header and a stats line.
-	const agentRows = 2
-	tests := map[string]struct {
-		lines int
-		cut   bool
-	}{
-		"fits":       {lines: branchSummaryCollapsedLines},
-		"cut":        {lines: branchSummaryCollapsedLines + 1, cut: true},
-		"short fits": {lines: 1},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			var lines []string
-			for i := range tc.lines {
-				lines = append(lines, "line "+string(rune('a'+i)))
-			}
-			item := storedBranchSummary(t, strings.Join(lines, "\n\n"), "")
-
-			out := strings.Split(ansi.Strip(item.Render(80)), "\n")
-
-			shown := min(tc.lines, branchSummaryCollapsedLines)
-			wantRows := agentRows + shown
-			if tc.cut {
-				wantRows++
-			}
-			require.Len(t, out, wantRows)
-			require.Contains(t, out[agentRows+shown-1], "line "+string(rune('a'+shown-1)))
-			require.Equal(t, tc.cut, strings.HasSuffix(strings.TrimSpace(out[len(out)-1]), "…"))
-		})
-	}
-}
-
-func TestBranchSummaryItem_SelectionSourceIsTheSummary(t *testing.T) {
-	t.Parallel()
-
-	sty := styles.TokyoNight()
-	running := NewBranchSummaryItem(&sty, "anchor", "call", "branch-summarizer", nil)
-	require.Empty(t, running.SelectionSource(), "nothing to copy while it runs")
-
-	summary := "## Outcome\nDone."
-	stored := NewBranchSummaryItem(&sty, "anchor", "call", "branch-summarizer", &summary)
-	require.Equal(t, summary, stored.SelectionSource())
 }
