@@ -810,6 +810,10 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 	if len(params) == 0 {
 		return ""
 	}
+	// A header kept to one line renders as if collapsed.
+	if opts != nil && opts.OneLineHeader {
+		opts = nil
+	}
 
 	mainParam := params[0]
 
@@ -830,10 +834,10 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 		}
 	}
 
-	if width >= 0 && !opts.expandsHeader() {
+	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
 		return sty.Tool.ParamMain.Render(ansi.Truncate(output, width, "…"))
 	}
-	if opts.expandsHeader() && width > 0 && lipgloss.Width(output) > width {
+	if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
 		// Let Lip Gloss do the wrapping rather than wrapping and styling in
 		// separate steps. A parameter is often syntax highlighted, and a
 		// wrap falls wherever the width runs out, usually part-way through a
@@ -860,12 +864,6 @@ func capLineWidths(s string, width int) string {
 		lines[i] = ansi.Truncate(line, width, "")
 	}
 	return strings.Join(lines, "\n")
-}
-
-// expandsHeader reports whether the header shows its parameters in full,
-// over as many lines as they need.
-func (o *ToolRenderOpts) expandsHeader() bool {
-	return o != nil && o.ExpandedContent && !o.OneLineHeader
 }
 
 // toolHeader builds the tool header line: "● ToolName params..."
