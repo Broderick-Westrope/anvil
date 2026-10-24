@@ -248,6 +248,19 @@ Terms with a specific meaning in this codebase are defined in
   `RollUpChildCost`; `Session.Save` never writes it. See
   `docs/adr/0009-session-cost-only-grows.md` and
   `plans/completed/design-2026-10-18-subagent-resume-and-steering.md`.
+- **Web tools**: `fetch`, `web_fetch` and `agentic_fetch` share one
+  client per tool set (`tools.NewWebClient`), which adds
+  `tools.fetch.github_token` to HTTPS requests for `api.github.com` and
+  `raw.githubusercontent.com` only, checking each request so the token
+  never follows a redirect elsewhere. Config secrets for these tools are
+  expanded on first use, once per tool set (`resolveOnce`). A non-200 fetch
+  reports its `Retry-After` and the start of the body as text
+  (`statusFailure`). `web_search` queries the provider in
+  `tools.web_search`: Brave and Tavily through their APIs
+  (`internal/agent/tools/search_api.go`), otherwise DuckDuckGo Lite. A
+  DuckDuckGo block writes a resume time to `web-search-paused-until` in the
+  user cache dir (`search_cooldown.go`), which every Anvil process reads
+  before searching, since they share one IP.
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
   JavaScript script (see `plans/completed/design-2026-10-10-workflows.md`).
   `internal/workflow` is the engine: it parses `requires()` without running
