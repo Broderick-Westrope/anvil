@@ -503,6 +503,7 @@ func TestOtherHeaderTextFlattensWhitespace(t *testing.T) {
 		"tool breadcrumb":   mcp.(ToolDrillInHandler).ToolDrillInLabel(),
 		"pending tool name": pending.Render(120),
 		"job unknown event": renderJobNotice(&sty, "- "+line, 120, false),
+		"job watch":         renderJobNotice(&sty, "- Job 002 printed a line matching your watch ("+line+"): x", 120, false),
 		"job description":   renderJobNotice(&sty, "- Job 002 ended, killed (15s): "+line+".", 120, false),
 		"job tail":          renderJobNotice(&sty, "- Job 002 ended, killed (15s): x.\n  "+line, 120, true),
 		"job other line":    renderJobNotice(&sty, line, 120, false),

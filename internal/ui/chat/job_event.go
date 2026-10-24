@@ -168,7 +168,7 @@ func jobNoticeHeader(sty *styles.Styles, line string, width int) string {
 		sty.Tool.JobToolName.Render("Job"),
 		sty.Tool.JobAction.Render("("+action+")"),
 		sty.Tool.JobID.Render(jobIDLabel(jobID)),
-		sty.Tool.JobID.Render(detail),
+		sty.Tool.JobID.Render(oneLineSpace.Replace(detail)),
 	)
 	available := width - lipgloss.Width(prefix) - 1
 	if description == "" || available < 10 {
