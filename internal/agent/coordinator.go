@@ -1136,7 +1136,8 @@ func (c *coordinator) buildToolsWithState(
 	}
 
 	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
-	agenticFetch, err := c.agenticFetchTool(ctx, nil)
+	webClient := tools.NewWebClient(resolveOnce(c.cfg.Resolver(), c.cfg.Config().Tools.Fetch.GitHubToken))
+	agenticFetch, err := c.agenticFetchTool(ctx, webClient)
 	if err != nil {
 		return nil, mcpListing{}, err
 	}
@@ -1154,7 +1155,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
-		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
+		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), webClient),
 		tools.NewGlobTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Glob),
 		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Grep),
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),

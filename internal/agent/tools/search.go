@@ -48,9 +48,7 @@ var acceptLanguages = []string{
 
 // errSearchRateLimited reports that DuckDuckGo served a bot-check page
 // instead of results.
-var errSearchRateLimited = errors.New(
-	"DuckDuckGo is rate-limiting this machine. " +
-		"Do not retry or rephrase; wait a few minutes or fetch known URLs directly")
+var errSearchRateLimited = errors.New("DuckDuckGo is rate-limiting this machine")
 
 // ddgAnomalyMarkers are substrings of the bot-detection page DuckDuckGo
 // Lite serves (with HTTP 200) instead of results once a client trips its

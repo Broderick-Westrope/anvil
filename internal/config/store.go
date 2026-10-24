@@ -400,7 +400,7 @@ func (s *ConfigStore) atomicWrite(scope Scope, fn func(current []byte) ([]byte, 
 		return fmt.Errorf("failed to create config directory %q: %w", path, err)
 	}
 
-	return atomicWriteFile(path, newData, 0o600)
+	return AtomicWriteFile(path, newData, 0o600)
 }
 
 // HasConfigField checks whether a key exists in the config file for the given
@@ -1471,6 +1471,9 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	}
 	if err := cfg.ValidateMCPRoutes(); err != nil {
 		return fmt.Errorf("invalid MCP route configuration on reload: %w", err)
+	}
+	if err := cfg.Tools.WebSearch.Validate(); err != nil {
+		return fmt.Errorf("invalid tools.web_search configuration on reload: %w", err)
 	}
 
 	cfg.applyLoadAdjustments(s.insideWorktree)

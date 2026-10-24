@@ -196,6 +196,14 @@ func TestFetchTool_ResponseFailures(t *testing.T) {
 			handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) },
 			want:    "Request failed with status code: 404",
 		},
+		"non-200 status with a body": {
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte("rate limit exceeded"))
+			},
+			want: "Request failed with status code: 429 (Retry-After: 60): rate limit exceeded",
+		},
 		"invalid utf-8": {
 			handler: serveBody("text/plain", "bad \xff byte"),
 			want:    "Response content is not valid UTF-8",

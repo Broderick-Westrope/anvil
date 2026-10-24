@@ -107,6 +107,9 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err := cfg.ValidateMCPRoutes(); err != nil {
 		return nil, fmt.Errorf("invalid MCP route configuration: %w", err)
 	}
+	if err := cfg.Tools.WebSearch.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid tools.web_search configuration: %w", err)
+	}
 
 	store.insideWorktree = isInsideWorktree()
 	cfg.applyLoadAdjustments(store.insideWorktree)
@@ -1321,6 +1324,22 @@ func (c *Config) ValidateHooks() error {
 		}
 	}
 	return nil
+}
+
+// Validate rejects a provider Anvil doesn't know, and a search API
+// configured without its key. An empty provider means DuckDuckGo.
+func (w ToolWebSearch) Validate() error {
+	switch w.Provider {
+	case "", WebSearchDuckDuckGo:
+		return nil
+	case WebSearchBrave, WebSearchTavily:
+		if w.APIKey == "" {
+			return fmt.Errorf("provider %q needs api_key", w.Provider)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown provider %q (want duckduckgo, brave or tavily)", w.Provider)
+	}
 }
 
 // ValidateMCPRoutes rejects an MCP server whose route isn't one Anvil

@@ -57,6 +57,13 @@ func TestValidateFiles(t *testing.T) {
 		require.ErrorContains(t, err, "unknown permission action")
 	})
 
+	t.Run("web search without its api key fails", func(t *testing.T) {
+		e := newBouncerEnv(t)
+		writeConfig(t, e.projectDir, map[string]any{"tools": map[string]any{"web_search": map[string]any{"provider": "brave"}}})
+		err := ValidateFiles(e.projectDir, "", nil)
+		require.ErrorContains(t, err, `invalid tools.web_search configuration: provider "brave" needs api_key`)
+	})
+
 	t.Run("invalid mcp auth fails", func(t *testing.T) {
 		e := newBouncerEnv(t)
 		writeConfig(t, e.projectDir, map[string]any{

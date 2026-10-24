@@ -581,7 +581,7 @@ func TestAgenticFetchRejectsBadCalls(t *testing.T) {
 		"page not found": {
 			ctx:    ctx,
 			params: tools.AgenticFetchParams{Prompt: "p", URL: server.URL + "/missing"},
-			want:   "Failed to fetch URL: request failed with status code: 404",
+			want:   "Failed to fetch URL: request failed with status code: 404: 404 page not found",
 		},
 		"page cannot be saved": {
 			ctx:      ctx,

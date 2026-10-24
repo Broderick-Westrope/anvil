@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"charm.land/fantasy"
 )
@@ -24,15 +23,7 @@ var webFetchDescriptionTpl = template.Must(
 // NewWebFetchTool creates a simple web fetch tool for sub-agents (no permissions needed).
 func NewWebFetchTool(workingDir string, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
-
-		client = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: transport,
-		}
+		client = NewWebClient(nil)
 	}
 
 	return fantasy.NewParallelAgentTool(

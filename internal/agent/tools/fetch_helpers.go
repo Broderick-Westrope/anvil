@@ -40,7 +40,7 @@ func FetchURLAndConvert(ctx context.Context, client *http.Client, url string) (s
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("request failed with status code: %d", resp.StatusCode)
+		return "", errors.New("request failed with " + statusFailure(resp))
 	}
 
 	maxSize := int64(5 * 1024 * 1024) // 5MB
