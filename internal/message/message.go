@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -68,6 +69,9 @@ type Service interface {
 	Delete(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetBranchPath(ctx context.Context, leafMessageID string) ([]Message, error)
+	// CopyBranch copies the branch ending at leafID into toSession and
+	// returns the copy's leaf and the source message the copy ends at.
+	CopyBranch(ctx context.Context, leafID, toSession string) (string, string, error)
 	GetBranchPathTail(ctx context.Context, leafMessageID string, limit int64) ([]Message, error)
 	GetChildren(ctx context.Context, messageID string) ([]Message, error)
 	GetAllSessionMessages(ctx context.Context, sessionID string) ([]Message, error)
@@ -828,6 +832,7 @@ const (
 	modelChangeType         partType = "model_change"
 	thinkingLevelChangeType partType = "thinking_level_change"
 	mcpToggleType           partType = "mcp_toggle"
+	workflowRunType         partType = "workflow_run"
 	injectionType           partType = "injection"
 )
 
@@ -869,6 +874,8 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 			typ = thinkingLevelChangeType
 		case MCPToggleContent:
 			typ = mcpToggleType
+		case WorkflowRunContent:
+			typ = workflowRunType
 		case InjectionContent:
 			typ = injectionType
 		default:
@@ -905,6 +912,7 @@ var partDecoders = map[partType]func(json.RawMessage) (ContentPart, error){
 	modelChangeType:         decodePart[ModelChangeContent],
 	thinkingLevelChangeType: decodePart[ThinkingLevelChangeContent],
 	mcpToggleType:           decodePart[MCPToggleContent],
+	workflowRunType:         decodePart[WorkflowRunContent],
 	injectionType:           decodePart[InjectionContent],
 }
 
@@ -928,7 +936,11 @@ func unmarshalParts(data []byte) ([]ContentPart, error) {
 	for _, w := range wrapped {
 		decode, ok := partDecoders[w.Type]
 		if !ok {
-			return nil, fmt.Errorf("unknown part type: %s", w.Type)
+			// A newer Anvil sharing the database wrote a part this version
+			// doesn't know. Skipping it keeps the rest of the transcript
+			// readable rather than failing the whole session.
+			slog.Debug("Skipping unknown message part", "type", w.Type)
+			continue
 		}
 		part, err := decode(w.Data)
 		if err != nil {

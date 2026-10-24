@@ -232,7 +232,12 @@ func (s *intentSource) RecentUserMessages(ctx context.Context, sessionID string,
 		return nil, fmt.Errorf("load session: %w", err)
 	}
 	for range maxIntentParentDepth {
-		if sess.ParentSessionID == "" {
+		// A subagent acts on its parent's instructions; a session the user
+		// talks to, including a workflow's builder, has its own. So does a
+		// workflow's agent() subagent: the script's prompt is its
+		// instructions, and the session that started the run (whose
+		// conversation can be about anything by now) isn't.
+		if sess.Conversational() || sess.WorkflowKind == session.WorkflowKindAgent {
 			break
 		}
 		sess, err = s.sessions.Get(ctx, sess.ParentSessionID)

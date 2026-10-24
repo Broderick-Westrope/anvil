@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"slices"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
@@ -64,7 +67,6 @@ func (b *backend) withSkills(names []string, prompt string) string {
 }
 
 func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, error) {
-	b.publish(Event{Kind: EventStep, Activity: &Activity{Kind: ActivityTurn, Session: call.SessionID}})
 	prompt := commands.FormatWorkflowTurnXML(b.base.Command, b.withSkills(call.Skills, call.Prompt))
 	result, err := b.svc.deps.Coordinator.RunTurn(ctx, call.SessionID, prompt)
 	if err != nil {
@@ -76,20 +78,83 @@ func (b *backend) Turn(ctx context.Context, call workflow.TurnCall) (string, err
 	return result.Response.Content.Text(), nil
 }
 
-func (b *backend) NewSession(ctx context.Context, title string) (string, error) {
+func (b *backend) NewSession(ctx context.Context, call workflow.SessionCall) (string, error) {
+	return b.ownedSession(ctx, call, func(string) (string, error) { return "", nil })
+}
+
+// Fork makes a session for the run whose history is a copy of the
+// source's. The invoking session is copied up to the run's marker, its
+// start boundary, so every fork has the conversation the user had before
+// starting the run, whatever they've said there since. One of the run's own
+// sessions is copied as it is once its work in flight settles.
+func (b *backend) Fork(ctx context.Context, call workflow.ForkCall) (string, error) {
+	return b.ownedSession(ctx, call.SessionCall, func(forkID string) (string, error) {
+		if call.FromInvoker {
+			run, ok, err := b.svc.deps.Store.GetRun(ctx, b.base.RunID)
+			if err != nil {
+				return "", err
+			}
+			if !ok || run.MarkerMessageID == "" {
+				return "", fmt.Errorf("workflow run %s has no marker to fork from", b.base.RunID)
+			}
+			marker, err := b.svc.deps.Messages.Get(ctx, run.MarkerMessageID)
+			if err != nil {
+				return "", fmt.Errorf("read marker of workflow run %s: %w", b.base.RunID, err)
+			}
+			_, end, err := b.svc.deps.Messages.CopyBranch(ctx, marker.ParentMessageID, forkID)
+			return end, err
+		}
+		var end string
+		err := b.svc.deps.Coordinator.RunInSession(ctx, call.Source, func(ctx context.Context) error {
+			source, err := b.svc.deps.Sessions.Get(ctx, call.Source)
+			if err != nil {
+				return err
+			}
+			_, end, err = b.svc.deps.Messages.CopyBranch(ctx, source.LeafMessageID, forkID)
+			return err
+		})
+		return end, err
+	})
+}
+
+// ownedSession creates an orchestrator session the run owns and lets fill
+// give it history, returning the source message the history ends at, if
+// any. It's a child of the session that started the run, so it stays out of
+// the session list and is reached through the run's node. It's created as
+// the run's, and deleted if it can't be finished, so a failure never leaves
+// a copy of a conversation nobody can reach.
+func (b *backend) ownedSession(ctx context.Context, call workflow.SessionCall, fill func(sessionID string) (string, error)) (string, error) {
 	// A title the script chose is kept; without one, the session starts as
 	// "/cmd" and is auto-titled after its first turn like any session.
+	title := call.Title
 	chosen := title != ""
 	if !chosen {
 		title = "/" + b.base.Command
 	}
-	s, err := b.svc.deps.Sessions.Create(ctx, title, b.svc.deps.WorkingDir)
+	owner := session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindSession}
+	s, err := b.svc.deps.Sessions.CreateWorkflowSession(ctx, "", b.base.SessionID, title, owner)
 	if err != nil {
+		return "", err
+	}
+	fail := func(err error) (string, error) {
+		if derr := b.svc.deps.Sessions.Discard(context.WithoutCancel(ctx), s.ID); derr != nil {
+			slog.Warn("Failed to remove an unfinished workflow session", "session", s.ID, "error", derr)
+		}
 		return "", err
 	}
 	if chosen {
 		if err := b.svc.deps.Sessions.Rename(ctx, s.ID, title, true); err != nil {
-			return "", fmt.Errorf("keep session title: %w", err)
+			return fail(fmt.Errorf("keep session title: %w", err))
+		}
+	}
+	forkedFrom, err := fill(s.ID)
+	if err != nil {
+		return fail(fmt.Errorf("copy history into session: %w", err))
+	}
+	if forkedFrom != "" {
+		owner.ForkedFrom = forkedFrom
+		if err := b.svc.deps.Sessions.SetWorkflowOwner(ctx, s.ID, owner); err != nil {
+			return fail(err)
 		}
 	}
 	return s.ID, nil
@@ -101,10 +166,9 @@ func AgentSessionTitle(command, agent string) string {
 	return "/" + command + ": " + agent
 }
 
-// Agent runs a subagent in a child session whose ID is published once the
-// session exists, so the UI can open it while it runs. Its messages stay
-// in that session and never reach the invoking one. An agent that fails
-// before its session exists is published only as failed, with no session.
+// Agent runs a subagent in a child session, recorded as the run's once it
+// exists so the run view can open it while it runs. Its messages stay in
+// that session and never reach the invoking one.
 func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.AgentResult, error) {
 	wc := agent.WorkflowAgentCall{
 		ParentSessionID: call.ParentSessionID,
@@ -121,19 +185,14 @@ func (b *backend) Agent(ctx context.Context, call workflow.AgentCall) (workflow.
 		}
 		wc.Schema, wc.Validate = call.Schema, schema.Validate
 	}
-	ended := AgentCall{Name: call.Agent, Model: call.Model, Status: StatusCompleted}
-	wc.OnSession = func(sessionID string) {
-		started := ended
-		started.Session, started.Status = sessionID, StatusRunning
-		b.publishState(ctx, Event{Kind: EventAgent, Agent: &started})
-		ended.Session = sessionID
+	// The session is created as the run's, so the run view can open it
+	// from the start; the view finds it through that owner, which the
+	// call's started event came before, so it's told to look again.
+	wc.Owner = &session.WorkflowOwner{RunID: b.base.RunID, Seq: call.Seq, Kind: session.WorkflowKindAgent}
+	wc.OnSession = func(string) {
+		b.publishState(ctx, Event{Kind: EventChanged})
 	}
-	res, err := b.runAgent(ctx, wc)
-	if err != nil {
-		ended.Status, ended.Err = StatusFailed, err.Error()
-	}
-	b.publishState(ctx, Event{Kind: EventAgent, Agent: &ended})
-	return res, err
+	return b.runAgent(ctx, wc)
 }
 
 func (b *backend) runAgent(ctx context.Context, wc agent.WorkflowAgentCall) (workflow.AgentResult, error) {
@@ -154,11 +213,16 @@ func (b *backend) Bash(ctx context.Context, call workflow.BashCall) (workflow.Ba
 	if cwd == "" {
 		cwd = b.svc.deps.WorkingDir
 	}
-	b.publish(Event{Kind: EventStep, Activity: &Activity{Kind: ActivityBash, Cmd: call.Cmd}})
 	sh := shell.NewShell(&shell.Options{WorkingDir: cwd})
 	// wtp runs as a child process so cancelling a workflow kills hooks
 	// it started too; in-process it can't stop them.
 	stdout, stderr, err := sh.Exec(shell.WithExternalWTP(ctx, wtp.Command()), call.Cmd)
+	// An aborted run's command was interrupted, however the shell reports
+	// it: aborted as it starts, a command can stop with an error that isn't
+	// an interrupt, which would read as a command that ran and exited.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return workflow.BashResult{}, ctxErr
+	}
 	if err != nil && shell.IsInterrupt(err) {
 		return workflow.BashResult{}, err
 	}
@@ -177,14 +241,6 @@ func (b *backend) Ask(ctx context.Context, question string, options []string) (s
 	})
 }
 
-func (b *backend) Status(step, detail string) {
-	b.publish(Event{Kind: EventStatus, Progress: &Progress{Step: step, Detail: detail}})
-}
-
-func (b *backend) Focus(sessionID string) {
-	b.publish(Event{Kind: EventFocus, Focus: sessionID})
-}
-
 func (b *backend) Warn(msg string) {
 	b.publish(Event{Kind: EventWarn, Message: msg})
 }
@@ -194,18 +250,26 @@ func (b *backend) Hold(ctx context.Context, call workflow.HoldCall) (func(), err
 	if err != nil {
 		return nil, err
 	}
-	// The hold has waited out in-flight runs, so subagents have handed
-	// their surviving jobs to these sessions; what's left can still write
-	// to the workspace the script is about to change.
-	if err := settleJobs(call.SessionIDs, call.StopJobs); err != nil {
+	// The hold has waited out in-flight runs, so subagents have finished.
+	// Their surviving jobs stay in their own sessions, and with the held
+	// sessions' own jobs can still write to the workspace the script is
+	// about to change.
+	owned, err := b.svc.deps.Sessions.ListByWorkflowRun(ctx, b.base.RunID)
+	if err != nil {
 		release()
 		return nil, err
 	}
-	b.publishState(ctx, Event{Kind: EventState, State: StateHeld})
-	return func() {
+	jobSessions := slices.Clone(call.SessionIDs)
+	for _, s := range owned {
+		if s.WorkflowKind == session.WorkflowKindAgent {
+			jobSessions = append(jobSessions, s.ID)
+		}
+	}
+	if err := settleJobs(jobSessions, call.StopJobs); err != nil {
 		release()
-		b.publishState(ctx, Event{Kind: EventState, State: StateReleased})
-	}, nil
+		return nil, err
+	}
+	return release, nil
 }
 
 // settleJobs refuses with *workflow.JobsRunningError while the sessions own

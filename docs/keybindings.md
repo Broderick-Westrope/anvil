@@ -91,16 +91,15 @@ it to the orchestrator instead.
 
 ## Workflows
 
-These act on a [workflow](./extending.md#workflow-commands) run that
-involves the current session.
+These act on a [workflow](./extending.md#workflow-commands) run: the one
+whose view is open, whose node is selected, or the latest one started from
+the session you're in. Drill into a run's node (`→`, `l` or a click) to see
+it.
 
 | Keys | Action |
 | --- | --- |
-| `ctrl+x` | Pause |
+| `ctrl+x` | Pause or resume |
 | `alt+x` | Abort |
-| `alt+g` | Go to the workflow's session |
-| `alt+o` | Open the running workflow agent |
-| `alt+w` | Show the run |
 
 ## Slash commands
 

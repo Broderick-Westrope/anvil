@@ -68,8 +68,46 @@ type Session struct {
 	Todos            []Todo
 	Pinned           bool
 	PinNote          string
-	CreatedAt        int64
-	UpdatedAt        int64
+	// WorkflowRunID is the workflow run that created the session, and
+	// WorkflowSeq the seq of the run's event that created it. Both are zero
+	// for sessions no run created.
+	WorkflowRunID string
+	WorkflowSeq   int
+	// WorkflowKind is what a workflow run made the session for.
+	WorkflowKind WorkflowKind
+	// ForkedFrom is, for a fork, the message in the source session its
+	// copy ends at.
+	ForkedFrom string
+	CreatedAt  int64
+	UpdatedAt  int64
+}
+
+// WorkflowKind is what a workflow run made a session for.
+type WorkflowKind string
+
+const (
+	// WorkflowKindSession is an orchestrator session the user can talk to,
+	// such as a builder.
+	WorkflowKindSession WorkflowKind = "session"
+	// WorkflowKindAgent is a subagent's session.
+	WorkflowKindAgent WorkflowKind = "agent"
+)
+
+// WorkflowOwner records which workflow run made a session, with the seq of
+// the run's event that made it, what for, and for a fork, the source
+// message its copy ends at.
+type WorkflowOwner struct {
+	RunID      string
+	Seq        int
+	Kind       WorkflowKind
+	ForkedFrom string
+}
+
+// Conversational reports whether the user talks to this session directly:
+// a top-level session, or an orchestrator session a workflow run made. A
+// subagent's session isn't; its conversation is its parent's.
+func (s Session) Conversational() bool {
+	return s.ParentSessionID == "" || s.WorkflowKind == WorkflowKindSession
 }
 
 // MaxPinNoteLen is the maximum length of a pin note in runes.
@@ -114,6 +152,23 @@ type Service interface {
 	// outside this service, such as a message store moving its leaf.
 	Refresh(ctx context.Context, sessionID string) error
 	Delete(ctx context.Context, id string) error
+
+	// CreateWorkflowSession creates a child session a workflow run owns,
+	// recording its owner in the same write, so it's never seen without
+	// one. An empty id gets a new one.
+	CreateWorkflowSession(ctx context.Context, id, parentSessionID, title string, owner WorkflowOwner) (Session, error)
+	// Discard deletes a session a workflow run made but couldn't finish
+	// making, which nothing has used yet, so it skips Delete's checks that
+	// the run is done with it.
+	Discard(ctx context.Context, id string) error
+	// WorkflowDescendants lists the sessions workflow runs made from id,
+	// and from those, all the way down: what deleting id deletes with it.
+	WorkflowDescendants(ctx context.Context, id string) ([]string, error)
+	// SetWorkflowOwner records which workflow run made the session.
+	SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error
+	// ListByWorkflowRun returns the sessions a workflow run created, in the
+	// order its events created them.
+	ListByWorkflowRun(ctx context.Context, runID string) ([]Session, error)
 
 	// Agent tool session management
 	CreateAgentToolSessionID(messageID, toolCallID string) string
@@ -197,6 +252,35 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 	return session, nil
 }
 
+// Deleting a session deletes the sessions workflow runs made from it, so
+// it's refused while they're in use, whichever Anvil is using them.
+var (
+	// ErrWorkflowRunning refuses it while a run started from the session,
+	// or one that made it, is recorded as running.
+	ErrWorkflowRunning = errors.New("a workflow using this session is still running; abort it (or wait for it to finish) before deleting the session")
+	// ErrWorkflowSessionInUse refuses it while a session a run made from
+	// it, such as a builder after hand-over, is working or has background
+	// jobs running.
+	ErrWorkflowSessionInUse = errors.New("a workflow session made from this session is working or has background jobs running; stop them before deleting it")
+)
+
+func (s *service) Discard(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	deleted, jobKeys, err := deleteSessionTree(ctx, s.q.WithTx(tx), id)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	s.finishDelete(deleted, jobKeys)
+	return nil
+}
+
 func (s *service) Delete(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -205,33 +289,94 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	qtx := s.q.WithTx(tx)
-
-	dbSession, err := qtx.GetSessionByID(ctx, id)
+	// A session a running run made is still in use by it.
+	own, err := qtx.GetSessionByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if err = qtx.DeleteSessionMessages(ctx, dbSession.ID); err != nil {
-		return fmt.Errorf("deleting session messages: %w", err)
+	if own.WorkflowRunID != "" {
+		run, err := qtx.GetWorkflowRun(ctx, own.WorkflowRunID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("checking the workflow run of %s: %w", id, err)
+		}
+		if err == nil && run.Status == "running" {
+			return ErrWorkflowRunning
+		}
 	}
-	jobKeys, err := qtx.ListBackgroundJobIDsBySession(ctx, dbSession.ID)
+	deleted, jobKeys, err := deleteSessionTree(ctx, qtx, id)
 	if err != nil {
-		return fmt.Errorf("listing session background jobs: %w", err)
-	}
-	if err = qtx.DeleteBackgroundJobsBySession(ctx, dbSession.ID); err != nil {
-		return fmt.Errorf("deleting session background jobs: %w", err)
-	}
-	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
-		return fmt.Errorf("deleting session: %w", err)
+		return err
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
-	s.removeJobLogs(jobKeys)
-
-	session := s.fromDBItem(dbSession)
-	s.clearEstimatedUsageState(dbSession.ID)
-	s.Publish(pubsub.DeletedEvent, session)
+	s.finishDelete(deleted, jobKeys)
 	return nil
+}
+
+// finishDelete cleans up after deleted sessions once their rows are gone.
+func (s *service) finishDelete(deleted []db.Session, jobKeys []int64) {
+	s.removeJobLogs(jobKeys)
+	for _, dbSession := range deleted {
+		s.clearEstimatedUsageState(dbSession.ID)
+		s.Publish(pubsub.DeletedEvent, s.fromDBItem(dbSession))
+	}
+}
+
+// deleteSessionTree deletes a session with its messages and background
+// jobs, and first the sessions workflow runs made from it (builders, which
+// hold a copy of its conversation, and subagents), which are reached only
+// through it. It returns what it deleted, children first, and the deleted
+// jobs' log keys.
+func deleteSessionTree(ctx context.Context, qtx *db.Queries, id string) ([]db.Session, []int64, error) {
+	dbSession, err := qtx.GetSessionByID(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	// A run started from any session in the tree, such as a builder the
+	// user continued and ran another workflow from, still uses it.
+	running, err := qtx.CountRunningWorkflowRunsFrom(ctx, id)
+	if err != nil {
+		return nil, nil, fmt.Errorf("checking for running workflows from %s: %w", id, err)
+	}
+	if running > 0 {
+		return nil, nil, ErrWorkflowRunning
+	}
+	children, err := qtx.ListWorkflowChildSessionIDs(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing workflow sessions of %s: %w", id, err)
+	}
+	var deleted []db.Session
+	var jobKeys []int64
+	for _, child := range children {
+		jobs, err := qtx.CountRunningBackgroundJobsBySession(ctx, child)
+		if err != nil {
+			return nil, nil, fmt.Errorf("checking jobs of workflow session %s: %w", child, err)
+		}
+		if jobs > 0 {
+			return nil, nil, ErrWorkflowSessionInUse
+		}
+		childDeleted, childJobs, err := deleteSessionTree(ctx, qtx, child)
+		if err != nil {
+			return nil, nil, err
+		}
+		deleted = append(deleted, childDeleted...)
+		jobKeys = append(jobKeys, childJobs...)
+	}
+	if err = qtx.DeleteSessionMessages(ctx, dbSession.ID); err != nil {
+		return nil, nil, fmt.Errorf("deleting session messages: %w", err)
+	}
+	keys, err := qtx.ListBackgroundJobIDsBySession(ctx, dbSession.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing session background jobs: %w", err)
+	}
+	if err = qtx.DeleteBackgroundJobsBySession(ctx, dbSession.ID); err != nil {
+		return nil, nil, fmt.Errorf("deleting session background jobs: %w", err)
+	}
+	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
+		return nil, nil, fmt.Errorf("deleting session: %w", err)
+	}
+	return append(deleted, dbSession), append(jobKeys, keys...), nil
 }
 
 func (s *service) Get(ctx context.Context, id string) (Session, error) {
@@ -495,9 +640,95 @@ func (s *service) fromDBItem(item db.Session) Session {
 		Todos:            todos,
 		Pinned:           item.Pinned != 0,
 		PinNote:          item.PinNote,
+		WorkflowRunID:    item.WorkflowRunID,
+		WorkflowSeq:      int(item.WorkflowSeq),
+		WorkflowKind:     WorkflowKind(item.WorkflowKind),
+		ForkedFrom:       item.ForkedFromMessageID,
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
+}
+
+func (s *service) CreateWorkflowSession(ctx context.Context, id, parentSessionID, title string, owner WorkflowOwner) (Session, error) {
+	parent, err := s.q.GetSessionByID(ctx, parentSessionID)
+	if err != nil {
+		return Session{}, fmt.Errorf("looking up parent session: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	qtx := s.q.WithTx(tx)
+	if id == "" {
+		id = uuid.NewString()
+	}
+	if _, err := qtx.CreateSession(ctx, db.CreateSessionParams{
+		ID:              id,
+		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
+		Title:           title,
+		WorkingDir:      parent.WorkingDir,
+	}); err != nil {
+		return Session{}, err
+	}
+	if err := qtx.SetSessionWorkflowOwner(ctx, db.SetSessionWorkflowOwnerParams{
+		ID:                  id,
+		WorkflowRunID:       owner.RunID,
+		WorkflowSeq:         int64(owner.Seq),
+		WorkflowKind:        string(owner.Kind),
+		ForkedFromMessageID: owner.ForkedFrom,
+	}); err != nil {
+		return Session{}, fmt.Errorf("set workflow owner of session %s: %w", id, err)
+	}
+	dbSession, err := qtx.GetSessionByID(ctx, id)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, fmt.Errorf("committing transaction: %w", err)
+	}
+	session := s.fromDBItem(dbSession)
+	s.Publish(pubsub.CreatedEvent, session)
+	return session, nil
+}
+
+func (s *service) WorkflowDescendants(ctx context.Context, id string) ([]string, error) {
+	var out []string
+	queue := []string{id}
+	for len(queue) > 0 {
+		children, err := s.q.ListWorkflowChildSessionIDs(ctx, sql.NullString{String: queue[0], Valid: true})
+		if err != nil {
+			return nil, fmt.Errorf("listing workflow sessions of %s: %w", queue[0], err)
+		}
+		queue = append(queue[1:], children...)
+		out = append(out, children...)
+	}
+	return out, nil
+}
+
+func (s *service) SetWorkflowOwner(ctx context.Context, id string, owner WorkflowOwner) error {
+	if err := s.q.SetSessionWorkflowOwner(ctx, db.SetSessionWorkflowOwnerParams{
+		ID:                  id,
+		WorkflowRunID:       owner.RunID,
+		WorkflowSeq:         int64(owner.Seq),
+		WorkflowKind:        string(owner.Kind),
+		ForkedFromMessageID: owner.ForkedFrom,
+	}); err != nil {
+		return fmt.Errorf("set workflow owner of session %s: %w", id, err)
+	}
+	return nil
+}
+
+func (s *service) ListByWorkflowRun(ctx context.Context, runID string) ([]Session, error) {
+	rows, err := s.q.ListSessionsByWorkflowRun(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions of workflow run %s: %w", runID, err)
+	}
+	sessions := make([]Session, len(rows))
+	for i, row := range rows {
+		sessions[i] = s.fromDBItem(row)
+	}
+	return sessions, nil
 }
 
 func boolToInt64(b bool) int64 {

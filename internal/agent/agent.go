@@ -336,7 +336,11 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	}
 	t.session = currentSession
 	t.leaf = currentSession.LeafMessageID
-	t.parentSessionID = currentSession.ParentSessionID
+	// A workflow's builder is a child session the user talks to; for cache
+	// tracking it's a conversation of its own, not a one-off subagent.
+	if !currentSession.Conversational() {
+		t.parentSessionID = currentSession.ParentSessionID
+	}
 
 	msgs, _, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
@@ -628,7 +632,13 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
-	call := a.newSideCall(usageKindSummary, sessionID, currentSession.ParentSessionID, largeModel)
+	// A builder's summary is a conversation's, like its turns, not a
+	// subagent's.
+	parentID := currentSession.ParentSessionID
+	if currentSession.Conversational() {
+		parentID = ""
+	}
+	call := a.newSideCall(usageKindSummary, sessionID, parentID, largeModel)
 	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return localPersistence(ctx, err)

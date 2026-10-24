@@ -57,6 +57,11 @@ type RunRecord struct {
 	InstanceID        string
 	StartedAt         time.Time
 	FinishedAt        time.Time // Zero while running.
+	// MarkerMessageID is the message marking the run in its invoking
+	// session; empty until it's written.
+	MarkerMessageID string
+	// Paused reports whether the user paused the run.
+	Paused bool
 }
 
 // Store persists workflow state in the database and run directories
@@ -165,6 +170,8 @@ func (s *Store) GetRun(ctx context.Context, id string) (RunRecord, bool, error) 
 		Tmpdir:            row.Tmpdir,
 		InstanceID:        row.InstanceID,
 		StartedAt:         time.UnixMilli(row.StartedAt),
+		MarkerMessageID:   row.MarkerMessageID,
+		Paused:            row.Paused != 0,
 	}
 	if row.FinishedAt.Valid {
 		rec.FinishedAt = time.UnixMilli(row.FinishedAt.Int64)
@@ -200,6 +207,57 @@ func (r eventRecorder) Record(ctx context.Context, ev workflow.Event) error {
 		return fmt.Errorf("record event %d of workflow run %s: %w", ev.Seq, r.runID, err)
 	}
 	return nil
+}
+
+// SetMarker records the message that marks the run in its invoking
+// session.
+func (s *Store) SetMarker(ctx context.Context, runID, messageID string) error {
+	if err := s.q.SetWorkflowRunMarker(ctx, db.SetWorkflowRunMarkerParams{ID: runID, MarkerMessageID: messageID}); err != nil {
+		return fmt.Errorf("set marker of workflow run %s: %w", runID, err)
+	}
+	return nil
+}
+
+// SetPaused records whether the user has paused the run.
+func (s *Store) SetPaused(ctx context.Context, runID string, paused bool) error {
+	var v int64
+	if paused {
+		v = 1
+	}
+	if err := s.q.SetWorkflowRunPaused(ctx, db.SetWorkflowRunPausedParams{ID: runID, Paused: v}); err != nil {
+		return fmt.Errorf("set paused of workflow run %s: %w", runID, err)
+	}
+	return nil
+}
+
+// listViewEvents returns a run's events with only the payloads its view
+// reads: the arguments of status, agent and ask calls, the answer to each
+// ask, and errors.
+func (s *Store) listViewEvents(ctx context.Context, runID string) ([]workflow.Event, error) {
+	rows, err := s.q.ListWorkflowViewEvents(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list view events of workflow run %s: %w", runID, err)
+	}
+	events := make([]workflow.Event, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, workflow.Event{
+			Seq:       int(row.Seq),
+			Primitive: row.Primitive,
+			Phase:     workflow.Phase(row.Phase),
+			Args:      textJSON(row.Args),
+			Result:    textJSON(row.Result),
+			Error:     textJSON(row.Error),
+		})
+	}
+	return events, nil
+}
+
+// textJSON is raw JSON stored as text, nil when empty.
+func textJSON(s string) json.RawMessage {
+	if s == "" {
+		return nil
+	}
+	return json.RawMessage(s)
 }
 
 // ListEvents returns a run's events ordered by sequence number, each

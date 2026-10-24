@@ -97,11 +97,17 @@ type childSession struct {
 	CallID string
 	// OnCreate, when set, is called once the session exists.
 	OnCreate func(sessionID string)
+	// KeepJobs keeps the child's surviving background jobs in its own
+	// session rather than handing them to the parent.
+	KeepJobs bool
+	// Owner, when set, is the workflow run the session belongs to,
+	// recorded as the session is created.
+	Owner *session.WorkflowOwner
 }
 
 // inChildSession runs fn in a child session of s.ParentID, creating it
 // unless it exists, then rolls the child's new cost up to the parent and
-// hands its surviving background jobs to the parent. It returns the
+// hands its surviving background jobs to the parent, unless s.KeepJobs. It returns the
 // hand-off inventory, empty when there were no jobs. Every subagent run,
 // from the task tool or a workflow, goes through here.
 func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn func(ctx context.Context, sessionID string) error) (handedOff string, err error) {
@@ -111,14 +117,23 @@ func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn fun
 	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
 	sessionID := s.ID
 	if !s.Existing {
-		created, err := c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
+		var created session.Session
+		if s.Owner != nil {
+			created, err = c.sessions.CreateWorkflowSession(ctx, s.ID, s.ParentID, s.Title, *s.Owner)
+		} else {
+			created, err = c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
+		}
 		if err != nil {
 			return "", fmt.Errorf("create session: %w", err)
 		}
 		sessionID = created.ID
 	}
+	jobOwner := s.ParentID
+	if s.KeepJobs {
+		jobOwner = sessionID
+	}
 	defer func() {
-		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, sessionID, s.ParentID)
+		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, sessionID, jobOwner)
 	}()
 	defer c.permissions.RevokeAutoApproveSession(sessionID)
 	defer c.rollUpChildCost(ctx, sessionID, s.CallID)

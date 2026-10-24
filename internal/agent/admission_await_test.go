@@ -59,7 +59,7 @@ func TestAwaitQueuedBehindBusySessionGetsOwnResult(t *testing.T) {
 		require.NoError(t, err)
 		awaited <- resultText(r)
 	}()
-	require.Eventually(t, func() bool { return len(a.queued("s")) == 1 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return queueLen(a, "s") == 1 }, time.Second, time.Millisecond)
 	_, err := a.submit(t.Context(), "s", submission{prompt: "later", run: instantRun("C")})
 	require.NoError(t, err)
 
@@ -90,7 +90,10 @@ func TestAwaitOnIdleSessionReturnsBeforeLaterQueuedWork(t *testing.T) {
 	<-laterEntered
 }
 
-func TestAwaitQueuedIsCancelledWhenQueueIsCleared(t *testing.T) {
+// Esc clears the user's queued prompts. A workflow script's queued turn,
+// in a builder the user is also typing into, isn't theirs to clear: it
+// stays queued and runs once the session is free.
+func TestClearingAQueueKeepsAScriptsQueuedTurn(t *testing.T) {
 	t.Parallel()
 
 	for name, clearQueue := range map[string]func(a *admission){
@@ -101,19 +104,25 @@ func TestAwaitQueuedIsCancelledWhenQueueIsCleared(t *testing.T) {
 			t.Parallel()
 			a := newAdmission(t.Context())
 			entered, release := make(chan struct{}), make(chan struct{})
-			defer close(release)
 			go func() {
-				_, _ = a.submit(t.Context(), "s", submission{run: blockingRun("A", entered, release)})
+				_, _ = a.submit(t.Context(), "s", submission{prompt: "mine", run: blockingRun("A", entered, release)})
 			}()
 			<-entered
-			awaited := make(chan error, 1)
+			awaited := make(chan string, 1)
 			go func() {
-				_, err := a.submitAwait(t.Context(), "s", submission{prompt: "script", run: instantRun("B")})
-				awaited <- err
+				r, err := a.submitAwait(t.Context(), "s", submission{prompt: "<workflow_turn>", run: instantRun("B")})
+				require.NoError(t, err)
+				awaited <- resultText(r)
 			}()
-			require.Eventually(t, func() bool { return len(a.queued("s")) == 1 }, time.Second, time.Millisecond)
+			require.Eventually(t, func() bool { return queueLen(a, "s") == 1 }, time.Second, time.Millisecond)
+			_, err := a.submit(t.Context(), "s", submission{prompt: "typed", run: instantRun("C")})
+			require.NoError(t, err)
+			require.Equal(t, []string{"typed"}, a.queued("s"), "the queue lists what the user can clear")
 			clearQueue(a)
-			require.ErrorIs(t, <-awaited, context.Canceled)
+			require.Empty(t, a.queued("s"))
+			require.Equal(t, 1, queueLen(a, "s"), "the script's turn is still queued")
+			close(release)
+			require.Equal(t, "B", <-awaited, "the script's turn still runs")
 		})
 	}
 }
@@ -134,7 +143,7 @@ func TestAwaitWithdrawsWhenItsContextEnds(t *testing.T) {
 		_, err := a.submitAwait(ctx, "s", submission{prompt: "script", run: instantRun("B")})
 		awaited <- err
 	}()
-	require.Eventually(t, func() bool { return len(a.queued("s")) == 1 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return queueLen(a, "s") == 1 }, time.Second, time.Millisecond)
 	cancel()
 	require.ErrorIs(t, <-awaited, context.Canceled)
 	require.Empty(t, a.queued("s"))
@@ -187,7 +196,7 @@ func TestAwaitQueuedRunsAfterPreviousOwnerFails(t *testing.T) {
 		require.NoError(t, err)
 		awaited <- resultText(r)
 	}()
-	require.Eventually(t, func() bool { return len(a.queued("s")) == 1 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return queueLen(a, "s") == 1 }, time.Second, time.Millisecond)
 	close(release)
 	require.Equal(t, "B", <-awaited)
 }
@@ -213,7 +222,7 @@ func TestAwaitedRunUsesItsOwnContext(t *testing.T) {
 			return nil, nil
 		}})
 	}()
-	require.Eventually(t, func() bool { return len(a.queued("s")) == 1 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return queueLen(a, "s") == 1 }, time.Second, time.Millisecond)
 	release <- struct{}{}
 	require.Equal(t, "script", <-got)
 }
@@ -259,7 +268,7 @@ func TestAwaitBehindQueuedUserWorkRunsAfterUserTurnFails(t *testing.T) {
 		require.NoError(t, err)
 		awaited <- resultText(r)
 	}()
-	require.Eventually(t, func() bool { return len(a.queued("s")) == 2 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return queueLen(a, "s") == 2 }, time.Second, time.Millisecond)
 	close(release)
 	select {
 	case got := <-awaited:
@@ -364,4 +373,214 @@ func TestAwaitWithAFinishedOwnersContextIsRefused(t *testing.T) {
 	}})
 	require.ErrorIs(t, err, ErrSessionBusy)
 	require.False(t, ran.Load())
+}
+
+// Esc cancels the turn and the prompts queued behind it. Silent work (a
+// workflow's marker, a metadata entry) isn't a prompt the user can see, so
+// it survives and runs once the session is free.
+func TestCancellingASessionKeepsItsSilentWork(t *testing.T) {
+	t.Parallel()
+
+	for name, stop := range map[string]func(a *admission){
+		"cancel": func(a *admission) { a.cancel("s") },
+		"clear":  func(a *admission) { a.clear("s") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			a := newAdmission(t.Context())
+			entered, release := make(chan struct{}), make(chan struct{})
+			go func() {
+				_, _ = a.submit(t.Context(), "s", submission{prompt: "user", run: blockingRun("A", entered, release)})
+			}()
+			<-entered
+
+			silent := make(chan error, 1)
+			go func() {
+				_, err := a.submitAwait(t.Context(), "s", submission{silent: true, run: instantRun("marker")})
+				silent <- err
+			}()
+			require.Eventually(t, func() bool { return queueLen(a, "s") == 1 }, time.Second, time.Millisecond)
+			ran := make(chan struct{}, 1)
+			_, err := a.submit(t.Context(), "s", submission{prompt: "queued", run: func(context.Context) (*fantasy.AgentResult, error) {
+				ran <- struct{}{}
+				return textResult("Q"), nil
+			}})
+			require.NoError(t, err)
+
+			stop(a)
+			require.Empty(t, a.queued("s"), "the user's queued prompt is dropped")
+			close(release)
+			require.NoError(t, <-silent, "the silent work still runs")
+			require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+			require.Empty(t, ran)
+		})
+	}
+}
+
+// A failed turn holds back the prompts queued behind it. Silent work queued
+// among them (a model change written while the turn ran) still runs, and
+// mustn't release the prompts when it does.
+func TestSilentWorkAfterAFailedTurnKeepsPromptsHeld(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	entered, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "A", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			close(entered)
+			<-release
+			return nil, errors.New("user turn failed")
+		}})
+	}()
+	<-entered
+	ran := make(chan struct{}, 1)
+	_, err := a.submit(t.Context(), "s", submission{prompt: "B", run: func(context.Context) (*fantasy.AgentResult, error) {
+		ran <- struct{}{}
+		return textResult("B"), nil
+	}})
+	require.NoError(t, err)
+	silent := make(chan error, 1)
+	go func() {
+		_, err := a.submitAwait(t.Context(), "s", submission{silent: true, run: instantRun("meta")})
+		silent <- err
+	}()
+	require.Eventually(t, func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return len(a.queues["s"]) == 2
+	}, time.Second, time.Millisecond)
+
+	close(release)
+	require.NoError(t, <-silent, "the silent work runs")
+	require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+	select {
+	case <-ran:
+		t.Fatal("the held prompt ran")
+	default:
+	}
+	require.Equal(t, []string{"B"}, a.queued("s"), "the prompt is still queued")
+}
+
+// The same, when the silent work arrives after the failed turn has ended
+// and the session is idle with the prompt still held.
+func TestSilentWorkOnAnIdleSessionKeepsHeldPromptsHeld(t *testing.T) {
+	t.Parallel()
+
+	a := newAdmission(t.Context())
+	entered, release := make(chan struct{}), make(chan struct{})
+	failed := make(chan struct{})
+	go func() {
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "A", run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+			close(entered)
+			<-release
+			return nil, errors.New("user turn failed")
+		}})
+		close(failed)
+	}()
+	<-entered
+	ran := make(chan struct{}, 1)
+	_, err := a.submit(t.Context(), "s", submission{prompt: "B", run: func(context.Context) (*fantasy.AgentResult, error) {
+		ran <- struct{}{}
+		return textResult("B"), nil
+	}})
+	require.NoError(t, err)
+	close(release)
+	<-failed
+	require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+
+	_, err = a.submitAwait(t.Context(), "s", submission{silent: true, run: instantRun("meta")})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return !a.busy("s") }, time.Second, time.Millisecond)
+	select {
+	case <-ran:
+		t.Fatal("the held prompt ran")
+	default:
+	}
+	require.Equal(t, []string{"B"}, a.queued("s"))
+}
+
+// Silent work that fails, or is cancelled, isn't a failed turn of the
+// user's: the prompts queued behind it still run.
+func TestAFailedSilentJobDoesntHoldThePromptsBehindIt(t *testing.T) {
+	t.Parallel()
+
+	for name, run := range map[string]func(ctx context.Context) (*fantasy.AgentResult, error){
+		"fails":     func(context.Context) (*fantasy.AgentResult, error) { return nil, errors.New("disk full") },
+		"cancelled": func(context.Context) (*fantasy.AgentResult, error) { return nil, context.Canceled },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			a := newAdmission(t.Context())
+			entered, release := make(chan struct{}), make(chan struct{})
+			silentDone := make(chan struct{})
+			go func() {
+				_, _ = a.submitAwait(t.Context(), "s", submission{silent: true, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+					close(entered)
+					<-release
+					return run(ctx)
+				}})
+				close(silentDone)
+			}()
+			<-entered
+			ran := make(chan struct{}, 1)
+			_, err := a.submit(t.Context(), "s", submission{prompt: "B", run: func(context.Context) (*fantasy.AgentResult, error) {
+				ran <- struct{}{}
+				return textResult("B"), nil
+			}})
+			require.NoError(t, err)
+			close(release)
+			<-silentDone
+			select {
+			case <-ran:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the prompt behind the silent job was held")
+			}
+		})
+	}
+}
+
+// queueLen counts everything queued on a session, including the silent
+// work and script turns queued() leaves out.
+func queueLen(a *admission, id string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.queues[id])
+}
+
+// Once the app is shutting down, nothing queued starts after the running
+// turn, and the queue is left as it was.
+func TestNothingQueuedStartsOnceTheLifetimeEnds(t *testing.T) {
+	t.Parallel()
+
+	lifetime, shutdown := context.WithCancel(t.Context())
+	a := newAdmission(lifetime)
+	entered, release := make(chan struct{}), make(chan struct{})
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_, _ = a.submit(t.Context(), "s", submission{prompt: "first", run: blockingRun("A", entered, release)})
+	}()
+	<-entered
+	var ran atomic.Int32
+	queuedRun := func(context.Context) (*fantasy.AgentResult, error) {
+		ran.Add(1)
+		return textResult("queued"), nil
+	}
+	for _, prompt := range []string{"second", "third"} {
+		_, err := a.submit(t.Context(), "s", submission{prompt: prompt, run: queuedRun})
+		require.NoError(t, err)
+	}
+	require.Equal(t, 2, queueLen(a, "s"))
+
+	shutdown()
+	close(release)
+	select {
+	case <-firstDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the running turn never finished")
+	}
+	require.Zero(t, ran.Load())
+	require.Equal(t, 2, queueLen(a, "s"))
 }

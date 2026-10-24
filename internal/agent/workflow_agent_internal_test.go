@@ -53,10 +53,10 @@ func TestLazyServersForToolNames(t *testing.T) {
 	}
 }
 
-// A workflow gets only the subagent's text and output, so jobs handed to
-// the parent session are logged instead. It replaces the default logger,
-// so it doesn't run in parallel.
-func TestWorkflowAgentLogsJobsHandedToTheParent(t *testing.T) {
+// A workflow subagent's parent is the user's own session, which the run
+// never works in, so its surviving jobs stay in its own session, and are
+// logged. It replaces the default logger, so it doesn't run in parallel.
+func TestWorkflowAgentKeepsItsSurvivingJobs(t *testing.T) {
 	logs := captureLogs(t)
 	env := testEnv(t)
 	c, _ := newReloadTestCoordinator(t, env)
@@ -70,6 +70,7 @@ func TestWorkflowAgentLogsJobsHandedToTheParent(t *testing.T) {
 	out, err := c.RunWorkflowAgent(t.Context(), WorkflowAgentCall{ParentSessionID: parent.ID, Agent: "helper", Prompt: "x"})
 	require.NoError(t, err)
 	require.Equal(t, "done", out.Text)
-	require.Len(t, shell.GetBackgroundShellManager().ListBySession(parent.ID), 1)
-	require.Contains(t, logs.String(), "Workflow subagent jobs handed off")
+	require.Empty(t, shell.GetBackgroundShellManager().ListBySession(parent.ID))
+	require.Len(t, shell.GetBackgroundShellManager().ListBySession(out.SessionID), 1)
+	require.Contains(t, logs.String(), "Workflow subagent jobs left running")
 }

@@ -190,7 +190,7 @@ function main(input) {
   const verdict = agent("reviewer", reference("references/rubric.md"), {
     schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
   });
-  if (!verdict.ok) session.current().turn("Fix the review findings.");
+  if (!verdict.ok) session.current().fork({ title: "fixer" }).turn("Fix the review findings.");
   return verdict;
 }
 ```
@@ -202,19 +202,44 @@ be called from inside it. The primitives:
 
 - `bash(cmd, {cwd, check})` runs a command without a permission prompt and
   throws `BashError` on a non-zero exit unless `check: false`.
-- `session.current()` and `session.new({title, seed, skills})` return
-  sessions whose `.turn(prompt, {schema, skills})` runs a visible turn.
+- `session.new({title, seed, skills})` and `s.fork({title, seed, skills})`
+  return sessions the run owns, whose `.turn(prompt, {schema, skills})` runs
+  a visible turn. `session.current()` is the session you started the run
+  from; it stays yours, so a script can only fork it, which copies your
+  conversation as it was when the run started.
 - `agent(name, prompt, {schema, skills, tools, model})` runs a subagent in a
   fresh child session; `parallel([...])` runs several and settles each.
 - `ask(question, {options})`, `status(step, detail)`, `skill(name)`,
   `reference(path)`, `readFile(path)`, `now()`, `random()`.
-- `workflow.tmpdir()`, `workflow.dir()`, `workflow.focus(session)` and
+- `workflow.tmpdir()`, `workflow.dir()` and
   `workflow.exclusive(fn, {stopJobs})`, which keeps other work out of the
-  run's sessions while `fn` runs.
+  sessions the run made while `fn` runs, and waits for (or with
+  `stopJobs`, stops) their background jobs and those its subagents left.
+  It never holds your session: you can keep working, and running jobs,
+  there, so it doesn't stop you changing the workspace meanwhile.
 
 A `schema` makes the result a validated object (`SchemaError` otherwise).
-Cancelling a turn throws `Cancelled`. You can pause, resume or abort a run
-from the command palette.
+Cancelling a turn throws `Cancelled`.
+
+Scripts written before run nodes need two changes:
+`session.current().turn(...)` now throws, since your session stays
+yours; fork it and take turns on the fork instead
+(`session.current().fork().turn(...)`). `workflow.focus()` is gone: drill
+into a session from the run's node to watch or talk to it.
+
+A run shows as a node where you started it, saying where it's up to. Drill
+into it (→, `l` or a click) to see its phases, the sessions and subagents in
+each, and your answers to its questions; drill further into any session to
+read it. Sessions the run made with `session.new` or `fork`, such as a
+builder, can be typed into once you've drilled in, so you can keep talking
+to them after the run hands over; while one has the editor, commands and
+palette actions that change your own session (such as summarize or
+rename) are refused until you go back to it. `ctrl+x` pauses or resumes,
+and `alt+x` aborts, the run whose view is open, whose node is selected, or
+the latest one started from the session you're in; the command palette has
+the same controls. A session can't be deleted while a run started from it
+is going, or while a builder made from it is working or has background
+jobs running, since deleting it deletes the sessions its runs made.
 
 The first time a workflow runs, and whenever any file in its command
 directory changes, Anvil shows you every file (as a diff once approved) and

@@ -56,6 +56,29 @@ func (m *Attachments) ExitDeleteMode()              { m.deleting = false }
 func (m *Attachments) HasContent() bool             { return len(m.list) > 0 || len(m.skills) > 0 }
 func (m *Attachments) Reset()                       { m.list = nil; m.skills = nil; m.deleting = false }
 
+// Draft is the attachments of a message that hasn't been sent.
+type Draft struct {
+	list   []message.Attachment
+	skills []SkillAttachment
+}
+
+// IsEmpty reports whether the draft has no attachments.
+func (d Draft) IsEmpty() bool {
+	return len(d.list) == 0 && len(d.skills) == 0
+}
+
+// Take removes the attachments and returns them as a draft.
+func (m *Attachments) Take() Draft {
+	d := Draft{list: m.list, skills: m.skills}
+	m.Reset()
+	return d
+}
+
+// Put replaces the attachments with a draft's.
+func (m *Attachments) Put(d Draft) {
+	m.list, m.skills, m.deleting = d.list, d.skills, false
+}
+
 func (m *Attachments) Update(msg tea.Msg) bool {
 	switch msg := msg.(type) {
 	case message.Attachment:

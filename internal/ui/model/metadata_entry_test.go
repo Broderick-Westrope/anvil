@@ -91,14 +91,14 @@ func TestWriteMetadataEntry(t *testing.T) {
 		"at the branch tip": {
 			session: &session.Session{ID: "s1", LeafMessageID: "leaf"},
 			want: []metadataEntry{{"s1", message.CreateMessageParams{
-				ParentMessageID: "leaf", MessageType: message.MessageTypeLabel, Parts: []message.ContentPart{part},
+				MessageType: message.MessageTypeLabel, Parts: []message.ContentPart{part},
 			}}},
 		},
 		"a failed write is only logged": {
 			session:   &session.Session{ID: "s1", LeafMessageID: "leaf"},
 			failWrite: true,
 			want: []metadataEntry{{"s1", message.CreateMessageParams{
-				ParentMessageID: "leaf", MessageType: message.MessageTypeLabel, Parts: []message.ContentPart{part},
+				MessageType: message.MessageTypeLabel, Parts: []message.ContentPart{part},
 			}}},
 		},
 	}
@@ -142,8 +142,9 @@ func TestSelectModel_RecordsLargeModelChanges(t *testing.T) {
 			modelType: config.SelectedModelTypeLarge,
 			model:     config.SelectedModel{Provider: "anthropic", Model: "opus"},
 		},
-		"small model":                  {modelType: config.SelectedModelTypeSmall, model: changed},
-		"agent busy during OAuth flow": {modelType: config.SelectedModelTypeLarge, model: changed, busy: true},
+		"small model": {modelType: config.SelectedModelTypeSmall, model: changed},
+		// The entry queues behind the work in flight rather than racing it.
+		"agent busy during OAuth flow": {modelType: config.SelectedModelTypeLarge, model: changed, busy: true, want: true},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -162,9 +163,8 @@ func TestSelectModel_RecordsLargeModelChanges(t *testing.T) {
 				return
 			}
 			require.Equal(t, []metadataEntry{{"s1", message.CreateMessageParams{
-				ParentMessageID: "leaf",
-				MessageType:     message.MessageTypeModelChange,
-				Parts:           []message.ContentPart{message.ModelChangeContent{Provider: tc.model.Provider, ModelID: tc.model.Model}},
+				MessageType: message.MessageTypeModelChange,
+				Parts:       []message.ContentPart{message.ModelChangeContent{Provider: tc.model.Provider, ModelID: tc.model.Model}},
 			}}}, ws.entries)
 		})
 	}
@@ -191,9 +191,8 @@ func TestSelectReasoningEffort_RecordsChanges(t *testing.T) {
 				return
 			}
 			require.Equal(t, []metadataEntry{{"s1", message.CreateMessageParams{
-				ParentMessageID: "leaf",
-				MessageType:     message.MessageTypeThinkingLevelChange,
-				Parts:           []message.ContentPart{message.ThinkingLevelChangeContent{ThinkingLevel: tc.effort}},
+				MessageType: message.MessageTypeThinkingLevelChange,
+				Parts:       []message.ContentPart{message.ThinkingLevelChangeContent{ThinkingLevel: tc.effort}},
 			}}}, ws.entries)
 		})
 	}

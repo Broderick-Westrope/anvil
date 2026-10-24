@@ -18,6 +18,8 @@ import (
 type sessionsDeleteWorkspace struct {
 	workspace.Workspace
 	sessions []session.Session
+	// running names the sessions a workflow run is using.
+	running map[string]bool
 }
 
 func (w *sessionsDeleteWorkspace) ListSessions(context.Context, string) ([]session.Session, error) {
@@ -27,6 +29,8 @@ func (w *sessionsDeleteWorkspace) ListSessions(context.Context, string) ([]sessi
 func (w *sessionsDeleteWorkspace) WorkingDir() string { return "/tmp/project" }
 
 func (w *sessionsDeleteWorkspace) AgentIsReady() bool { return false }
+
+func (w *sessionsDeleteWorkspace) WorkflowRunning(id string) bool { return w.running[id] }
 
 func newSessionsDeleteDialog(t *testing.T, count, selected int) (*Session, []session.Session) {
 	t.Helper()
@@ -122,4 +126,20 @@ func TestSessionsRename_FilteredTargetsHighlightedSession(t *testing.T) {
 	s.HandleMsg(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	require.Equal(t, sessionsModeUpdating, s.sessionsMode)
 	require.Equal(t, "sess-25", s.selectedSessionItem().ID())
+}
+
+func TestSessionsDelete_RefusedWhileAWorkflowUsesTheSession(t *testing.T) {
+	t.Parallel()
+
+	s, sessions := newSessionsDeleteDialog(t, 5, 2)
+	s.com.Workspace.(*sessionsDeleteWorkspace).running = map[string]bool{sessions[2].ID: true}
+
+	action := s.HandleMsg(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	require.IsType(t, ActionCmd{}, action)
+	require.Equal(t, sessionsModeNormal, s.sessionsMode)
+
+	s.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown})
+	require.Equal(t, sessions[3].ID, s.selectedSessionItem().ID())
+	deleteSelectedSession(t, s)
+	require.Len(t, s.sessions, 4)
 }

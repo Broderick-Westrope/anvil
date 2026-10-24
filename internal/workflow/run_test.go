@@ -2,10 +2,12 @@ package workflow_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -134,17 +136,17 @@ func TestSessionTurnReturnsItsResult(t *testing.T) {
 	h.backend.turnFn = func(_ context.Context, call workflow.TurnCall) (string, error) {
 		return "reply to " + call.Prompt, nil
 	}
-	got, err := h.run(t, `function main() { return session.current().turn("build it") }`, "")
+	got, err := h.run(t, `function main() { return session.new().turn("build it") }`, "")
 	require.NoError(t, err)
 	require.Equal(t, "reply to build it", got)
-	require.Equal(t, "invoker", h.backend.turns[0].SessionID)
+	require.Equal(t, "new-1", h.backend.turns[0].SessionID)
 }
 
 func TestTurnSkillsArePassedAndUndeclaredWarns(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	_, err := h.run(t, `function main() { session.current().turn("x", {skills: ["go-style"]}) }`, "")
+	_, err := h.run(t, `function main() { session.new().turn("x", {skills: ["go-style"]}) }`, "")
 	require.NoError(t, err)
 	require.Equal(t, []string{"go-style"}, h.backend.turns[0].Skills)
 	require.Equal(t, []string{"undeclared: add skill \"go-style\" to requires()"}, h.backend.warnings)
@@ -154,7 +156,7 @@ func TestTurnWithMissingSkillThrows(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	_, err := h.run(t, `function main() { session.current().turn("x", {skills: ["nope"]}) }`, "")
+	_, err := h.run(t, `function main() { session.new().turn("x", {skills: ["nope"]}) }`, "")
 	require.ErrorContains(t, err, `skill "nope" not found`)
 	require.Empty(t, h.backend.turns)
 }
@@ -169,7 +171,7 @@ func TestTurnWithSchemaReturnsValidatedObject(t *testing.T) {
 		return "Here you go:\n```json\n{\"kind\": \"clean\"}\n```", nil
 	}
 	got, err := h.run(t, `const S = {type: "object", properties: {kind: {type: "string"}}, required: ["kind"]}
-function main() { return session.current().turn("judge", {schema: S}).kind }`, "")
+function main() { return session.new().turn("judge", {schema: S}).kind }`, "")
 	require.NoError(t, err)
 	require.Equal(t, "clean", got)
 }
@@ -209,7 +211,7 @@ func TestTurnWithSchemaReadsTheBlockThatEndsTheReply(t *testing.T) {
 			h := newHarness(t)
 			h.backend.turnFn = func(context.Context, workflow.TurnCall) (string, error) { return tc.reply, nil }
 			got, err := h.run(t, `const S = {type: "object", properties: {code: {type: "string"}}, required: ["code"]}
-function main() { return session.current().turn("x", {schema: S}).code }`, "")
+function main() { return session.new().turn("x", {schema: S}).code }`, "")
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
 			require.Len(t, h.backend.turns, 1, "no corrective turn")
@@ -228,11 +230,11 @@ func TestTurnWithSchemaRetriesOnceVisibly(t *testing.T) {
 		return reply, nil
 	}
 	got, err := h.run(t, `const S = {type: "object", required: ["kind"]}
-function main() { return session.current().turn("judge", {schema: S}).kind }`, "")
+function main() { return session.new().turn("judge", {schema: S}).kind }`, "")
 	require.NoError(t, err)
 	require.Equal(t, "changes", got)
 	require.Len(t, h.backend.turns, 2)
-	require.Equal(t, "invoker", h.backend.turns[1].SessionID)
+	require.Equal(t, "new-1", h.backend.turns[1].SessionID)
 }
 
 func TestTurnWithSchemaThrowsSchemaErrorAfterRetry(t *testing.T) {
@@ -244,7 +246,7 @@ func TestTurnWithSchemaThrowsSchemaErrorAfterRetry(t *testing.T) {
 	}
 	got, err := h.run(t, `const S = {type: "object", required: ["kind"]}
 function main() {
-  try { session.current().turn("judge", {schema: S}) }
+  try { session.new().turn("judge", {schema: S}) }
   catch (e) { return {schema: e instanceof SchemaError, raw: e.raw} }
 }`, "")
 	require.NoError(t, err)
@@ -260,7 +262,7 @@ func TestCancelledTurnThrowsCancelled(t *testing.T) {
 		return "", context.Canceled
 	}
 	got, err := h.run(t, `function main() {
-  try { session.current().turn("x") } catch (e) { return e instanceof Cancelled }
+  try { session.new().turn("x") } catch (e) { return e instanceof Cancelled }
 }`, "")
 	require.NoError(t, err)
 	require.Equal(t, true, got)
@@ -457,7 +459,6 @@ func TestEventsLogStartedThenCompletedPerPrimitive(t *testing.T) {
 	require.Equal(t, 1, first.Seq)
 	require.JSONEq(t, `{"step":"build","detail":"1/3"}`, string(first.Args))
 	require.Len(t, first.ArgsHash, 64)
-	require.Equal(t, [][2]string{{"build", "1/3"}}, h.backend.statuses)
 }
 
 func TestAskReturnsAnswer(t *testing.T) {
@@ -523,15 +524,6 @@ func TestTmpdirIsCreated(t *testing.T) {
 	require.DirExists(t, got.(string))
 }
 
-func TestFocusMovesToSession(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t)
-	_, err := h.run(t, `function main() { workflow.focus(session.new({})) }`, "")
-	require.NoError(t, err)
-	require.Equal(t, []string{"new-1"}, h.backend.focused)
-}
-
 func TestExclusiveHoldsRunSessionsAndReleasesOnThrow(t *testing.T) {
 	t.Parallel()
 
@@ -542,7 +534,7 @@ func TestExclusiveHoldsRunSessionsAndReleasesOnThrow(t *testing.T) {
   return workflow.exclusive(() => 5)
 }`, "")
 	require.NoError(t, err)
-	require.Equal(t, [][]string{{"invoker", "new-1"}, {"invoker", "new-1"}}, h.backend.holds)
+	require.Equal(t, [][]string{{"new-1"}, {"new-1"}}, h.backend.holds, "the invoking session is the user's, so it's never held")
 	require.Equal(t, 2, h.backend.released)
 }
 
@@ -693,7 +685,7 @@ func TestTurnInsideExclusiveThrows(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	_, err := h.run(t, `function main() { workflow.exclusive(() => session.current().turn("x")) }`, "")
+	_, err := h.run(t, `function main() { workflow.exclusive(() => session.new().turn("x")) }`, "")
 	require.ErrorContains(t, err, "exclusive")
 	require.Empty(t, h.backend.turns)
 	require.Equal(t, 1, h.backend.released)
@@ -811,4 +803,97 @@ func TestScriptErrorAfterAbortCountsAsAborted(t *testing.T) {
 	}
 	_, err := run.Execute(t.Context(), workflow.Input{})
 	require.ErrorIs(t, err, workflow.ErrAborted)
+}
+
+func TestSessionAndAgentCallsCarryTheSeqOfTheirOwnEvent(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	var mu sync.Mutex
+	agentSeqs := map[string]int{}
+	h.backend.agentFn = func(_ context.Context, call workflow.AgentCall) (workflow.AgentResult, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		agentSeqs[call.Prompt] = call.Seq
+		return workflow.AgentResult{Text: "ok"}, nil
+	}
+	_, err := h.run(t, `requires({agents: ["reviewer"]})
+function main() {
+  session.new({title: "builder"})
+  agent("reviewer", "solo")
+  parallel([{agent: "reviewer", prompt: "a"}, {agent: "reviewer", prompt: "b"}])
+}`, "")
+	require.NoError(t, err)
+
+	started := map[string]int{}
+	for _, ev := range h.recorder.events {
+		if ev.Phase != workflow.PhaseStarted {
+			continue
+		}
+		switch ev.Primitive {
+		case "session.new":
+			started["session"] = ev.Seq
+		case "agent":
+			var args struct{ Prompt string }
+			require.NoError(t, json.Unmarshal(ev.Args, &args))
+			started[args.Prompt] = ev.Seq
+		}
+	}
+	require.Len(t, h.backend.sessionCalls, 1)
+	require.Equal(t, workflow.SessionCall{Title: "builder", Seq: started["session"]}, h.backend.sessionCalls[0])
+	require.Equal(t, map[string]int{"solo": started["solo"], "a": started["a"], "b": started["b"]}, agentSeqs)
+	require.Len(t, map[int]bool{started["solo"]: true, started["a"]: true, started["b"]: true}, 3)
+}
+
+func TestTheInvokingSessionIsOnlyForForking(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	got, err := h.run(t, `function main() {
+  let refused
+  try { session.current().turn("hi") } catch (e) { refused = e.message }
+  const fork = session.current().fork({title: "builder", seed: "SEED"})
+  fork.turn("go")
+  const again = fork.fork()
+  return {refused, fork: fork.id, again: again.id}
+}`, "")
+	require.NoError(t, err)
+	out := got.(map[string]any)
+	require.Contains(t, out["refused"], "fork it with session.current().fork()")
+	require.Equal(t, []workflow.ForkCall{
+		{Source: "invoker", FromInvoker: true, SessionCall: workflow.SessionCall{Title: "builder", Seq: h.backend.forks[0].Seq}},
+		{Source: "new-1", SessionCall: workflow.SessionCall{Seq: h.backend.forks[1].Seq}},
+	}, h.backend.forks)
+	require.Positive(t, h.backend.forks[0].Seq)
+	require.Len(t, h.backend.turns, 1)
+	require.Equal(t, "new-1", h.backend.turns[0].SessionID)
+	require.Equal(t, "SEED\n\ngo", h.backend.turns[0].Prompt)
+}
+
+func TestForkingARunSessionInsideExclusiveThrowsInsteadOfWaitingForever(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	got, err := h.run(t, `function main() {
+  const s = session.new({})
+  return workflow.exclusive(() => {
+    let refused
+    try { s.fork() } catch (e) { refused = e.message }
+    const fromUser = session.current().fork()
+    return {refused, fromUser: fromUser.id}
+  })
+}`, "")
+	require.NoError(t, err)
+	out := got.(map[string]any)
+	require.Equal(t, "fork() of a run's session can't run inside workflow.exclusive", out["refused"])
+	require.Len(t, h.backend.forks, 1, "forking the user's session doesn't wait on the hold")
+	require.True(t, h.backend.forks[0].FromInvoker)
+}
+
+func TestWorkflowFocusSaysItWasRemoved(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	_, err := h.run(t, `function main() { workflow.focus(session.current()) }`, "")
+	require.ErrorContains(t, err, "workflow.focus() was removed")
 }

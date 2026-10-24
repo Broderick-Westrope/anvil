@@ -128,10 +128,11 @@ func TestMetadataEntriesFollowTheStoredLeaf(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// The UI's cached leaf is still the source when the toggle is written.
+	// The UI's cached leaf is still the source when the toggle is written;
+	// the entry goes on the stored leaf regardless.
 	require.NoError(t, f.Workspace.WriteMetadataEntry(f.Context, m.session.ID, message.CreateMessageParams{
-		ParentMessageID: source.ID, MessageType: message.MessageTypeMCPToggle,
-		Parts: []message.ContentPart{message.MCPToggleContent{ServerName: "linear", Enabled: true}},
+		MessageType: message.MessageTypeMCPToggle,
+		Parts:       []message.ContentPart{message.MCPToggleContent{ServerName: "linear", Enabled: true}},
 	}))
 
 	children, err := f.Messages.GetChildren(f.Context, summary.ID)

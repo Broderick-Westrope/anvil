@@ -10,6 +10,19 @@ import (
 	"database/sql"
 )
 
+const countRunningWorkflowRunsFrom = `-- name: CountRunningWorkflowRunsFrom :one
+SELECT COUNT(*)
+FROM workflow_runs
+WHERE status = 'running' AND invoking_session_id = ?
+`
+
+func (q *Queries) CountRunningWorkflowRunsFrom(ctx context.Context, invokingSessionID string) (int64, error) {
+	row := q.queryRow(ctx, q.countRunningWorkflowRunsFromStmt, countRunningWorkflowRunsFrom, invokingSessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createWorkflowRun = `-- name: CreateWorkflowRun :exec
 INSERT INTO workflow_runs (
     id,
@@ -115,7 +128,7 @@ func (q *Queries) GetWorkflowApproval(ctx context.Context, scriptPath string) (W
 }
 
 const getWorkflowRun = `-- name: GetWorkflowRun :one
-SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at
+SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at, marker_message_id, paused
 FROM workflow_runs
 WHERE id = ? LIMIT 1
 `
@@ -140,6 +153,8 @@ func (q *Queries) GetWorkflowRun(ctx context.Context, id string) (WorkflowRun, e
 		&i.InstanceID,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.MarkerMessageID,
+		&i.Paused,
 	)
 	return i, err
 }
@@ -194,7 +209,7 @@ func (q *Queries) InsertWorkflowEvent(ctx context.Context, arg InsertWorkflowEve
 }
 
 const listRunningWorkflowRuns = `-- name: ListRunningWorkflowRuns :many
-SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at
+SELECT id, command, command_source, script_path, script_hash, bundle_hash, invoking_session_id, input, working_dir, status, result, error, tmpdir, instance_id, started_at, finished_at, marker_message_id, paused
 FROM workflow_runs
 WHERE status = 'running'
 ORDER BY started_at ASC
@@ -226,6 +241,8 @@ func (q *Queries) ListRunningWorkflowRuns(ctx context.Context) ([]WorkflowRun, e
 			&i.InstanceID,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.MarkerMessageID,
+			&i.Paused,
 		); err != nil {
 			return nil, err
 		}
@@ -283,6 +300,65 @@ func (q *Queries) ListWorkflowEvents(ctx context.Context, runID string) ([]Workf
 	return items, nil
 }
 
+const listWorkflowViewEvents = `-- name: ListWorkflowViewEvents :many
+SELECT
+    seq,
+    phase,
+    primitive,
+    CAST(COALESCE(CASE
+        WHEN phase != 'started' THEN NULL
+        WHEN primitive IN ('status', 'ask') THEN args
+        -- A subagent's prompt can be long; the view names only the agent.
+        WHEN primitive = 'agent' THEN json_object('agent', json_extract(args, '$.agent'), 'model', json_extract(args, '$.model'))
+    END, '') AS TEXT) AS args,
+    CAST(COALESCE(CASE WHEN primitive = 'ask' AND phase = 'completed' THEN result END, '') AS TEXT) AS result,
+    CAST(COALESCE(CASE WHEN phase = 'failed' THEN error END, '') AS TEXT) AS error
+FROM workflow_events
+WHERE run_id = ?
+ORDER BY seq ASC, id ASC
+`
+
+type ListWorkflowViewEventsRow struct {
+	Seq       int64  `json:"seq"`
+	Phase     string `json:"phase"`
+	Primitive string `json:"primitive"`
+	Args      string `json:"args"`
+	Result    string `json:"result"`
+	Error     string `json:"error"`
+}
+
+// The events a run's view is built from, without the payloads it doesn't
+// read (bash output, turn replies, file contents), which can be large.
+func (q *Queries) ListWorkflowViewEvents(ctx context.Context, runID string) ([]ListWorkflowViewEventsRow, error) {
+	rows, err := q.query(ctx, q.listWorkflowViewEventsStmt, listWorkflowViewEvents, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkflowViewEventsRow{}
+	for rows.Next() {
+		var i ListWorkflowViewEventsRow
+		if err := rows.Scan(
+			&i.Seq,
+			&i.Phase,
+			&i.Primitive,
+			&i.Args,
+			&i.Result,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markWorkflowRunInterrupted = `-- name: MarkWorkflowRunInterrupted :exec
 UPDATE workflow_runs
 SET
@@ -298,6 +374,38 @@ type MarkWorkflowRunInterruptedParams struct {
 
 func (q *Queries) MarkWorkflowRunInterrupted(ctx context.Context, arg MarkWorkflowRunInterruptedParams) error {
 	_, err := q.exec(ctx, q.markWorkflowRunInterruptedStmt, markWorkflowRunInterrupted, arg.FinishedAt, arg.ID)
+	return err
+}
+
+const setWorkflowRunMarker = `-- name: SetWorkflowRunMarker :exec
+UPDATE workflow_runs
+SET marker_message_id = ?
+WHERE id = ?
+`
+
+type SetWorkflowRunMarkerParams struct {
+	MarkerMessageID string `json:"marker_message_id"`
+	ID              string `json:"id"`
+}
+
+func (q *Queries) SetWorkflowRunMarker(ctx context.Context, arg SetWorkflowRunMarkerParams) error {
+	_, err := q.exec(ctx, q.setWorkflowRunMarkerStmt, setWorkflowRunMarker, arg.MarkerMessageID, arg.ID)
+	return err
+}
+
+const setWorkflowRunPaused = `-- name: SetWorkflowRunPaused :exec
+UPDATE workflow_runs
+SET paused = ?
+WHERE id = ?
+`
+
+type SetWorkflowRunPausedParams struct {
+	Paused int64  `json:"paused"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) SetWorkflowRunPaused(ctx context.Context, arg SetWorkflowRunPausedParams) error {
+	_, err := q.exec(ctx, q.setWorkflowRunPausedStmt, setWorkflowRunPaused, arg.Paused, arg.ID)
 	return err
 }
 

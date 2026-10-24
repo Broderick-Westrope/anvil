@@ -32,9 +32,9 @@ A summary of the branch the user left by rewinding, written by a summarizer agen
 
 ## Child Session
 
-A session linked to the session that started it: the session a subagent runs in (a task session), or the one used to generate a title.
+A session linked to the session that started it: the session a subagent runs in (a task session), the one used to generate a title, or a session a workflow run made. Child sessions stay out of the session list. Only a workflow run's orchestrator sessions are **conversational**: the user can talk to them, and what they type there is the intent for them and their subagents.
 
-- **Code:** `session.Session.ParentSessionID`, `CreateTaskSession`, `CreateTitleSession`
+- **Code:** `session.Session.ParentSessionID`, `session.Session.Conversational`, `CreateTaskSession`, `CreateTitleSession`
 - **Not:** branch. A child session is a separate session; a branch is a path inside one.
 
 ## Command
@@ -79,6 +79,13 @@ In the TUI, a fork feature (one upstream Crush doesn't have) built as a type tha
 - **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `graphicsFeature` (`internal/ui/model/graphics.go`)
 - **Not:** sub-component such as `Chat` or `Attachments`, which `UI` calls directly; feature flag.
 
+## Fork
+
+A new session whose history is a copy of another session's branch, made by a workflow with `s.fork()`. Forking the session a run was started from copies its conversation as it was when the run started. The copy gets new message IDs; the original is untouched.
+
+- **Code:** `message.Service.CopyBranch`, `workflowhost.backend.Fork`, the `session.fork` primitive
+- **Not:** branch. A branch is another path inside the same session; a fork is a separate session.
+
 ## Hook
 
 A user-defined shell command in `anvil.json` that runs before a tool call and can allow, block or rewrite it. Hooks run before permission checks.
@@ -116,19 +123,19 @@ An MCP server with `lazy_description` set. It doesn't connect at startup, goes t
 - **Code:** `MCPConfig.IsLazy` (`internal/config/config.go`), `mcp.StateDeferred`
 - **Not:** disabled MCP. A disabled MCP is off for every session.
 
-## MCP Tool Catalogue
-
-The three tools (`search_mcp_tools`, `describe_mcp_tool`, `call_mcp_tool`) through which an agent finds and runs the tools of catalogue-routed MCP servers, whose schemas never enter the tool list. A proxied call runs as the inner tool, under its `mcp_<server>_<tool>` name.
-
-- **Code:** `NewCatalogueTools` (`internal/agent/tools/catalogue.go`), `agentMCPTools` (`internal/agent/mcp_tools.go`)
-- **Not:** lazy loading through `enable_mcp`, which put a whole server in the tool list until it was removed (`docs/adr/0008`).
-
 ## MCP Route
 
 How one MCP server's tools reach the model for the life of the process: `direct` (in the tool list) or `catalogue`. Set by the server's `route`, or under `auto` by the size of its tools in the startup snapshot.
 
 - **Code:** `mcpRoutes`, `deriveMCPRoutes` (`internal/agent/mcp_routes.go`), `mcp.StartupSnapshot`
 - **Not:** connection state. A catalogue server can be connected, deferred or in error.
+
+## MCP Tool Catalogue
+
+The three tools (`search_mcp_tools`, `describe_mcp_tool`, `call_mcp_tool`) through which an agent finds and runs the tools of catalogue-routed MCP servers, whose schemas never enter the tool list. A proxied call runs as the inner tool, under its `mcp_<server>_<tool>` name.
+
+- **Code:** `NewCatalogueTools` (`internal/agent/tools/catalogue.go`), `agentMCPTools` (`internal/agent/mcp_tools.go`)
+- **Not:** lazy loading through `enable_mcp`, which put a whole server in the tool list until it was removed (`docs/adr/0008`).
 
 ## Memory Monitor
 
@@ -157,6 +164,13 @@ A directory with an `anvil-plugin.json` manifest that supplies skills, commands 
 
 - **Code:** `plugin.Plugin` (`internal/plugin`)
 - **Not:** MCP server, extension.
+
+## Run View
+
+The drill-in for one workflow run: its phases and, under each, the sessions, subagents and questions to the user, rebuilt from the database. It's how the user reaches every session a run made.
+
+- **Code:** `workflowhost.RunView`, `chat.BuildWorkflowRunItems`, `drillInEntry.runID`
+- **Not:** the run node, which is the run's one-line summary in the transcript and opens the run view.
 
 ## Session
 
@@ -254,6 +268,13 @@ One run of the agent loop for a prompt: the steps between the user's message (or
 
 - **Code:** `agent.turn` (`internal/agent/turn.go`), which holds a turn's state and implements the stream callbacks; `usageKindTurn` marks its rows in `step_usage`
 - **Not:** step. A turn has one or more steps.
+
+## Workflow Run
+
+One run of a workflow command. It shows as a node where it was started, and it owns every session it makes: orchestrator sessions such as builders (`session.new`, or `fork()` of a session) and subagent sessions (`agent()`). Each records the run and the event that made it.
+
+- **Code:** `workflowhost.RunRecord`, `session.Session.WorkflowRunID`, `message.MessageTypeWorkflowRun` (the node's marker)
+- **Not:** command (the definition it runs), session (a run spans several).
 
 ## Workspace
 

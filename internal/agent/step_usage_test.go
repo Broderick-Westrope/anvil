@@ -21,6 +21,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/cacheusage"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
+	sessionpkg "github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -674,4 +675,34 @@ func TestStepUsageNilRecorder(t *testing.T) {
 	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
 	require.NoError(t, err)
 	require.Empty(t, stepUsageRows(t, env))
+}
+
+// A workflow's builder is a child session the user talks to for as long as
+// they like, so its cache history is kept like a top-level session's.
+func TestStepUsageKeepsWorkflowBuilderSessions(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	invoker, err := env.sessions.Create(t.Context(), "Invoker", t.TempDir())
+	require.NoError(t, err)
+	builder, err := env.sessions.CreateTaskSession(t.Context(), "builder", invoker.ID, "Builder")
+	require.NoError(t, err)
+	require.NoError(t, env.sessions.SetWorkflowOwner(t.Context(), builder.ID, sessionpkg.WorkflowOwner{
+		RunID: "run-1", Seq: 2, Kind: sessionpkg.WorkflowKindSession,
+	}))
+
+	model := &usageModel{name: "scripted", respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 3, OutputTokens: 1}), nil
+	}}
+	a := testSessionAgent(env, model, model, "system").(*sessionAgent)
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: builder.ID, Prompt: "go", NonInteractive: true})
+	require.NoError(t, err)
+
+	_, ok := a.lastTurn.Get(builder.ID)
+	require.True(t, ok)
+	require.Len(t, filterUsageRows(stepUsageRows(t, env), usageKindTurn), 1)
+	var parent sql.NullString
+	require.NoError(t, env.conn.QueryRowContext(t.Context(),
+		`SELECT parent_session_id FROM step_usage WHERE session_id = ?`, builder.ID).Scan(&parent))
+	require.Empty(t, parent.String, "a builder isn't recorded as a subagent")
 }

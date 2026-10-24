@@ -430,6 +430,10 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			items = append(items, item)
 		}
 		return items
+	case message.System:
+		if item, ok := NewWorkflowRunMessageItem(sty, msg); ok {
+			return []MessageItem{item}
+		}
 	}
 	return []MessageItem{}
 }

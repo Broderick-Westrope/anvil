@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,12 +18,10 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/autocomplete"
-	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
 	"github.com/Broderick-Westrope/anvil/internal/workspace"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -144,6 +141,10 @@ func (w *workflowTestWorkspace) AgentRun(_ context.Context, _ string, prompt str
 	return nil
 }
 
+func (*workflowTestWorkspace) WorkflowRunView(context.Context, string) (workflowhost.RunView, bool, error) {
+	return workflowhost.RunView{}, false, nil
+}
+
 func (w *workflowTestWorkspace) WorkflowStart(_ context.Context, inv workflowhost.Invocation) error {
 	w.starts = append(w.starts, inv)
 	return w.startErr
@@ -191,7 +192,7 @@ func newWorkflowUIFixture(t *testing.T) *workflowUIFixture {
 		ID: "project:demo", Name: "demo", Source: "project",
 		Content: "BODY $ARGUMENTS", Workflow: "/proj/demo/workflow.js",
 	}}
-	u.features.register(newWorkflowFeature(uiHost{u}, u.com, ws))
+	u.features.register(newWorkflowFeature(uiHost{u}, u.com, ws, uiWorkflowViews{u}))
 	u.updateLayoutAndSize()
 	return &workflowUIFixture{u: u, ws: ws}
 }
@@ -213,7 +214,7 @@ func (f *workflowUIFixture) run(cmd tea.Cmd) []util.InfoMsg {
 		switch msg := msg.(type) {
 		case util.InfoMsg:
 			infos = append(infos, msg)
-		case workflowSessionTitleMsg, workflowFocusMsg, loadSessionMsg, util.AgentDrillInMsg, userCommandsLoadedMsg:
+		case loadSessionMsg, util.AgentDrillInMsg, userCommandsLoadedMsg:
 			_, next := f.u.Update(msg)
 			queue = append(queue, cmdMsgs(next)...)
 		}
@@ -233,8 +234,12 @@ func (f *workflowUIFixture) submit(text string) []util.InfoMsg {
 	return f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
-func (f *workflowUIFixture) panel() string {
-	return ansi.Strip(f.u.pillsView)
+// runningRun puts a running run of the session on screen within the
+// controls' reach, as a loaded node would.
+func (f *workflowUIFixture) runningRun(paused bool) {
+	f.u.workflowRuns.endLoad(workflowRunViewLoadedMsg{runID: "run-1", ok: true, view: workflowhost.RunView{
+		RunID: "run-1", Command: "demo", InvokingSessionID: "sess-1", Status: workflowhost.StatusRunning, Paused: paused,
+	}})
 }
 
 func TestWorkflowSlashCommandStartsWithRawArguments(t *testing.T) {
@@ -300,24 +305,6 @@ func TestWorkflowSlashCommandWaitsOutAReload(t *testing.T) {
 	require.Empty(t, f.ws.starts)
 }
 
-func TestWorkflowPanelSharesThePillsArea(t *testing.T) {
-	t.Parallel()
-
-	f := newWorkflowUIFixture(t)
-	f.event(started("demo", "sess-1"))
-	require.Equal(t, 1, f.u.pillsAreaHeight())
-	require.NotContains(t, f.panel(), "ctrl+t", "no pills without todos or a queue")
-
-	f.event(workflowhost.Event{Kind: workflowhost.EventStep, Command: "demo", SessionID: "sess-1", Activity: &workflowhost.Activity{Kind: workflowhost.ActivityTurn, Session: "sess-2"}})
-	require.Equal(t, 2, f.u.pillsAreaHeight())
-
-	f.u.promptQueue = 2
-	f.u.updateLayoutAndSize()
-	require.Equal(t, 2+pillHeightWithBorder, f.u.pillsAreaHeight())
-	require.Contains(t, f.panel(), "/demo")
-	require.Contains(t, f.panel(), "2 Queued")
-}
-
 // recordingBackend records the notifications sent.
 type recordingBackend struct{ sent []notification.Notification }
 
@@ -333,41 +320,6 @@ func (f *workflowUIFixture) palette(filter string) []util.InfoMsg {
 		f.press(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	return f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
-}
-
-func TestWorkflowEventReachesTheFeatureThroughUpdate(t *testing.T) {
-	t.Parallel()
-
-	f := newWorkflowUIFixture(t)
-	f.event(started("demo", "sess-1"))
-	require.Contains(t, f.panel(), "/demo")
-	require.Equal(t, 1, f.u.pillsAreaHeight())
-}
-
-func TestWorkflowFocusThroughUpdate(t *testing.T) {
-	t.Parallel()
-
-	focus := workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Focus: "sess-2"}
-	t.Run("editor empty", func(t *testing.T) {
-		t.Parallel()
-		f := newWorkflowUIFixture(t)
-		f.event(started("demo", "sess-1"))
-		require.Empty(t, f.event(focus))
-		require.Equal(t, "sess-2", f.u.session.ID)
-	})
-	t.Run("editor has text", func(t *testing.T) {
-		t.Parallel()
-		f := newWorkflowUIFixture(t)
-		f.u.textarea.SetValue("half a thought")
-		f.event(started("demo", "sess-1"))
-		infos := f.event(focus)
-		require.Equal(t, "sess-1", f.u.session.ID)
-		require.Equal(t, []util.InfoMsg{{Type: util.InfoTypeInfo, Msg: "workflow moved to Builder, press alt+g to follow"}}, infos)
-
-		f.press(tea.KeyPressMsg{Code: 'g', Mod: tea.ModAlt})
-		require.Equal(t, "sess-2", f.u.session.ID)
-		require.Equal(t, "half a thought", f.u.textarea.Value())
-	})
 }
 
 func TestWorkflowRequestOpensWithAGracePeriodAndNotifies(t *testing.T) {
@@ -389,50 +341,6 @@ func TestWorkflowRequestOpensWithAGracePeriodAndNotifies(t *testing.T) {
 	require.Empty(t, f.ws.responds)
 }
 
-func TestWorkflowPanelFollowsAWidthChange(t *testing.T) {
-	t.Parallel()
-
-	withRun := newWorkflowUIFixture(t)
-	withRun.event(started("demo", "sess-1"))
-	withRun.event(workflowhost.Event{Kind: workflowhost.EventStatus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Progress: &workflowhost.Progress{Step: "a step long enough to be cut when the terminal narrows"}})
-	withRun.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
-	without := newWorkflowUIFixture(t)
-
-	for _, width := range []int{140, 80, 40, 12} {
-		for _, f := range []*workflowUIFixture{withRun, without} {
-			f.u.Update(tea.WindowSizeMsg{Width: width, Height: 45})
-		}
-		pills := withRun.u.layout.pills
-		lines := strings.Split(withRun.u.pillsView, "\n")
-		require.Len(t, lines, 2, "width %d", width)
-		require.Equal(t, 2, pills.Dy(), "width %d", width)
-		for _, line := range lines {
-			require.LessOrEqual(t, ansi.StringWidth(line), pills.Dx(), "width %d", width)
-		}
-		require.Equal(t, without.u.layout.editor, withRun.u.layout.editor, "width %d", width)
-		require.Equal(t, without.u.layout.main.Dy()-2, withRun.u.layout.main.Dy(), "width %d", width)
-	}
-}
-
-func TestWorkflowPanelRowsResizeThePillsArea(t *testing.T) {
-	t.Parallel()
-
-	f := newWorkflowUIFixture(t)
-	f.event(started("demo", "sess-1"))
-	main := f.u.layout.main.Dy()
-	require.Equal(t, 1, f.u.layout.pills.Dy())
-
-	f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
-	require.Equal(t, 2, f.u.layout.pills.Dy())
-	require.Equal(t, main-1, f.u.layout.main.Dy())
-
-	f.event(askFor("ask-1", "Ship it?"))
-	f.dialogAction(dialog.ActionWorkflowRespond{RequestID: "ask-1", Answer: "yes"})
-	require.Equal(t, 3, f.u.layout.pills.Dy())
-	require.Equal(t, main-2, f.u.layout.main.Dy())
-	require.Contains(t, f.panel(), "? Ship it? → yes")
-}
-
 // dialogAction delivers action as if the front dialog had returned it.
 func (f *workflowUIFixture) dialogAction(action dialog.Action) []util.InfoMsg {
 	f.u.dialog.OpenDialog(&stubDialog{id: "stub", action: action})
@@ -441,92 +349,29 @@ func (f *workflowUIFixture) dialogAction(action dialog.Action) []util.InfoMsg {
 	return f.run(cmd)
 }
 
-func TestWorkflowWhileDrilledIn(t *testing.T) {
-	t.Parallel()
-
-	drilledIn := func(t *testing.T) *workflowUIFixture {
-		t.Helper()
-		f := newWorkflowUIFixture(t)
-		f.event(started("demo", "sess-1"))
-		f.event(agentEvent("reviewer", "child-1", workflowhost.StatusRunning))
-		f.press(tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt})
-		require.True(t, f.u.isDrilledIn())
-		require.Equal(t, "child-1", f.u.drillStack[len(f.u.drillStack)-1].sessionID)
-		require.Equal(t, "/demo: reviewer", f.u.drillStack[len(f.u.drillStack)-1].label)
-		return f
-	}
-
-	t.Run("the panel hides", func(t *testing.T) {
-		t.Parallel()
-		f := drilledIn(t)
-		require.Zero(t, f.u.pillsAreaHeight())
-		require.NotContains(t, f.panel(), "Workflow")
-	})
-	t.Run("controls act on the root session's run", func(t *testing.T) {
-		t.Parallel()
-		f := drilledIn(t)
-		f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
-		f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
-		require.Equal(t, []string{"pause:sess-1", "abort:sess-1"}, f.ws.controls)
-	})
-	t.Run("a focus elsewhere leaves the drill-in", func(t *testing.T) {
-		t.Parallel()
-		f := drilledIn(t)
-		f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Focus: "sess-2"})
-		require.False(t, f.u.isDrilledIn())
-		require.Equal(t, "sess-2", f.u.session.ID)
-	})
-	t.Run("a focus on the root session does nothing", func(t *testing.T) {
-		t.Parallel()
-		f := drilledIn(t)
-		infos := f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Focus: "sess-1"})
-		require.Empty(t, infos)
-		require.True(t, f.u.isDrilledIn())
-		require.Equal(t, "sess-1", f.u.session.ID)
-	})
-}
-
-func TestWorkflowRunDialogDrillsIntoAnAgentThroughUpdate(t *testing.T) {
-	t.Parallel()
-
-	f := newWorkflowUIFixture(t)
-	f.event(started("demo", "sess-1"))
-	f.event(agentEvent("builder", "child-1", workflowhost.StatusRunning))
-	f.event(agentEvent("reviewer", "child-2", workflowhost.StatusRunning))
-	f.press(tea.KeyPressMsg{Code: 'w', Mod: tea.ModAlt})
-	require.True(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
-	f.press(tea.KeyPressMsg{Code: tea.KeyUp})
-	f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	require.False(t, f.u.dialog.ContainsDialog(dialog.WorkflowRunID))
-	require.True(t, f.u.isDrilledIn())
-	require.Equal(t, "child-1", f.u.drillStack[len(f.u.drillStack)-1].sessionID)
-}
-
 func TestWorkflowControlsThroughUpdate(t *testing.T) {
 	t.Parallel()
 
-	paused := workflowhost.Event{Kind: workflowhost.EventState, RunID: "run-1", SessionID: "sess-1", State: workflowhost.StatePaused}
 	t.Run("keys", func(t *testing.T) {
 		t.Parallel()
 		f := newWorkflowUIFixture(t)
-		f.event(started("demo", "sess-1"))
+		f.runningRun(false)
 		f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
-		f.event(paused)
+		f.runningRun(true)
 		f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 		f.press(tea.KeyPressMsg{Code: 'x', Mod: tea.ModAlt})
-		require.Equal(t, []string{"pause:sess-1", "resume:sess-1", "abort:sess-1"}, f.ws.controls)
+		require.Equal(t, []string{"pause:run-1", "resume:run-1", "abort:run-1"}, f.ws.controls)
 	})
 	t.Run("palette", func(t *testing.T) {
 		t.Parallel()
 		f := newWorkflowUIFixture(t)
-		f.event(started("demo", "sess-1"))
+		f.runningRun(false)
 		f.palette("pause workflow")
 		require.False(t, f.u.dialog.ContainsDialog(dialog.CommandsID))
-		f.event(paused)
+		f.runningRun(true)
 		f.palette("resume workflow")
 		f.palette("abort workflow")
-		require.Equal(t, []string{"pause:sess-1", "resume:sess-1", "abort:sess-1"}, f.ws.controls)
+		require.Equal(t, []string{"pause:run-1", "resume:run-1", "abort:run-1"}, f.ws.controls)
 	})
 }
 
@@ -545,37 +390,6 @@ func TestWorkflowCommandFromPaletteThroughUpdate(t *testing.T) {
 		ScriptPath: "/proj/demo/workflow.js", SessionID: "sess-1",
 	}}, f.ws.starts)
 	require.Empty(t, f.ws.runs)
-}
-
-func TestNewRoutesWorkflowEvents(t *testing.T) {
-	t.Parallel()
-
-	ws := newWorkflowTestWorkspace()
-	u := New(common.DefaultCommon(ws), "", false)
-	sess := ws.sessions["sess-1"]
-	u.session = &sess
-	u.Update(pubsub.Event[workflowhost.Event]{Type: pubsub.UpdatedEvent, Payload: started("demo", "sess-1")})
-	require.Equal(t, 1, u.features.panelLines())
-}
-
-func TestWorkflowFollowToTheSessionOnScreenKeepsTheDrillIn(t *testing.T) {
-	t.Parallel()
-
-	f := newWorkflowUIFixture(t)
-	f.u.textarea.SetValue("draft")
-	f.event(started("demo", "sess-1"))
-	f.event(workflowhost.Event{Kind: workflowhost.EventFocus, RunID: "run-1", Command: "demo", SessionID: "sess-1", Focus: "sess-2"})
-	f.run(f.u.loadSession("sess-2"))
-	require.Equal(t, "sess-2", f.u.session.ID)
-	f.run(util.CmdHandler(util.AgentDrillInMsg{SessionID: "child", Label: "child"}))
-	require.True(t, f.u.isDrilledIn())
-
-	_, cmd := f.u.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModAlt})
-	require.True(t, f.u.isDrilledIn(), "following to the root session leaves the drill-in")
-	for _, msg := range cmdMsgs(cmd) {
-		_, loads := msg.(loadSessionMsg)
-		require.False(t, loads, "nothing is loaded")
-	}
 }
 
 func TestPromptCommandAsksForItsArgumentsOnlyWhenNoneAreGiven(t *testing.T) {

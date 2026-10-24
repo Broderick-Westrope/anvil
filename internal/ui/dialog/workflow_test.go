@@ -305,7 +305,7 @@ var testAbortKey = key.NewBinding(key.WithKeys("alt+x"), key.WithHelp("alt+x", "
 
 func askEvent(options ...string) workflowhost.Event {
 	return workflowhost.Event{
-		Kind: workflowhost.EventAsk, RequestID: "ask-1", Command: "demo", SessionID: "s1",
+		Kind: workflowhost.EventAsk, RequestID: "ask-1", RunID: "run-1", Command: "demo", SessionID: "s1",
 		Question: "Which way?", Options: options,
 	}
 }
@@ -337,7 +337,7 @@ func TestWorkflowAskEscKeepsItOpen(t *testing.T) {
 
 	d := NewWorkflowAsk(workflowCommon(), askEvent("yes"), testAbortKey)
 	require.Nil(t, d.HandleMsg(press("esc")))
-	require.Equal(t, ActionWorkflowControl{SessionID: "s1", Control: WorkflowAbort}, d.HandleMsg(press("alt+x")))
+	require.Equal(t, ActionWorkflowControl{RunID: "run-1", Control: WorkflowAbort}, d.HandleMsg(press("alt+x")))
 }
 
 func TestWorkflowDialogIDsAreUniquePerRequest(t *testing.T) {

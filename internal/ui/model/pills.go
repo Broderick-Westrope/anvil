@@ -131,16 +131,16 @@ func queueList(queueItems []string, t *styles.Styles) string {
 
 // togglePillsExpanded toggles the pills panel expansion state.
 func (m *UI) togglePillsExpanded() tea.Cmd {
-	if !m.hasSession() {
+	if m.pillsSession() == nil {
 		return nil
 	}
-	hasPills := hasIncompleteTodos(m.session.Todos) || m.promptQueue > 0
+	hasPills := hasIncompleteTodos(m.pillsSession().Todos) || m.promptQueue > 0
 	if !hasPills {
 		return nil
 	}
 	m.pillsExpanded = !m.pillsExpanded
 	if m.pillsExpanded {
-		if hasIncompleteTodos(m.session.Todos) {
+		if hasIncompleteTodos(m.pillsSession().Todos) {
 			m.focusedPillSection = pillSectionTodos
 		} else {
 			m.focusedPillSection = pillSectionQueue
@@ -158,10 +158,10 @@ func (m *UI) togglePillsExpanded() tea.Cmd {
 
 // switchPillSection changes focus between todo and queue sections.
 func (m *UI) switchPillSection(dir int) tea.Cmd {
-	if !m.pillsExpanded || !m.hasSession() {
+	if !m.pillsExpanded || m.pillsSession() == nil {
 		return nil
 	}
-	hasIncompleteTodos := hasIncompleteTodos(m.session.Todos)
+	hasIncompleteTodos := hasIncompleteTodos(m.pillsSession().Todos)
 	hasQueue := m.promptQueue > 0
 
 	if dir < 0 && m.focusedPillSection == pillSectionQueue && hasIncompleteTodos {
@@ -183,7 +183,7 @@ func (m *UI) switchPillSection(dir int) tea.Cmd {
 // or it defaults to todos before any todos exist). In that case we fall through
 // to whichever section still has content so the expanded list stays populated.
 func (m *UI) effectiveFocusedSection() pillSection {
-	hasIncomplete := hasIncompleteTodos(m.session.Todos)
+	hasIncomplete := hasIncompleteTodos(m.pillsSession().Todos)
 	hasQueue := m.promptQueue > 0
 	switch m.focusedPillSection {
 	case pillSectionQueue:
@@ -206,11 +206,11 @@ func (m *UI) effectiveFocusedSection() pillSection {
 
 // pillsAreaHeight calculates the total height needed for the pills area.
 func (m *UI) pillsAreaHeight() int {
-	if !m.hasSession() || m.isDrilledIn() {
+	if m.pillsSession() == nil {
 		return 0
 	}
 	panelHeight := m.features.panelLines()
-	hasIncomplete := hasIncompleteTodos(m.session.Todos)
+	hasIncomplete := hasIncompleteTodos(m.pillsSession().Todos)
 	hasQueue := m.promptQueue > 0
 	hasPills := hasIncomplete || hasQueue
 	if !hasPills {
@@ -222,7 +222,7 @@ func (m *UI) pillsAreaHeight() int {
 		switch m.effectiveFocusedSection() {
 		case pillSectionTodos:
 			if hasIncomplete {
-				pillsAreaHeight += len(m.session.Todos)
+				pillsAreaHeight += len(m.pillsSession().Todos)
 			}
 		case pillSectionQueue:
 			if hasQueue {
@@ -236,7 +236,7 @@ func (m *UI) pillsAreaHeight() int {
 // renderPills renders the pills panel and stores it in m.pillsView.
 func (m *UI) renderPills() {
 	m.pillsView = ""
-	if !m.hasSession() {
+	if m.pillsSession() == nil {
 		return
 	}
 
@@ -251,7 +251,7 @@ func (m *UI) renderPills() {
 	t := m.com.Styles
 	panel := m.features.renderPanels(contentWidth)
 
-	hasIncomplete := hasIncompleteTodos(m.session.Todos)
+	hasIncomplete := hasIncompleteTodos(m.pillsSession().Todos)
 	hasQueue := m.promptQueue > 0
 
 	if !hasIncomplete && !hasQueue {
@@ -263,7 +263,6 @@ func (m *UI) renderPills() {
 
 	effective := m.effectiveFocusedSection()
 	todosFocused := m.pillsExpanded && effective == pillSectionTodos
-	queueFocused := m.pillsExpanded && effective == pillSectionQueue
 
 	inProgressIcon := t.Tool.TodoInProgressIcon.Render(styles.SpinnerIcon)
 	if m.todoIsSpinning {
@@ -272,7 +271,7 @@ func (m *UI) renderPills() {
 
 	var pills []string
 	if hasIncomplete {
-		pills = append(pills, todoPill(m.session.Todos, inProgressIcon, m.pillsExpanded, t))
+		pills = append(pills, todoPill(m.pillsSession().Todos, inProgressIcon, m.pillsExpanded, t))
 	}
 	if hasQueue {
 		pills = append(pills, queuePill(m.promptQueue, t))
@@ -281,10 +280,11 @@ func (m *UI) renderPills() {
 	var expandedList string
 	if m.pillsExpanded {
 		if todosFocused && hasIncomplete {
-			expandedList = todoList(m.session.Todos, inProgressIcon, t, contentWidth)
-		} else if queueFocused && hasQueue {
+			expandedList = todoList(m.pillsSession().Todos, inProgressIcon, t, contentWidth)
+		} else if hasQueue {
+			// Todos aren't shown, so a queue has the focus.
 			if m.com != nil && m.com.Workspace != nil && m.com.Workspace.AgentIsReady() {
-				queueItems := m.com.Workspace.AgentQueuedPromptsList(m.session.ID)
+				queueItems := m.com.Workspace.AgentQueuedPromptsList(m.pillsSession().ID)
 				expandedList = queueList(queueItems, t)
 			}
 		}

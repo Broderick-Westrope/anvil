@@ -33,6 +33,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.claimBackgroundJobEventsStmt, err = db.PrepareContext(ctx, claimBackgroundJobEvents); err != nil {
 		return nil, fmt.Errorf("error preparing query ClaimBackgroundJobEvents: %w", err)
 	}
+	if q.copyMessageStmt, err = db.PrepareContext(ctx, copyMessage); err != nil {
+		return nil, fmt.Errorf("error preparing query CopyMessage: %w", err)
+	}
+	if q.countRunningBackgroundJobsBySessionStmt, err = db.PrepareContext(ctx, countRunningBackgroundJobsBySession); err != nil {
+		return nil, fmt.Errorf("error preparing query CountRunningBackgroundJobsBySession: %w", err)
+	}
+	if q.countRunningWorkflowRunsFromStmt, err = db.PrepareContext(ctx, countRunningWorkflowRunsFrom); err != nil {
+		return nil, fmt.Errorf("error preparing query CountRunningWorkflowRunsFrom: %w", err)
+	}
 	if q.countUnresolvedPermissionDecisionsSinceStmt, err = db.PrepareContext(ctx, countUnresolvedPermissionDecisionsSince); err != nil {
 		return nil, fmt.Errorf("error preparing query CountUnresolvedPermissionDecisionsSince: %w", err)
 	}
@@ -195,6 +204,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSessionReadFilesStmt, err = db.PrepareContext(ctx, listSessionReadFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionReadFiles: %w", err)
 	}
+	if q.listSessionsByWorkflowRunStmt, err = db.PrepareContext(ctx, listSessionsByWorkflowRun); err != nil {
+		return nil, fmt.Errorf("error preparing query ListSessionsByWorkflowRun: %w", err)
+	}
 	if q.listSessionsByWorkingDirStmt, err = db.PrepareContext(ctx, listSessionsByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionsByWorkingDir: %w", err)
 	}
@@ -207,8 +219,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listUserMessagesByWorkingDirStmt, err = db.PrepareContext(ctx, listUserMessagesByWorkingDir); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesByWorkingDir: %w", err)
 	}
+	if q.listWorkflowChildSessionIDsStmt, err = db.PrepareContext(ctx, listWorkflowChildSessionIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowChildSessionIDs: %w", err)
+	}
 	if q.listWorkflowEventsStmt, err = db.PrepareContext(ctx, listWorkflowEvents); err != nil {
 		return nil, fmt.Errorf("error preparing query ListWorkflowEvents: %w", err)
+	}
+	if q.listWorkflowViewEventsStmt, err = db.PrepareContext(ctx, listWorkflowViewEvents); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowViewEvents: %w", err)
 	}
 	if q.markBackgroundJobLogExpiredStmt, err = db.PrepareContext(ctx, markBackgroundJobLogExpired); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkBackgroundJobLogExpired: %w", err)
@@ -233,6 +251,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.setSessionPinStmt, err = db.PrepareContext(ctx, setSessionPin); err != nil {
 		return nil, fmt.Errorf("error preparing query SetSessionPin: %w", err)
+	}
+	if q.setSessionWorkflowOwnerStmt, err = db.PrepareContext(ctx, setSessionWorkflowOwner); err != nil {
+		return nil, fmt.Errorf("error preparing query SetSessionWorkflowOwner: %w", err)
+	}
+	if q.setWorkflowRunMarkerStmt, err = db.PrepareContext(ctx, setWorkflowRunMarker); err != nil {
+		return nil, fmt.Errorf("error preparing query SetWorkflowRunMarker: %w", err)
+	}
+	if q.setWorkflowRunPausedStmt, err = db.PrepareContext(ctx, setWorkflowRunPaused); err != nil {
+		return nil, fmt.Errorf("error preparing query SetWorkflowRunPaused: %w", err)
 	}
 	if q.subagentHandleExistsStmt, err = db.PrepareContext(ctx, subagentHandleExists); err != nil {
 		return nil, fmt.Errorf("error preparing query SubagentHandleExists: %w", err)
@@ -285,6 +312,21 @@ func (q *Queries) Close() error {
 	if q.claimBackgroundJobEventsStmt != nil {
 		if cerr := q.claimBackgroundJobEventsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing claimBackgroundJobEventsStmt: %w", cerr)
+		}
+	}
+	if q.copyMessageStmt != nil {
+		if cerr := q.copyMessageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing copyMessageStmt: %w", cerr)
+		}
+	}
+	if q.countRunningBackgroundJobsBySessionStmt != nil {
+		if cerr := q.countRunningBackgroundJobsBySessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countRunningBackgroundJobsBySessionStmt: %w", cerr)
+		}
+	}
+	if q.countRunningWorkflowRunsFromStmt != nil {
+		if cerr := q.countRunningWorkflowRunsFromStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countRunningWorkflowRunsFromStmt: %w", cerr)
 		}
 	}
 	if q.countUnresolvedPermissionDecisionsSinceStmt != nil {
@@ -557,6 +599,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionReadFilesStmt: %w", cerr)
 		}
 	}
+	if q.listSessionsByWorkflowRunStmt != nil {
+		if cerr := q.listSessionsByWorkflowRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listSessionsByWorkflowRunStmt: %w", cerr)
+		}
+	}
 	if q.listSessionsByWorkingDirStmt != nil {
 		if cerr := q.listSessionsByWorkingDirStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSessionsByWorkingDirStmt: %w", cerr)
@@ -577,9 +624,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listUserMessagesByWorkingDirStmt: %w", cerr)
 		}
 	}
+	if q.listWorkflowChildSessionIDsStmt != nil {
+		if cerr := q.listWorkflowChildSessionIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowChildSessionIDsStmt: %w", cerr)
+		}
+	}
 	if q.listWorkflowEventsStmt != nil {
 		if cerr := q.listWorkflowEventsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listWorkflowEventsStmt: %w", cerr)
+		}
+	}
+	if q.listWorkflowViewEventsStmt != nil {
+		if cerr := q.listWorkflowViewEventsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowViewEventsStmt: %w", cerr)
 		}
 	}
 	if q.markBackgroundJobLogExpiredStmt != nil {
@@ -620,6 +677,21 @@ func (q *Queries) Close() error {
 	if q.setSessionPinStmt != nil {
 		if cerr := q.setSessionPinStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing setSessionPinStmt: %w", cerr)
+		}
+	}
+	if q.setSessionWorkflowOwnerStmt != nil {
+		if cerr := q.setSessionWorkflowOwnerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setSessionWorkflowOwnerStmt: %w", cerr)
+		}
+	}
+	if q.setWorkflowRunMarkerStmt != nil {
+		if cerr := q.setWorkflowRunMarkerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setWorkflowRunMarkerStmt: %w", cerr)
+		}
+	}
+	if q.setWorkflowRunPausedStmt != nil {
+		if cerr := q.setWorkflowRunPausedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setWorkflowRunPausedStmt: %w", cerr)
 		}
 	}
 	if q.subagentHandleExistsStmt != nil {
@@ -719,6 +791,9 @@ type Queries struct {
 	addSessionCostStmt                          *sql.Stmt
 	addSubagentCallCostStmt                     *sql.Stmt
 	claimBackgroundJobEventsStmt                *sql.Stmt
+	copyMessageStmt                             *sql.Stmt
+	countRunningBackgroundJobsBySessionStmt     *sql.Stmt
+	countRunningWorkflowRunsFromStmt            *sql.Stmt
 	countUnresolvedPermissionDecisionsSinceStmt *sql.Stmt
 	createBackgroundJobStmt                     *sql.Stmt
 	createBackgroundJobEventStmt                *sql.Stmt
@@ -773,11 +848,14 @@ type Queries struct {
 	listRunningBackgroundJobsStmt               *sql.Stmt
 	listRunningWorkflowRunsStmt                 *sql.Stmt
 	listSessionReadFilesStmt                    *sql.Stmt
+	listSessionsByWorkflowRunStmt               *sql.Stmt
 	listSessionsByWorkingDirStmt                *sql.Stmt
 	listUndeliveredBackgroundJobEventsStmt      *sql.Stmt
 	listUserMessagesBySessionStmt               *sql.Stmt
 	listUserMessagesByWorkingDirStmt            *sql.Stmt
+	listWorkflowChildSessionIDsStmt             *sql.Stmt
 	listWorkflowEventsStmt                      *sql.Stmt
+	listWorkflowViewEventsStmt                  *sql.Stmt
 	markBackgroundJobLogExpiredStmt             *sql.Stmt
 	markBackgroundJobsInterruptedStmt           *sql.Stmt
 	markChildCostRolledUpStmt                   *sql.Stmt
@@ -786,6 +864,9 @@ type Queries struct {
 	releaseBackgroundJobEventStmt               *sql.Stmt
 	renameSessionStmt                           *sql.Stmt
 	setSessionPinStmt                           *sql.Stmt
+	setSessionWorkflowOwnerStmt                 *sql.Stmt
+	setWorkflowRunMarkerStmt                    *sql.Stmt
+	setWorkflowRunPausedStmt                    *sql.Stmt
 	subagentHandleExistsStmt                    *sql.Stmt
 	touchAnvilInstanceStmt                      *sql.Stmt
 	transferBackgroundJobsStmt                  *sql.Stmt
@@ -801,11 +882,14 @@ type Queries struct {
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                           tx,
-		tx:                           tx,
-		addSessionCostStmt:           q.addSessionCostStmt,
-		addSubagentCallCostStmt:      q.addSubagentCallCostStmt,
-		claimBackgroundJobEventsStmt: q.claimBackgroundJobEventsStmt,
+		db:                                      tx,
+		tx:                                      tx,
+		addSessionCostStmt:                      q.addSessionCostStmt,
+		addSubagentCallCostStmt:                 q.addSubagentCallCostStmt,
+		claimBackgroundJobEventsStmt:            q.claimBackgroundJobEventsStmt,
+		copyMessageStmt:                         q.copyMessageStmt,
+		countRunningBackgroundJobsBySessionStmt: q.countRunningBackgroundJobsBySessionStmt,
+		countRunningWorkflowRunsFromStmt:        q.countRunningWorkflowRunsFromStmt,
 		countUnresolvedPermissionDecisionsSinceStmt: q.countUnresolvedPermissionDecisionsSinceStmt,
 		createBackgroundJobStmt:                     q.createBackgroundJobStmt,
 		createBackgroundJobEventStmt:                q.createBackgroundJobEventStmt,
@@ -860,11 +944,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listRunningBackgroundJobsStmt:               q.listRunningBackgroundJobsStmt,
 		listRunningWorkflowRunsStmt:                 q.listRunningWorkflowRunsStmt,
 		listSessionReadFilesStmt:                    q.listSessionReadFilesStmt,
+		listSessionsByWorkflowRunStmt:               q.listSessionsByWorkflowRunStmt,
 		listSessionsByWorkingDirStmt:                q.listSessionsByWorkingDirStmt,
 		listUndeliveredBackgroundJobEventsStmt:      q.listUndeliveredBackgroundJobEventsStmt,
 		listUserMessagesBySessionStmt:               q.listUserMessagesBySessionStmt,
 		listUserMessagesByWorkingDirStmt:            q.listUserMessagesByWorkingDirStmt,
+		listWorkflowChildSessionIDsStmt:             q.listWorkflowChildSessionIDsStmt,
 		listWorkflowEventsStmt:                      q.listWorkflowEventsStmt,
+		listWorkflowViewEventsStmt:                  q.listWorkflowViewEventsStmt,
 		markBackgroundJobLogExpiredStmt:             q.markBackgroundJobLogExpiredStmt,
 		markBackgroundJobsInterruptedStmt:           q.markBackgroundJobsInterruptedStmt,
 		markChildCostRolledUpStmt:                   q.markChildCostRolledUpStmt,
@@ -873,6 +960,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		releaseBackgroundJobEventStmt:               q.releaseBackgroundJobEventStmt,
 		renameSessionStmt:                           q.renameSessionStmt,
 		setSessionPinStmt:                           q.setSessionPinStmt,
+		setSessionWorkflowOwnerStmt:                 q.setSessionWorkflowOwnerStmt,
+		setWorkflowRunMarkerStmt:                    q.setWorkflowRunMarkerStmt,
+		setWorkflowRunPausedStmt:                    q.setWorkflowRunPausedStmt,
 		subagentHandleExistsStmt:                    q.subagentHandleExistsStmt,
 		touchAnvilInstanceStmt:                      q.touchAnvilInstanceStmt,
 		transferBackgroundJobsStmt:                  q.transferBackgroundJobsStmt,

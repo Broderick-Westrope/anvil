@@ -28,9 +28,9 @@ var primitives = map[string]primitive{
 	"random":           primRandom,
 	"session.current":  primSessionCurrent,
 	"session.new":      primSessionNew,
+	"session.fork":     primSessionFork,
 	"workflow.tmpdir":  primTmpdir,
 	"workflow.dir":     primDir,
-	"workflow.focus":   primFocus,
 	"workflow.hold":    primHold,
 	"workflow.release": primRelease,
 }
@@ -71,6 +71,9 @@ func primTurn(r *Run, _ int, args json.RawMessage) (any, error) {
 	}](args)
 	if err != nil {
 		return nil, err
+	}
+	if in.Session == r.opts.InvokingSessionID {
+		return nil, errors.New("the session the workflow was started from belongs to the user; fork it with session.current().fork() and send turns to the fork")
 	}
 	if !slices.Contains(r.Sessions(), in.Session) {
 		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
@@ -150,15 +153,15 @@ type agentArgs struct {
 	Model  string          `json:"model"`
 }
 
-func primAgent(r *Run, _ int, args json.RawMessage) (any, error) {
+func primAgent(r *Run, seq int, args json.RawMessage) (any, error) {
 	in, err := decode[agentArgs](args)
 	if err != nil {
 		return nil, err
 	}
-	return r.runAgent(r.ctx, in)
+	return r.runAgent(r.ctx, seq, in)
 }
 
-func (r *Run) runAgent(ctx context.Context, in agentArgs) (any, error) {
+func (r *Run) runAgent(ctx context.Context, seq int, in agentArgs) (any, error) {
 	if !r.backend.HasAgent(in.Agent) {
 		return nil, fmt.Errorf("agent %q not found", in.Agent)
 	}
@@ -172,6 +175,7 @@ func (r *Run) runAgent(ctx context.Context, in agentArgs) (any, error) {
 		}
 	}
 	res, err := r.backend.Agent(ctx, AgentCall{
+		Seq:             seq,
 		ParentSessionID: r.opts.InvokingSessionID,
 		Agent:           in.Agent,
 		Prompt:          in.Prompt,
@@ -206,12 +210,12 @@ func primParallel(r *Run, seq int, args json.RawMessage) (any, error) {
 	var wg sync.WaitGroup
 	for i, raw := range in.Calls {
 		wg.Go(func() {
-			value, err := r.call(r.ctx, seq, i, "agent", raw, func(int) (any, error) {
+			value, err := r.call(r.ctx, seq, i, "agent", raw, func(childSeq int) (any, error) {
 				desc, err := decode[agentArgs](raw)
 				if err != nil {
 					return nil, err
 				}
-				return r.runAgent(r.ctx, desc)
+				return r.runAgent(r.ctx, childSeq, desc)
 			})
 			if err != nil {
 				info := describeError(err, r.aborted.Load())
@@ -236,16 +240,14 @@ func primAsk(r *Run, _ int, args json.RawMessage) (any, error) {
 	return r.backend.Ask(r.ctx, in.Question, in.Options)
 }
 
-func primStatus(r *Run, _ int, args json.RawMessage) (any, error) {
-	in, err := decode[struct {
+// primStatus only checks its arguments: the call's recorded event is the
+// status, which the run's view shows.
+func primStatus(_ *Run, _ int, args json.RawMessage) (any, error) {
+	_, err := decode[struct {
 		Step   string `json:"step"`
 		Detail string `json:"detail"`
 	}](args)
-	if err != nil {
-		return nil, err
-	}
-	r.backend.Status(in.Step, in.Detail)
-	return nil, nil
+	return nil, err
 }
 
 func primSkill(r *Run, _ int, args json.RawMessage) (any, error) {
@@ -308,21 +310,62 @@ func primSessionCurrent(r *Run, _ int, _ json.RawMessage) (any, error) {
 	return r.opts.InvokingSessionID, nil
 }
 
-func primSessionNew(r *Run, _ int, args json.RawMessage) (any, error) {
-	in, err := decode[struct {
-		Title  string   `json:"title"`
-		Seed   string   `json:"seed"`
-		Skills []string `json:"skills"`
-	}](args)
+// sessionArgs are the options session.new and fork take: a title, and a
+// seed (prompt and skills) prepended to the session's first turn.
+type sessionArgs struct {
+	Session string   `json:"session"` // The session fork copies.
+	Title   string   `json:"title"`
+	Seed    string   `json:"seed"`
+	Skills  []string `json:"skills"`
+}
+
+func primSessionNew(r *Run, seq int, args json.RawMessage) (any, error) {
+	in, err := decode[sessionArgs](args)
 	if err != nil {
 		return nil, err
 	}
+	return r.addSession(in, func() (string, error) {
+		return r.backend.NewSession(r.ctx, SessionCall{Title: in.Title, Seq: seq})
+	})
+}
+
+// primSessionFork makes a session whose history is a copy of another's:
+// the invoking session's as it was when the run started, or one of the
+// run's own sessions as it is now.
+func primSessionFork(r *Run, seq int, args json.RawMessage) (any, error) {
+	in, err := decode[sessionArgs](args)
+	if err != nil {
+		return nil, err
+	}
+	fromInvoker := in.Session == r.opts.InvokingSessionID
+	if !fromInvoker && !slices.Contains(r.Sessions(), in.Session) {
+		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
+	}
+	r.mu.Lock()
+	held := r.release != nil
+	r.mu.Unlock()
+	if held && !fromInvoker {
+		// A fork waits for the session it copies to settle, which a held
+		// session never does until the hold is released.
+		return nil, errors.New("fork() of a run's session can't run inside workflow.exclusive")
+	}
+	return r.addSession(in, func() (string, error) {
+		return r.backend.Fork(r.ctx, ForkCall{
+			Source: in.Session, FromInvoker: fromInvoker,
+			SessionCall: SessionCall{Title: in.Title, Seq: seq},
+		})
+	})
+}
+
+// addSession creates a session for the run with create and keeps its seed
+// for its first turn.
+func (r *Run) addSession(in sessionArgs, create func() (string, error)) (string, error) {
 	if err := r.checkSkills(in.Skills); err != nil {
-		return nil, err
+		return "", err
 	}
-	id, err := r.backend.NewSession(r.ctx, in.Title)
+	id, err := create()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -347,20 +390,6 @@ func primTmpdir(r *Run, _ int, _ json.RawMessage) (any, error) {
 // at files it bundles.
 func primDir(r *Run, _ int, _ json.RawMessage) (any, error) {
 	return r.script.Dir(), nil
-}
-
-func primFocus(r *Run, _ int, args json.RawMessage) (any, error) {
-	in, err := decode[struct {
-		Session string `json:"session"`
-	}](args)
-	if err != nil {
-		return nil, err
-	}
-	if !slices.Contains(r.Sessions(), in.Session) {
-		return nil, fmt.Errorf("session %q doesn't belong to this run", in.Session)
-	}
-	r.backend.Focus(in.Session)
-	return nil, nil
 }
 
 func primHold(r *Run, _ int, args json.RawMessage) (any, error) {

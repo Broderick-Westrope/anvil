@@ -511,3 +511,30 @@ func TestHandleClick_EmptyListIgnored(t *testing.T) {
 	handled := m.HandleClick(5)
 	require.False(t, handled)
 }
+
+func TestDraftIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		draft Draft
+		want  bool
+	}{
+		"nothing attached": {draft: Draft{}, want: true},
+		"a file": {
+			draft: Draft{list: []message.Attachment{{FileName: "a.txt"}}}, want: false,
+		},
+		"a skill": {
+			draft: Draft{skills: []SkillAttachment{{Name: "s"}}}, want: false,
+		},
+		"both": {
+			draft: Draft{list: []message.Attachment{{FileName: "a.txt"}}, skills: []SkillAttachment{{Name: "s"}}},
+			want:  false,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, tc.draft.IsEmpty())
+		})
+	}
+}

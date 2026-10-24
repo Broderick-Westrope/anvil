@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/workflow"
@@ -38,22 +39,18 @@ const (
 	EventApproval EventKind = "approval"
 	// EventAsk is a question from ask().
 	EventAsk EventKind = "ask"
-	// EventStatus is a progress update from status().
-	EventStatus EventKind = "status"
-	// EventFocus asks the UI to move to a session.
-	EventFocus EventKind = "focus"
 	// EventWarn is a non-fatal problem, such as undeclared use.
 	EventWarn EventKind = "warn"
-	// EventStep is a bash command or turn the script started, shown as a
-	// workflow step.
-	EventStep EventKind = "step"
-	// EventState reports a change in a run's State.
+	// EventState reports a change in a run's State: it starting, or being
+	// paused or resumed, which records no event in its log. The UI reads
+	// the change from the run's view, which it reloads on this.
 	EventState EventKind = "state"
-	// EventAgent reports a subagent starting (Status running) and ending
-	// (completed or failed, with Err).
-	EventAgent EventKind = "agent"
 	// EventFinished ends an invocation.
 	EventFinished EventKind = "finished"
+	// EventChanged says the run's view changed: its log gained an event
+	// (published after the event is recorded), or a session was tied to
+	// the run.
+	EventChanged EventKind = "changed"
 )
 
 // RunState is the change an EventState reports.
@@ -66,10 +63,6 @@ const (
 	StatePaused RunState = "paused"
 	// StateResumed is a paused run continuing.
 	StateResumed RunState = "resumed"
-	// StateHeld is a run holding its sessions inside workflow.exclusive.
-	StateHeld RunState = "held"
-	// StateReleased is a run whose sessions are no longer held.
-	StateReleased RunState = "released"
 )
 
 // Event is everything the UI needs to show a workflow. Fields beyond the
@@ -86,11 +79,7 @@ type Event struct {
 	Question  string
 	Options   []string
 
-	Progress *Progress  // EventStatus.
-	Activity *Activity  // EventStep.
-	Agent    *AgentCall // EventAgent.
-	Focus    string     // EventFocus: the session to move to.
-	State    RunState   // EventState.
+	State RunState // EventState.
 
 	// Message is an EventWarn's warning, or why an EventFinished run
 	// didn't complete.
@@ -98,42 +87,6 @@ type Event struct {
 	// Status and Result are how an EventFinished run ended.
 	Status Status
 	Result json.RawMessage
-}
-
-// Progress is what a script last reported with status().
-type Progress struct {
-	Step, Detail string
-}
-
-// ActivityKind says what an EventStep started.
-type ActivityKind string
-
-const (
-	// ActivityBash is a bash command.
-	ActivityBash ActivityKind = "bash"
-	// ActivityTurn is a turn sent to a session.
-	ActivityTurn ActivityKind = "turn"
-)
-
-// Activity is a bash command or turn a script started.
-type Activity struct {
-	Kind ActivityKind
-	// Cmd is an ActivityBash's command line.
-	Cmd string
-	// Session is the session an ActivityTurn runs in.
-	Session string
-}
-
-// AgentCall is a subagent a script ran.
-type AgentCall struct {
-	Name  string
-	Model string // The pinned model, if any.
-	// Session is the subagent's child session, empty when it failed
-	// before it had one.
-	Session string
-	// Status is running, completed or failed, with Err saying why.
-	Status Status
-	Err    string
 }
 
 // ApprovalRequest is what the user reviews before a workflow first runs
@@ -163,6 +116,7 @@ type Invocation struct {
 type Deps struct {
 	Coordinator agent.Coordinator
 	Sessions    session.Service
+	Messages    message.Service
 	Store       *Store
 	WorkingDir  string
 	// SkipApproval reports whether approval is skipped (--yolo).
@@ -200,6 +154,12 @@ type activeRun struct {
 	id      string
 	command string
 	run     *workflow.Run
+	// abortStart cancels the wait to mark the run in its session, which
+	// happens before the script runs and so before Run.Abort can reach it.
+	abortStart context.CancelCauseFunc
+	// controlMu orders controls of the run, so a pause and a resume pressed
+	// together can't leave its recorded state and the run disagreeing.
+	controlMu sync.Mutex
 }
 
 // NewService creates a Service. Runs live as long as lifetime.
@@ -261,8 +221,8 @@ func (s *Service) Start(ctx context.Context, inv Invocation) error {
 		s.mu.Unlock()
 		return ErrShuttingDown
 	}
-	// A session belongs to at most one run, so controls and holds always
-	// know which run they mean.
+	// A session runs one workflow at a time, and a run's own sessions
+	// can't start another, so a hold never has to wait on a second run.
 	if _, active := s.findLocked(inv.SessionID); active != nil || s.runs[inv.SessionID] != nil {
 		s.mu.Unlock()
 		return ErrRunInProgress
@@ -388,15 +348,18 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	}
 	base.RunID = runID
 	b := &backend{svc: s, base: base}
-	run := workflow.NewRun(script, b, s.deps.Store.Recorder(runID), workflow.Options{
+	recorder := changeNotifier{Recorder: s.deps.Store.Recorder(runID), changed: func() { b.publish(Event{Kind: EventChanged}) }}
+	run := workflow.NewRun(script, b, recorder, workflow.Options{
 		InvokingSessionID: inv.SessionID,
 		Tmpdir:            s.deps.Store.Tmpdir(runID),
 		References:        current.references(),
 	})
+	startCtx, abortStart := context.WithCancelCause(ctx)
+	defer abortStart(nil)
 	s.mu.Lock()
 	stopping, reason := s.stopping, s.stopReason
 	if !stopping {
-		s.runs[inv.SessionID] = &activeRun{id: runID, command: inv.CommandName, run: run}
+		s.runs[inv.SessionID] = &activeRun{id: runID, command: inv.CommandName, run: run, abortStart: abortStart}
 	}
 	s.mu.Unlock()
 	if stopping {
@@ -411,13 +374,70 @@ func (s *Service) invoke(inv Invocation, script *workflow.Script) {
 	}
 	b.publishState(ctx, Event{Kind: EventState, State: StateStarted})
 
-	result, err := run.Execute(ctx, workflow.Input{Raw: inv.Raw})
+	var result json.RawMessage
+	err = s.writeMarker(startCtx, runID, inv)
+	if cause := context.Cause(startCtx); err != nil && errors.Is(cause, workflow.ErrAborted) {
+		err = cause
+	} else if err != nil {
+		err = fmt.Errorf("mark the run in its session: %w", err)
+	} else {
+		result, err = run.Execute(ctx, workflow.Input{Raw: inv.Raw})
+	}
 	stopping, reason = s.stopped()
 	status, msg := runOutcome(err, stopping, reason)
 	if ferr := s.deps.Store.FinishRun(context.WithoutCancel(ctx), runID, status, result, msg); ferr != nil {
 		slog.Warn("Failed to record workflow run outcome", "run", runID, "error", ferr)
 	}
 	finish(runID, status, result, msg)
+}
+
+// changeNotifier announces each event once it's recorded.
+type changeNotifier struct {
+	workflow.Recorder
+	changed func()
+}
+
+func (n changeNotifier) Record(ctx context.Context, ev workflow.Event) error {
+	if err := n.Recorder.Record(ctx, ev); err != nil {
+		return err
+	}
+	n.changed()
+	return nil
+}
+
+// writeMarker adds the run's marker to the invoking session, where the UI
+// shows the run as a node. It's written as work in the session's queue,
+// after anything already queued: a turn in flight appends from its own
+// leaf, so a marker written beside it would land on a side branch. Once
+// the queue reaches it, the branch up to the marker is settled; that's the
+// run's start boundary.
+func (s *Service) writeMarker(ctx context.Context, runID string, inv Invocation) error {
+	return s.deps.Coordinator.RunInSession(ctx, inv.SessionID, func(ctx context.Context) error {
+		// An abort can stop the wait for the session, but once the marker
+		// is being written it's written whole: a marker the leaf never
+		// reached would branch the user's next message off before it.
+		ctx = context.WithoutCancel(ctx)
+		invoker, err := s.deps.Sessions.Get(ctx, inv.SessionID)
+		if err != nil {
+			return err
+		}
+		marker, err := s.deps.Messages.Create(ctx, inv.SessionID, message.CreateMessageParams{
+			Role:            message.System,
+			ParentMessageID: invoker.LeafMessageID,
+			MessageType:     message.MessageTypeWorkflowRun,
+			Parts:           []message.ContentPart{message.WorkflowRunContent{RunID: runID, Command: inv.CommandName, Input: inv.Raw}},
+		})
+		if err != nil {
+			return err
+		}
+		// Creating the marker moved the session's leaf without announcing
+		// it; anyone holding the session (the UI) must see the new leaf, or
+		// what it writes next would branch off before the marker.
+		if err := s.deps.Sessions.MoveLeaf(ctx, inv.SessionID, marker.ID); err != nil {
+			return err
+		}
+		return s.deps.Store.SetMarker(ctx, runID, marker.ID)
+	})
 }
 
 // approve asks the user to approve the current bundle unless this exact
@@ -497,6 +517,15 @@ const (
 	AnswerDeny    = "deny"
 )
 
+// Running reports whether a run started from sessionID, or one sessionID
+// belongs to, is still going in this Anvil.
+func (s *Service) Running(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, active := s.findLocked(sessionID)
+	return active != nil || s.runs[sessionID] != nil
+}
+
 // Respond answers an approval (AnswerApprove or AnswerDeny) or an ask(). An
 // ask with options accepts only one of them.
 func (s *Service) Respond(requestID, answer string) error {
@@ -516,29 +545,50 @@ func (s *Service) Respond(requestID, answer string) error {
 	return nil
 }
 
-// Pause, Resume and Abort control the run that involves sessionID, which
-// may be its invoking session or any session it created.
-func (s *Service) Pause(sessionID string) error {
-	return s.control(sessionID, StatePaused, func(r *workflow.Run) { r.Pause() })
+// Pause, Resume and Abort control a running run by its ID.
+func (s *Service) Pause(runID string) error {
+	return s.control(runID, StatePaused, func(a *activeRun) error {
+		// Recorded first, so a failed write leaves the run as it was
+		// rather than paused without the view knowing.
+		if err := s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, true); err != nil {
+			return err
+		}
+		a.run.Pause()
+		return nil
+	})
 }
 
 // Resume continues a paused run.
-func (s *Service) Resume(sessionID string) error {
-	return s.control(sessionID, StateResumed, func(r *workflow.Run) { r.Resume() })
+func (s *Service) Resume(runID string) error {
+	return s.control(runID, StateResumed, func(a *activeRun) error {
+		if err := s.deps.Store.SetPaused(context.WithoutCancel(s.lifetime), a.id, false); err != nil {
+			return err
+		}
+		a.run.Resume()
+		return nil
+	})
 }
 
 // Abort cancels a run's in-flight work and ends it as aborted. Its
 // EventFinished reports the outcome, so it publishes no state.
-func (s *Service) Abort(sessionID string) error {
-	return s.control(sessionID, "", func(r *workflow.Run) { r.Abort() })
+func (s *Service) Abort(runID string) error {
+	return s.control(runID, "", func(a *activeRun) error {
+		a.abortStart(workflow.ErrAborted)
+		a.run.Abort()
+		return nil
+	})
 }
 
-func (s *Service) control(sessionID string, state RunState, fn func(*workflow.Run)) error {
-	invoker, active := s.find(sessionID)
+func (s *Service) control(runID string, state RunState, fn func(*activeRun) error) error {
+	invoker, active := s.findRun(runID)
 	if active == nil {
 		return ErrNoRun
 	}
-	fn(active.run)
+	active.controlMu.Lock()
+	defer active.controlMu.Unlock()
+	if err := fn(active); err != nil {
+		return err
+	}
 	if state != "" {
 		s.events.PublishMustDeliver(context.WithoutCancel(s.lifetime), pubsub.UpdatedEvent, Event{
 			Kind: EventState, RunID: active.id, Command: active.command, SessionID: invoker, State: state,
@@ -547,20 +597,20 @@ func (s *Service) control(sessionID string, state RunState, fn func(*workflow.Ru
 	return nil
 }
 
-// Running reports the invoking session of the run involving sessionID, if
-// any.
-func (s *Service) Running(sessionID string) (invoker string, ok bool) {
-	invoker, active := s.find(sessionID)
-	return invoker, active != nil
-}
-
-func (s *Service) find(sessionID string) (string, *activeRun) {
+// findRun returns the running run with runID and its invoking session.
+func (s *Service) findRun(runID string) (string, *activeRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.findLocked(sessionID)
+	for invoker, active := range s.runs {
+		if active.run != nil && active.id == runID {
+			return invoker, active
+		}
+	}
+	return "", nil
 }
 
-// findLocked is find for callers holding s.mu.
+// findLocked returns the run a session started or belongs to, and the
+// session that started it. Callers hold s.mu.
 func (s *Service) findLocked(sessionID string) (string, *activeRun) {
 	for invoker, active := range s.runs {
 		if active.run == nil {

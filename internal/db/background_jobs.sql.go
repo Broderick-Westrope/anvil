@@ -11,6 +11,19 @@ import (
 	"strings"
 )
 
+const countRunningBackgroundJobsBySession = `-- name: CountRunningBackgroundJobsBySession :one
+SELECT COUNT(*)
+FROM background_jobs
+WHERE session_id = ? AND completed_at IS NULL
+`
+
+func (q *Queries) CountRunningBackgroundJobsBySession(ctx context.Context, sessionID string) (int64, error) {
+	row := q.queryRow(ctx, q.countRunningBackgroundJobsBySessionStmt, countRunningBackgroundJobsBySession, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBackgroundJob = `-- name: CreateBackgroundJob :one
 INSERT INTO background_jobs (
     session_id,

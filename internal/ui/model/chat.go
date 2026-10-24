@@ -397,6 +397,24 @@ func (m *Chat) MessageItems() []chat.MessageItem {
 
 // SetMessages sets the chat messages to the provided list of message items.
 func (m *Chat) SetMessages(msgs ...chat.MessageItem) {
+	m.setItems(msgs)
+	m.ScrollToBottom()
+}
+
+// ReplaceMessages swaps in new items for the same view, keeping where it's
+// scrolled to, or following the bottom if it was.
+func (m *Chat) ReplaceMessages(msgs ...chat.MessageItem) {
+	offset, follow := m.list.Offset(), m.follow
+	m.setItems(msgs)
+	if follow {
+		m.ScrollToBottom()
+		return
+	}
+	m.list.ScrollToTop()
+	m.list.ScrollBy(offset)
+}
+
+func (m *Chat) setItems(msgs []chat.MessageItem) {
 	m.idInxMap = make(map[string]int)
 	clear(m.frozenSpinners)
 
@@ -412,7 +430,6 @@ func (m *Chat) SetMessages(msgs ...chat.MessageItem) {
 		items[i] = msg
 	}
 	m.list.SetItems(items...)
-	m.ScrollToBottom()
 }
 
 // AppendMessages appends a new message item to the chat list.
@@ -604,6 +621,11 @@ func (m *Chat) isSelectable(index int) bool {
 	}
 	_, ok := item.(list.Focusable)
 	return ok
+}
+
+// Selected returns the selected message index, or -1 when none is.
+func (m *Chat) Selected() int {
+	return m.list.Selected()
 }
 
 // SetSelected sets the selected message index in the chat list.
@@ -924,17 +946,20 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 	// Execute the click action (e.g., expansion or drill-in).
 	selectedItem := m.list.SelectedItem()
 
+	if driller, ok := selectedItem.(*chat.WorkflowRunMessageItem); ok {
+		runID, label := driller.WorkflowRunDrillIn()
+		return true, func() tea.Msg { return util.WorkflowRunDrillInMsg{RunID: runID, Label: label} }
+	}
+
 	// Check for agent drill-in before Expandable — it takes priority.
 	if driller, ok := selectedItem.(chat.AgentDrillInHandler); ok {
 		sessionID := driller.AgentDrillIn()
 		if sessionID != "" {
-			cmd := func() tea.Msg {
-				return util.AgentDrillInMsg{
-					SessionID: sessionID,
-					Label:     driller.AgentDrillInLabel(),
-				}
+			msg := util.AgentDrillInMsg{SessionID: sessionID, Label: driller.AgentDrillInLabel()}
+			if row, ok := selectedItem.(*chat.WorkflowRunRowItem); ok {
+				msg.Conversational = row.AgentDrillInConversational()
 			}
-			return true, cmd
+			return true, func() tea.Msg { return msg }
 		}
 	}
 
