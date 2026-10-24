@@ -107,7 +107,6 @@ func (i *MCPPaletteItem) Render(width int) string {
 }
 
 // MCPPalette is a dialog that shows available MCP servers for toggling.
-// MCPPalette is a dialog that shows available MCP servers for toggling.
 type MCPPalette struct {
 	// mouse gives the list wheel scrolling and click selection.
 	mouse listMouse
@@ -129,7 +128,6 @@ type MCPPalette struct {
 
 var _ Dialog = (*MCPPalette)(nil)
 
-// NewMCPPalette creates a new MCP palette dialog.
 // NewMCPPalette creates a new MCP palette dialog.
 func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 	mp := &MCPPalette{
@@ -368,7 +366,6 @@ func (mp *MCPPalette) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 }
 
 // ShortHelp implements help.KeyMap.
-// ShortHelp implements help.KeyMap.
 func (mp *MCPPalette) ShortHelp() []key.Binding {
 	return []key.Binding{
 		mp.keyMap.UpDown,
@@ -378,7 +375,6 @@ func (mp *MCPPalette) ShortHelp() []key.Binding {
 	}
 }
 
-// FullHelp implements help.KeyMap.
 // FullHelp implements help.KeyMap.
 func (mp *MCPPalette) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
