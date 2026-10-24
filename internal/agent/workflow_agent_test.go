@@ -34,6 +34,9 @@ func newParent(t *testing.T, f *branchfixture.Fixture) string {
 	t.Helper()
 	s, err := f.Workspace.CreateSession(f.Context, "parent")
 	require.NoError(t, err)
+	// A custom title stops the background title request, which would
+	// otherwise reach the scripted provider at an unpredictable time.
+	require.NoError(t, f.Sessions.Rename(f.Context, s.ID, "parent", true))
 	return s.ID
 }
 

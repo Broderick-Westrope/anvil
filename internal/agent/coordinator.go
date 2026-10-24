@@ -243,11 +243,11 @@ type coordinator struct {
 
 	// leases holds the child sessions task calls are running in.
 	leases subagentLeases
-	// subagentRetryDelays are the waits before each automatic resume of a
-	// failed subagent; nil means defaultSubagentRetryDelays.
-	subagentRetryDelays []time.Duration
-	subagentEventsOnce  sync.Once
-	subagentEvents      *pubsub.Broker[SubagentSteersReturned]
+	// retryDelays are the waits before each automatic resume of a run
+	// that failed transiently; nil means defaultRetryDelays.
+	retryDelays        []time.Duration
+	subagentEventsOnce sync.Once
+	subagentEvents     *pubsub.Broker[SubagentSteersReturned]
 	// returned holds steers handed back until the UI takes them.
 	returnedMu sync.Mutex
 	returned   []SubagentSteersReturned
@@ -681,8 +681,8 @@ func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, st
 		slog.Error("Failed to refresh OAuth2 token. Proceeding with existing token.", "error", err)
 	}
 
-	run := func() (*fantasy.AgentResult, error) {
-		result, err := orch.Run(ctx, SessionAgentCall{
+	run := func(next SessionAgentCall) (*fantasy.AgentResult, error) {
+		return orch.Run(ctx, SessionAgentCall{
 			retrySummary: func(ctx context.Context, err error) error {
 				if !c.isUnauthorized(err) {
 					return err
@@ -690,8 +690,9 @@ func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, st
 				return c.retryAfterUnauthorized(ctx, providerCfg)
 			},
 			SessionID:        sessionID,
-			Prompt:           prompt,
-			Attachments:      attachments,
+			Prompt:           next.Prompt,
+			Attachments:      next.Attachments,
+			Injections:       next.Injections,
 			MaxOutputTokens:  maxTokens,
 			ProviderOptions:  mergedOptions,
 			Temperature:      temp,
@@ -699,10 +700,9 @@ func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, st
 			TopK:             callTopK(providerCfg, topK),
 			FrequencyPenalty: freqPenalty,
 			PresencePenalty:  presPenalty,
-			state:            state,
+			state:            next.state,
 			OnAuthRefresh:    c.makeAuthRefreshCallback(providerCfg),
 		})
-		return result, err
 	}
 	// Snapshot skill state under lock to avoid a data race with
 	// ReloadPlugins which writes these fields under orchestratorMu.
@@ -711,17 +711,56 @@ func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, st
 	skillTrackerSnap := c.skillTracker
 	c.orchestratorMu.RUnlock()
 
+	first := SessionAgentCall{Prompt: prompt, Attachments: attachments, state: state}
 	beforeLoaded := skillTrackerSnap.LoadedNames()
-	result, originalErr := run()
+	result, originalErr := run(first)
 	logTurnSkillUsage(sessionID, prompt, activeSkillsSnap, skillTrackerSnap, beforeLoaded)
 
 	if c.isUnauthorized(originalErr) && !state.summaryFailed {
 		if err := c.retryAfterUnauthorized(ctx, providerCfg); err == nil {
-			return run()
+			return run(first)
 		}
 	}
 
-	return result, originalErr
+	return c.resumeAfterTransientFailures(ctx, first, result, originalErr, run)
+}
+
+// resumeAfterTransientFailures resumes a turn that ended with a transient
+// failure, such as a dropped connection or an overloaded provider, up to
+// maxTransientResumes times, so nobody has to come back and say "go
+// again". A turn that saved its message continues from where it stopped
+// with a harness message; a prompt that was never saved is sent again.
+// Unauthorized failures are left to the token refresh above, and a
+// cancelled turn isn't resumed.
+func (c *coordinator) resumeAfterTransientFailures(
+	ctx context.Context,
+	last SessionAgentCall,
+	result *fantasy.AgentResult,
+	err error,
+	run func(SessionAgentCall) (*fantasy.AgentResult, error),
+) (*fantasy.AgentResult, error) {
+	for resumes := 0; resumes < maxTransientResumes; resumes++ {
+		retry, reason := classifyRunFailure(ctx, err)
+		if !retry || c.isUnauthorized(err) || last.state.summaryFailed {
+			return result, err
+		}
+		slog.Warn("Resuming turn after a transient failure", "reason", reason, "error", err)
+		timer := time.NewTimer(withProviderHint(err, c.backoffFor(resumes)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return result, err
+		case <-timer.C:
+		}
+		if last.state.acceptedUserID != "" || len(last.Injections) > 0 {
+			last = SessionAgentCall{state: &runState{}, Injections: []message.InjectionContent{{
+				Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: transientContinueText,
+				Attempt: resumes + 1, MaxAttempts: maxTransientResumes, Reason: reason,
+			}}}
+		}
+		result, err = run(last)
+	}
+	return result, err
 }
 
 // RunWake implements Coordinator.
@@ -1172,7 +1211,7 @@ func (c *coordinator) buildToolsWithState(
 	// hook fires once per call, under the inner name.
 	for _, tool := range mcpTools.catalogueTools() {
 		if tool.Info().Name == tools.CallMCPToolToolName {
-			filteredTools = append(filteredTools, wrapToolsWithErrorResults([]fantasy.AgentTool{tool})...)
+			filteredTools = append(filteredTools, tool)
 		} else {
 			filteredTools = append(filteredTools, mcpTools.wrap([]fantasy.AgentTool{tool})...)
 		}

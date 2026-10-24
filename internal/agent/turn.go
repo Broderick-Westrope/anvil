@@ -136,9 +136,16 @@ func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fan
 	return fantasy.NewAgent(
 		t.largeModel.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
-		fantasy.WithTools(withCachedLastTool(t.timed(agentTools), t.a.getCacheControlOptions())...),
+		fantasy.WithTools(t.stepTools(agentTools)...),
 		fantasy.WithUserAgent(userAgent),
 	)
+}
+
+// stepTools returns the tools a step of this turn runs. Every tool reports
+// its Go errors to the model here, whoever built it, so no tool error ends
+// the turn.
+func (t *turn) stepTools(agentTools []fantasy.AgentTool) []fantasy.AgentTool {
+	return withCachedLastTool(t.timed(wrapToolsWithErrorResults(agentTools)), t.a.getCacheControlOptions())
 }
 
 // withCachedLastTool returns a copy of agentTools whose last tool carries
@@ -313,7 +320,7 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 	}
 
 	// Use latest tools (updated by SetTools when MCP tools change).
-	prepared.Tools = withCachedLastTool(t.timed(a.tools.Copy()), a.getCacheControlOptions())
+	prepared.Tools = t.stepTools(a.tools.Copy())
 
 	if a.jobEvents != nil {
 		noticeMsg, deliverErr := a.deliverJobEvents(callContext, t.call.SessionID, t.currentLeaf())

@@ -19,6 +19,26 @@ import (
 // local database rather than from the provider. Retrying can't fix it.
 var errLocalPersistence = errors.New("local persistence")
 
+// maxTransientResumes is how many times a run, a top-level turn or one
+// task call, is resumed after transient failures. Fantasy has already
+// retried each step by the time a failure ends a run, so a couple of
+// widely spaced resumes is enough.
+const maxTransientResumes = 2
+
+// defaultRetryDelays are the waits before each automatic resume.
+var defaultRetryDelays = []time.Duration{firstRetryDelay, laterRetryDelay}
+
+// The default waits, as constants so the mutation check treats them like
+// any other pinned constant.
+const (
+	firstRetryDelay = 5 * time.Second
+	laterRetryDelay = 30 * time.Second
+)
+
+// transientContinueText is the harness's message to a run resumed after a
+// transient failure.
+const transientContinueText = "Your previous attempt stopped because of a transient error. Continue where you left off."
+
 // permanentProviderStatuses are HTTP statuses a provider returns for a
 // request that will fail the same way however often it's sent.
 var permanentProviderStatuses = map[int]bool{
@@ -29,14 +49,14 @@ var permanentProviderStatuses = map[int]bool{
 	http.StatusUnprocessableEntity:   true,
 }
 
-// classifySubagentFailure decides whether a subagent run that ended with
-// err should be resumed automatically, and if so names the failure for the
-// task result. The rules are checked in order and the first match wins;
-// callCtx is the task call's context. The order is load-bearing: a tool or
+// classifyRunFailure decides whether a run that ended with err should be
+// resumed automatically, and if so names the failure for the harness
+// message. The rules are checked in order and the first match wins; callCtx
+// is the context of the task call or turn. The order is load-bearing: a tool or
 // a 400 can wrap a network error, and neither is worth retrying. A run that
 // finished without text isn't a failure here at all, so it's never
 // retried either.
-func classifySubagentFailure(callCtx context.Context, err error) (retry bool, reason string) {
+func classifyRunFailure(callCtx context.Context, err error) (retry bool, reason string) {
 	if callCtx.Err() != nil {
 		return false, ""
 	}
@@ -80,7 +100,9 @@ func providerFailureReason(err *fantasy.ProviderError) string {
 }
 
 // networkFailure names a transient network or transport failure in err, or
-// returns "" when err isn't one. The call's own deadline is ruled out
+// returns "" when err isn't one. A machine that just woke or lost its
+// network fails to look up or reach the provider for a while, so those
+// count too. The call's own deadline is ruled out
 // before this runs, so a deadline here is a request timeout.
 func networkFailure(err error) string {
 	if err == nil {
@@ -92,6 +114,12 @@ func networkFailure(err error) string {
 		return "unexpected EOF"
 	case errors.Is(err, syscall.ECONNRESET):
 		return "connection reset"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETDOWN):
+		return "network unreachable"
+	case errors.As(err, new(*net.DNSError)):
+		return "DNS lookup failed"
 	case fantasy.IsTransportError(err):
 		return "broken stream"
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
@@ -100,26 +128,26 @@ func networkFailure(err error) string {
 	return ""
 }
 
-// maxSubagentRetryDelay caps a provider's retry hint, so a quota reset
-// hours away can't leave the orchestrator's task call waiting silently.
-const maxSubagentRetryDelay = 2 * time.Minute
+// maxRetryDelay caps a provider's retry hint, so a quota reset
+// hours away can't leave a run waiting silently.
+const maxRetryDelay = 2 * time.Minute
 
 // withProviderHint returns how long to wait before resuming after err:
 // base, or the provider's retry hint when it asks for longer, up to
-// maxSubagentRetryDelay.
+// maxRetryDelay.
 func withProviderHint(err error, base time.Duration) time.Duration {
 	var providerErr *fantasy.ProviderError
 	if !errors.As(err, &providerErr) {
 		return base
 	}
-	return min(max(base, retryHint(providerErr.ResponseHeaders)), maxSubagentRetryDelay)
+	return min(max(base, retryHint(providerErr.ResponseHeaders)), maxRetryDelay)
 }
 
 // retryHint returns the wait a provider asks for, no longer than
-// maxSubagentRetryDelay. Values are clamped before they become a
+// maxRetryDelay. Values are clamped before they become a
 // Duration, since converting a huge float is implementation-defined.
 func retryHint(headers map[string]string) time.Duration {
-	limit := maxSubagentRetryDelay.Seconds()
+	limit := maxRetryDelay.Seconds()
 	if ms, err := strconv.ParseFloat(headers["retry-after-ms"], 64); err == nil {
 		return clampedSeconds(ms/1000, limit)
 	}
@@ -140,4 +168,14 @@ func clampedSeconds(secs, limit float64) time.Duration {
 		return 0
 	}
 	return time.Duration(min(max(secs, 0), limit) * float64(time.Second))
+}
+
+// backoffFor returns the wait before the automatic resume that follows
+// resumes earlier ones.
+func (c *coordinator) backoffFor(resumes int) time.Duration {
+	delays := c.retryDelays
+	if delays == nil {
+		delays = defaultRetryDelays
+	}
+	return delays[min(resumes, len(delays)-1)]
 }

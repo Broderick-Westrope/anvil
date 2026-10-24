@@ -23,27 +23,9 @@ import (
 // to be shown; the oldest are dropped beyond it.
 const maxReturnedSteers = 50
 
-// maxSubagentResumes is how many times one task call resumes its subagent
-// after a transient failure. Fantasy has already retried each step by the
-// time a failure ends a run, so a couple of widely spaced resumes is enough.
-const maxSubagentResumes = 2
-
-// defaultSubagentRetryDelays are the waits before each automatic resume.
-var defaultSubagentRetryDelays = []time.Duration{firstSubagentRetryDelay, laterSubagentRetryDelay}
-
-// The default waits, as constants so the mutation check treats them like
-// any other pinned constant.
-const (
-	firstSubagentRetryDelay = 5 * time.Second
-	laterSubagentRetryDelay = 30 * time.Second
-)
-
 const (
 	// noTextOutput is the result of a subagent that finished without text.
 	noTextOutput = "Sub-agent completed but produced no text output."
-	// subagentContinueText is the harness's message to a subagent resumed
-	// after a transient failure.
-	subagentContinueText = "Your previous attempt stopped because of a transient error. Continue where you left off."
 	// subagentInterruptedText continues a subagent whose interrupting
 	// steer was already delivered before its attempt was cancelled.
 	subagentInterruptedText = "You were interrupted. Continue, taking the latest message into account."
@@ -341,9 +323,9 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 			next = tc.afterInterrupt(next, call.state.acceptedUserID != "")
 			continue
 		}
-		retry, reason := classifySubagentFailure(ctx, runErr)
+		retry, reason := classifyRunFailure(ctx, runErr)
 		resumes := len(tc.recoveries)
-		if !retry || resumes >= maxSubagentResumes || tc.params.AgentType == "" {
+		if !retry || resumes >= maxTransientResumes || tc.params.AgentType == "" {
 			return tc.failure(ctx, runErr)
 		}
 		if err := waitBeforeResume(ctx, tc.lease, withProviderHint(runErr, c.backoffFor(resumes))); err != nil {
@@ -351,20 +333,10 @@ func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, session
 		}
 		tc.recoveries = append(tc.recoveries, reason)
 		next = tc.injection(message.InjectionContent{
-			Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: subagentContinueText,
-			Attempt: resumes + 1, MaxAttempts: maxSubagentResumes, Reason: reason,
+			Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: transientContinueText,
+			Attempt: resumes + 1, MaxAttempts: maxTransientResumes, Reason: reason,
 		})
 	}
-}
-
-// backoffFor returns the wait before the automatic resume that follows
-// resumes earlier ones.
-func (c *coordinator) backoffFor(resumes int) time.Duration {
-	delays := c.subagentRetryDelays
-	if delays == nil {
-		delays = defaultSubagentRetryDelays
-	}
-	return delays[min(resumes, len(delays)-1)]
 }
 
 // waitBeforeResume waits out a retry backoff. An interrupt ends the wait

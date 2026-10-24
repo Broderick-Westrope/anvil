@@ -382,6 +382,14 @@ func TestBashTool_MissingCommand(t *testing.T) {
 	require.Zero(t, perms.requestCount)
 }
 
+// Models often leave the description out, and the UI and job list fall
+// back to the command, so only the command is required.
+func TestBashTool_OnlyCommandIsRequired(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, []string{"command"}, newBashToolForTest(t.TempDir()).Info().Required)
+}
+
 func TestBashTool_RequiresSession(t *testing.T) {
 	t.Parallel()
 	tool := newBashToolForTest(t.TempDir())

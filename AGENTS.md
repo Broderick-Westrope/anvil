@@ -234,8 +234,12 @@ Terms with a specific meaning in this codebase are defined in
 - **Subagent task calls**: each `task` call (`internal/agent/subagent_call.go`)
   holds a lease on its subagent's child session (`subagent_lease.go`) for
   its whole life, so a resume of a running subagent is rejected, not
-  queued. Failures are classified in order (`subagent_retry.go`); up to two
-  transient ones resume the same child with a `harness` injection. The
+  queued. Failures are classified in order (`run_retry.go`); up to two
+  transient ones resume the same child with a `harness` injection. A
+  top-level turn is resumed the same way
+  (`coordinator.resumeAfterTransientFailures`), after the 401 token
+  refresh has had its go; a prompt the failed turn never saved is sent
+  again instead. The
   orchestrator resumes a subagent with `task({resume: subagent_id})`, and a
   human steers or cancels one from its drill-in view; both arrive as
   `subagent_injection` messages, delivered at step boundaries. Identity
