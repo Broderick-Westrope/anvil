@@ -15,8 +15,8 @@ import (
 )
 
 // Every line of every drill-in item fits the width it was rendered at,
-// whatever the tool, its state and its input, so nothing is clipped at the
-// screen's edge.
+// whatever the tool, its state, its input and its result, so nothing is
+// clipped at the screen's edge.
 func TestToolDetailItemsFitWidth(t *testing.T) {
 	t.Parallel()
 
@@ -24,6 +24,16 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	word := strings.Repeat("abcdefghij", 15)
 	multi := long + "\n" + word + "\n" + long
 	output := multi + "\n" + strings.Repeat("x", 300)
+	// Edits read the old and new content, writes a unified diff. Tools
+	// that don't read metadata ignore it.
+	metadata := map[string]string{
+		"plain": "",
+		"diff": mustJSON(t, map[string]any{
+			"old_content": multi,
+			"new_content": multi + "\nadded " + long,
+			"diff":        "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-" + long + "\n+" + word,
+		}),
+	}
 
 	// Agents, agentic fetch and todos have no tool drill-in.
 	tools := []string{
@@ -44,15 +54,20 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	for _, name := range tools {
 		for inputName, input := range inputs {
 			for statusName, status := range statuses {
-				for _, expanded := range []bool{false, true} {
-					t.Run(fmt.Sprintf("%s/%s/%s/expanded=%v", name, inputName, statusName, expanded), func(t *testing.T) {
-						t.Parallel()
-						var result *message.ToolResult
-						if status == ToolStatusSuccess {
-							result = &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output}
-						}
-						requireDetailItemsFit(t, helperToolItem(t, name, input, result, status), expanded)
-					})
+				for resultName, meta := range metadata {
+					for _, expanded := range []bool{false, true} {
+						t.Run(fmt.Sprintf("%s/%s/%s/%s/expanded=%v", name, inputName, statusName, resultName, expanded), func(t *testing.T) {
+							t.Parallel()
+							var result *message.ToolResult
+							if status == ToolStatusSuccess {
+								result = &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output, Metadata: meta}
+							}
+							// A diff lays out side by side once it is wide
+							// enough, so its text can't be compared across
+							// widths.
+							requireDetailItemsFit(t, helperToolItem(t, name, input, result, status), expanded, meta == "")
+						})
+					}
 				}
 			}
 		}
@@ -60,12 +75,12 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 }
 
 // requireDetailItemsFit renders each of source's drill-in items, focused
-// and not, at a range of widths, and fails on any line wider than one. From
-// 40 columns up, no item but the header and dividers (which drop hints and
-// rule characters by design) may drop text to fit: a cut line would pass
-// the width check, so its text is compared with a render wide enough to
-// need no wrapping.
-func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded bool) {
+// and not, at a range of widths, and fails on any line wider than one. With
+// checkText, from 40 columns up, no item but the header and dividers (which
+// drop hints and rule characters by design) may drop text to fit: a cut
+// line would pass the width check, so its text is compared with a render
+// wide enough to need no wrapping.
+func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded, checkText bool) {
 	t.Helper()
 	sty := styles.TokyoNight()
 	for _, item := range BuildToolDetailItems(&sty, source, nil) {
@@ -83,7 +98,7 @@ func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded bool) 
 					require.LessOrEqual(t, lipgloss.Width(line), width,
 						"width %d, focused %v: line %d of %s overflows: %q", width, focused, i, item.ID(), line)
 				}
-				if _, ruled := item.(*toolDetailSectionItem); ruled {
+				if _, ruled := item.(*toolDetailSectionItem); ruled || !checkText {
 					continue
 				}
 				if _, header := item.(*toolDetailHeaderItem); !header && width >= 40 {
