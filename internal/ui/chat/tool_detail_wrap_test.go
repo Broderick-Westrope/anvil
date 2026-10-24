@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -187,4 +188,14 @@ func TestToolOutputCodeContentFitsWidth(t *testing.T) {
 			require.Equal(t, 40, lipgloss.Width(line), "noTruncate %v: %q", noTruncate, ansi.Strip(line))
 		}
 	}
+}
+
+// A collapsed multi-line value says how many lines it hides.
+func TestToolDetailParamItemCollapsedHintCountsLines(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	item := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: "content", value: "one\ntwo\nthree"}
+
+	require.Contains(t, ansi.Strip(item.Render(80)), "content: "+fmt.Sprintf(assistantMessageTruncateFormat, 3))
 }
