@@ -1124,6 +1124,19 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ToolFetch": {
+      "properties": {
+        "github_token": {
+          "type": "string",
+          "description": "GitHub token sent with requests to api.github.com and raw.githubusercontent.com to lift the unauthenticated rate limit. The agentic_fetch sub-agent fetches without asking, so use a fine-grained token with read-only access to public repositories. Expands $VAR and $(command)",
+          "examples": [
+            "$ANVIL_GITHUB_TOKEN"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ToolGlob": {
       "properties": {
         "timeout": {
@@ -1166,6 +1179,29 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ToolWebSearch": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "duckduckgo",
+            "brave",
+            "tavily"
+          ],
+          "description": "Search engine for the web_search tool. duckduckgo scrapes DuckDuckGo Lite and needs no key but is often rate-limited; brave and tavily use their search APIs and need api_key",
+          "default": "duckduckgo"
+        },
+        "api_key": {
+          "type": "string",
+          "description": "API key for the brave or tavily search API. Expands $VAR and $(command)",
+          "examples": [
+            "$BRAVE_API_KEY"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Tools": {
       "properties": {
         "ls": {
@@ -1179,6 +1215,12 @@
         },
         "agentic_fetch": {
           "$ref": "#/$defs/ToolAgenticFetch"
+        },
+        "web_search": {
+          "$ref": "#/$defs/ToolWebSearch"
+        },
+        "fetch": {
+          "$ref": "#/$defs/ToolFetch"
         }
       },
       "additionalProperties": false,

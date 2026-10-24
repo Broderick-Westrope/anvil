@@ -44,15 +44,7 @@ func fetchDescription() string {
 
 func NewFetchTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
-
-		client = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: transport,
-		}
+		client = NewWebClient(nil)
 	}
 
 	return fantasy.NewParallelAgentTool(
@@ -119,7 +111,7 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("Request failed with status code: %d", resp.StatusCode)), nil
+				return fantasy.NewTextErrorResponse("Request failed with " + statusFailure(resp)), nil
 			}
 
 			body, err := io.ReadAll(io.LimitReader(resp.Body, MaxFetchSize))

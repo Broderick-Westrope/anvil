@@ -804,6 +804,30 @@ type Tools struct {
 	Grep         ToolGrep         `json:"grep,omitzero"`
 	Glob         ToolGlob         `json:"glob,omitzero"`
 	AgenticFetch ToolAgenticFetch `json:"agentic_fetch,omitzero"`
+	WebSearch    ToolWebSearch    `json:"web_search,omitzero"`
+	Fetch        ToolFetch        `json:"fetch,omitzero"`
+}
+
+// WebSearchProvider names the search engine behind the web_search tool.
+type WebSearchProvider string
+
+const (
+	WebSearchDuckDuckGo WebSearchProvider = "duckduckgo"
+	WebSearchBrave      WebSearchProvider = "brave"
+	WebSearchTavily     WebSearchProvider = "tavily"
+)
+
+// ToolWebSearch configures the search engine the web_search tool queries.
+// DuckDuckGo needs no key but rate-limits scraping; the APIs need a key.
+type ToolWebSearch struct {
+	Provider WebSearchProvider `json:"provider,omitempty" jsonschema:"description=Search engine for the web_search tool. duckduckgo scrapes DuckDuckGo Lite and needs no key but is often rate-limited; brave and tavily use their search APIs and need api_key,enum=duckduckgo,enum=brave,enum=tavily,default=duckduckgo"`
+	APIKey   string            `json:"api_key,omitempty" jsonschema:"description=API key for the brave or tavily search API. Expands $VAR and $(command),example=$BRAVE_API_KEY"`
+}
+
+// ToolFetch configures the HTTP requests of the fetch, web_fetch and
+// agentic_fetch tools.
+type ToolFetch struct {
+	GitHubToken string `json:"github_token,omitempty" jsonschema:"description=GitHub token sent with requests to api.github.com and raw.githubusercontent.com to lift the unauthenticated rate limit. The agentic_fetch sub-agent fetches without asking\\, so use a fine-grained token with read-only access to public repositories. Expands $VAR and $(command),example=$ANVIL_GITHUB_TOKEN"`
 }
 
 type ToolLs struct {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
+	"sync"
 
 	"charm.land/fantasy"
 
@@ -25,15 +25,12 @@ var agenticFetchPromptTmpl []byte
 
 func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (fantasy.AgentTool, error) {
 	if client == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
-
-		client = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: transport,
-		}
+		client = tools.NewWebClient(nil)
+	}
+	searchCfg := c.cfg.Config().Tools.WebSearch
+	searchBackend := tools.WebSearchBackend{
+		Provider: searchCfg.Provider,
+		APIKey:   resolveOnce(c.cfg.Resolver(), searchCfg.APIKey),
 	}
 
 	return fantasy.NewParallelAgentTool(
@@ -111,7 +108,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			}
 
 			webFetchTool := tools.NewWebFetchTool(tmpDir, client)
-			webSearchTool := tools.NewWebSearchTool(client)
+			webSearchTool := tools.NewWebSearchTool(client, searchBackend)
 			fetchTools := []fantasy.AgentTool{
 				webFetchTool,
 				webSearchTool,
@@ -185,4 +182,33 @@ func agenticFetchPrompt(ctx context.Context, client *http.Client, dir string, pa
 		return "", fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to write content to file: %s", err))
 	}
 	return fmt.Sprintf("%s\n\nThe web page from %s has been saved to: %s\n\nUse the view and grep tools to analyze this file and extract the requested information.", params.Prompt, params.URL, tempFile.Name()), fantasy.ToolResponse{}
+}
+
+// resolveOnce returns a function that expands a secret from the config
+// when a tool first needs it and keeps the result, so a $(command) runs
+// once per tool set rather than on every request. A failure isn't kept:
+// the next request tries again, so a locked keychain doesn't stick. An
+// empty value has nothing to resolve, so it returns nil.
+func resolveOnce(resolver config.VariableResolver, value string) func() (string, error) {
+	if value == "" {
+		return nil
+	}
+	var (
+		mu       sync.Mutex
+		resolved string
+		done     bool
+	)
+	return func() (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if done {
+			return resolved, nil
+		}
+		v, err := resolver.ResolveValue(value)
+		if err != nil {
+			return "", err
+		}
+		resolved, done = v, true
+		return resolved, nil
+	}
 }

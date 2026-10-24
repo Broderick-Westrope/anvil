@@ -500,6 +500,9 @@ them in `options.expanded_tools` (globs work, such as `"mcp_*"`).
 | --- | --- | --- |
 | `tools.agentic_fetch.model` | The small model | `provider/model` for the web research subagent |
 | `tools.agentic_fetch.reasoning_effort` | The model's default | Its reasoning effort |
+| `tools.web_search.provider` | `"duckduckgo"` | Search engine for the subagent's `web_search`: `duckduckgo` (no key, rate-limited when used heavily; a block pauses it for a minute in every Anvil process), `brave` or `tavily` |
+| `tools.web_search.api_key` | None | Key for `brave` or `tavily`, required for both. Expands `$VAR` and `$(command)` |
+| `tools.fetch.github_token` | None | Token sent to `api.github.com` and `raw.githubusercontent.com` by `fetch`, `web_fetch` and `agentic_fetch`, which lifts GitHub's limit of 60 unauthenticated requests an hour. The fetch subagent doesn't ask before fetching, so use a fine-grained token with read-only access to public repositories |
 | `tools.grep.timeout` | `"5s"` | How long a search may run |
 | `tools.glob.timeout` | `"30s"` | How long a file match may run |
 | `tools.ls.max_depth`, `tools.ls.max_items` | Unlimited (2 and 100 outside a git repo) | How much a directory listing returns |

@@ -59,5 +59,8 @@ func ValidateFiles(workingDir, dataDir string, validateBouncer func(*Bouncer) er
 	if err := cfg.ValidateMCPRoutes(); err != nil {
 		return fmt.Errorf("invalid MCP route configuration: %w", err)
 	}
+	if err := cfg.Tools.WebSearch.Validate(); err != nil {
+		return fmt.Errorf("invalid tools.web_search configuration: %w", err)
+	}
 	return nil
 }

@@ -127,6 +127,24 @@ model by default. To give it its own model, set `tools.agentic_fetch`:
 `model` uses `provider/model` format. An invalid value logs a warning and
 falls back to `small`. Check the resolved model with `anvil_info`.
 
+Its `web_search` tool scrapes DuckDuckGo by default, which rate-limits
+heavy use; after a block every Anvil process skips it for a minute. To use
+a search API instead, set `tools.web_search` (`provider` is `brave` or
+`tavily`, and `api_key` is required for both). To lift GitHub's
+unauthenticated rate limit on `api.github.com` and
+`raw.githubusercontent.com`, set `tools.fetch.github_token`. The fetch
+sub-agent runs without permission prompts, so use a fine-grained token with
+read-only access to public repositories, not `gh auth token`:
+
+```json
+{
+  "tools": {
+    "web_search": { "provider": "brave", "api_key": "$BRAVE_API_KEY" },
+    "fetch": { "github_token": "$ANVIL_GITHUB_TOKEN" }
+  }
+}
+```
+
 ## Custom Providers
 
 ```json
