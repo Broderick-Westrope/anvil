@@ -248,3 +248,19 @@ func TestToolOutputPlainContentWrappedKeepsColour(t *testing.T) {
 		require.Contains(t, line, red+"red", "line %d lost its colour: %q", i, line)
 	}
 }
+
+// A key that wraps puts its value on the lines below it, even when its
+// widest line leaves room beside it.
+func TestToolDetailParamItemStacksUnderWrappedKey(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	word := "abcdefghijklmnopqrstuvwxyz0123456789ab"
+	item := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: word + " " + word, value: "value"}
+
+	// Two words don't fit in 80 columns, so the key takes a line each, 40
+	// columns wide, leaving 39 beside them.
+	lines := strings.Split(ansi.Strip(item.Render(80)), "\n")
+	require.Len(t, lines, 3)
+	require.Equal(t, "      value", strings.TrimRight(lines[2], " "))
+}
