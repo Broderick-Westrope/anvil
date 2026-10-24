@@ -140,7 +140,7 @@ func (c *coordinator) MCPRoutes() ([]tools.MCPRouteInfo, bool) {
 		reason, short := route.reason, route.short
 		if size := toolsmcp.SentToolBytes(name); route.auto && !route.catalogue && size >= catalogueThresholdBytes {
 			now := humanize.Comma(int64(size))
-			reason += fmt.Sprintf("; now %s bytes, past %s, so it moves to the catalogue at the next restart",
+			reason += fmt.Sprintf("; now %s bytes, not under %s, so it moves to the catalogue at the next restart",
 				now, humanize.Comma(catalogueThresholdBytes))
 			short += ", now " + humanize.Bytes(uint64(size))
 		}
