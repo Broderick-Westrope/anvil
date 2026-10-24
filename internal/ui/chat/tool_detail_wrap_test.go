@@ -33,6 +33,13 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 			"new_content": multi + "\nadded " + long,
 			"diff":        "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-" + long + "\n+" + word,
 		}),
+		"hook": mustJSON(t, map[string]any{"hook": map[string]any{
+			"hook_count": 1, "decision": "deny",
+			"hooks": []any{map[string]any{
+				"name": "fmt\thook\r\n" + word, "matcher": "ba\tsh\r", "decision": "deny",
+				"reason": "because\r\n" + long + "\t" + word,
+			}},
+		}}),
 	}
 
 	// Agents, agentic fetch and todos have no tool drill-in.
@@ -66,9 +73,9 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 								result = &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output, Metadata: meta, IsError: status == ToolStatusError}
 							}
 							// A diff lays out side by side once it is wide
-							// enough, so its text can't be compared across
-							// widths.
-							requireDetailItemsFit(t, helperToolItem(t, name, input, result, status), expanded, meta == "")
+							// enough, and a hook name is cut to fit, so their
+							// text can't be compared across widths.
+							requireDetailItemsFit(t, helperToolItem(t, name, input, result, status), expanded, resultName == "plain")
 						})
 					}
 				}
@@ -571,4 +578,58 @@ func TestJobHeaderFitsWidth(t *testing.T) {
 	for _, line := range strings.Split(source.Render(80), "\n") {
 		require.LessOrEqual(t, lipgloss.Width(line), 80)
 	}
+}
+
+// A drill-in's Output keeps the hooks that ran, wrapping a denial's whole
+// reason, and drops the tool's header rather than them.
+func TestToolDetailOutputKeepsHookLines(t *testing.T) {
+	t.Parallel()
+
+	reason := strings.Repeat("not allowed here ", 8) + "END"
+	metadata := mustJSON(t, map[string]any{"hook": map[string]any{
+		"hook_count": 1, "decision": "deny",
+		"hooks": []any{map[string]any{"name": "guard", "decision": "deny", "reason": reason}},
+	}})
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "body", Metadata: metadata}
+	source := helperToolItem(t, "grep", `{"pattern":"PATTERNHEAD"}`, result, ToolStatusSuccess)
+
+	sty := styles.TokyoNight()
+	items := BuildToolDetailItems(&sty, source, nil)
+	output := ansi.Strip(items[len(items)-1].Render(60))
+	require.NotContains(t, output, "PATTERNHEAD", "the header spilled into Output")
+	require.True(t, strings.HasPrefix(strings.TrimSpace(output), "Hook guard"), "%q", output)
+	require.Contains(t, squash(output), squash(reason))
+	require.Contains(t, output, "body")
+
+	lines := strings.Split(output, "\n")
+	col := lipgloss.Width(lines[0][:strings.Index(lines[0], "Denied")])
+	require.Greater(t, col, 0)
+	require.Equal(t, strings.Repeat(" ", col), lines[1][:col], "the reason wraps under where the detail starts: %q", lines[1])
+
+	header := strings.Split(ansi.Strip(source.Render(60)), "\n")
+	require.True(t, strings.HasPrefix(strings.TrimSpace(header[0]), "Hook guard"), "the chat still shows the hooks above the header")
+	require.True(t, strings.HasSuffix(strings.TrimRight(header[0], " "), "…"), "the chat cuts the reason to one line: %q", header[0])
+}
+
+// A hook's detail wraps beside its name while that leaves room to read it,
+// and is cut with an ellipsis once it doesn't.
+func TestHookLineWrapsOnlyWithRoom(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	reason := strings.Repeat("nope ", 20)
+	metadata := mustJSON(t, map[string]any{"hook": map[string]any{
+		"hook_count": 1, "decision": "deny",
+		"hooks": []any{map[string]any{"name": "g", "decision": "deny", "reason": reason}},
+	}})
+
+	// "Hook g → " puts the detail at column 9.
+	const col = 9
+	wrapped := strings.Split(ansi.Strip(toolOutputHookIndicator(&sty, metadata, col+minParamValueWidth, true)), "\n")
+	require.Greater(t, len(wrapped), 1)
+	require.Equal(t, squash("Hook g →  Denied "+reason), squash(strings.Join(wrapped, "\n")))
+
+	cut := ansi.Strip(toolOutputHookIndicator(&sty, metadata, col+minParamValueWidth-1, true))
+	require.NotContains(t, cut, "\n")
+	require.True(t, strings.HasSuffix(cut, "…"), "%q", cut)
 }

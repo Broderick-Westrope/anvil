@@ -466,8 +466,8 @@ func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
 
 		// Prepend hook indicator if hooks ran for this tool call.
 		if t.result != nil {
-			if hookLine := toolOutputHookIndicator(t.sty, t.result.Metadata, toolItemWidth); hookLine != "" {
-				content = hookLine + "\n\n" + content
+			if hookLine := toolOutputHookIndicator(t.sty, t.result.Metadata, toolItemWidth, t.noTruncate); hookLine != "" {
+				content = withHookLines(content, hookLine, t.oneLineHeader)
 			}
 		}
 
@@ -1071,11 +1071,22 @@ func toolOutputSkillContent(sty *styles.Styles, name, description string) string
 	))
 }
 
+// withHookLines puts hook lines above a tool's content, or under its header
+// for a caller that drops the header's line (the drill-in), so the hooks
+// are what survive rather than the header.
+func withHookLines(content, hookLines string, underHeader bool) string {
+	if !underHeader {
+		return hookLines + "\n\n" + content
+	}
+	header, rest, _ := strings.Cut(content, "\n")
+	return header + "\n" + hookLines + "\n" + rest
+}
+
 // toolOutputHookIndicator renders hook indicator lines from tool metadata.
 // Returns empty string if no hook metadata is present. Hook names are
 // sanitized (newlines replaced with ¶) and truncated to fit the available
 // horizontal space.
-func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int) string {
+func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noTruncate bool) string {
 	if metadata == "" {
 		return ""
 	}
@@ -1100,13 +1111,13 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int) str
 	maxMatcherWidth := 0
 	maxDetailWidth := 0
 	for i, hi := range h.Hooks {
-		sanitizedNames[i] = strings.ReplaceAll(hi.Name, "\n", "¶")
+		sanitizedNames[i] = hookNameSpace.Replace(hi.Name)
 		w := lipgloss.Width(sty.Tool.HookName.Render(sanitizedNames[i]))
 		if w > maxNameWidth {
 			maxNameWidth = w
 		}
 		if hi.Matcher != "" {
-			mw := lipgloss.Width(sty.Tool.HookMatcher.Render(hi.Matcher))
+			mw := lipgloss.Width(sty.Tool.HookMatcher.Render(oneLineSpace.Replace(hi.Matcher)))
 			if mw > maxMatcherWidth {
 				maxMatcherWidth = mw
 			}
@@ -1130,7 +1141,9 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int) str
 			fixed += 1 + maxMatcherWidth
 		}
 		fixed += 1 + lipgloss.Width(sty.Tool.HookArrow.Render(styles.ArrowRightIcon)) + 1
-		fixed += maxDetailWidth
+		// A detail too long for the line is cut or wrapped, so it needs
+		// only enough room to read.
+		fixed += min(maxDetailWidth, minParamValueWidth)
 		if budget := width - fixed; budget < maxNameWidth {
 			maxNameWidth = max(1, budget)
 		}
@@ -1139,9 +1152,30 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int) str
 	var lines []string
 	for i, hi := range h.Hooks {
 		name := truncateHookName(sanitizedNames[i], maxNameWidth)
-		lines = append(lines, renderHookLine(sty, hi, name, details[i], maxNameWidth, maxMatcherWidth))
+		line := renderHookLine(sty, hi, name, details[i], maxNameWidth, maxMatcherWidth)
+		lines = append(lines, fitHookLine(line, details[i], width, noTruncate))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// hookNameSpace shows a hook name's line breaks as pilcrows, on one line.
+var hookNameSpace = strings.NewReplacer("\r\n", "¶", "\n", "¶", "\r", "¶", "\t", "    ")
+
+// fitHookLine holds a hook line to width: cut with an ellipsis, or with
+// noTruncate, its detail wrapped under where it starts.
+func fitHookLine(line, detail string, width int, noTruncate bool) string {
+	if width <= 0 || lipgloss.Width(line) <= width {
+		return line
+	}
+	if !noTruncate {
+		return ansi.Truncate(line, width, "…")
+	}
+	col := lipgloss.Width(line) - lipgloss.Width(detail)
+	if width-col < minParamValueWidth {
+		return ansi.Truncate(line, width, "…")
+	}
+	wrapped := lipgloss.Wrap(detail, width-col, "")
+	return ansi.Truncate(line, col, "") + indentLines(wrapped, 0, col)
 }
 
 // truncateHookName truncates a hook name to fit within maxWidth cells,
@@ -1183,7 +1217,7 @@ func renderHookLine(sty *styles.Styles, hi hooks.HookInfo, rawName, detail strin
 	var matcherPart string
 	if maxMatcherWidth > 0 {
 		if hi.Matcher != "" {
-			matcher := sty.Tool.HookMatcher.Render(hi.Matcher)
+			matcher := sty.Tool.HookMatcher.Render(oneLineSpace.Replace(hi.Matcher))
 			matcherPad := strings.Repeat(" ", maxMatcherWidth-lipgloss.Width(matcher))
 			matcherPart = " " + matcher + matcherPad
 		} else {
@@ -1219,7 +1253,7 @@ func hookDetail(sty *styles.Styles, hi hooks.HookInfo) string {
 	switch hi.Decision {
 	case "deny":
 		if hi.Reason != "" {
-			return sty.Tool.HookDenied.Render(denialMessage) + " " + sty.Tool.HookDeniedReason.Render(hi.Reason)
+			return sty.Tool.HookDenied.Render(denialMessage) + " " + sty.Tool.HookDeniedReason.Render(oneLineSpace.Replace(hi.Reason))
 		}
 		return sty.Tool.HookDenied.Render(denialMessage)
 	case "allow":
