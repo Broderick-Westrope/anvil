@@ -38,7 +38,7 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 
 	for _, name := range tools {
 		for inputName, input := range inputs {
-			for _, width := range []int{40, 80, 121} {
+			for _, width := range []int{1, 5, 8, 40, 80, 121} {
 				for _, expanded := range []bool{false, true} {
 					result := &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output}
 					source := helperToolItem(t, name, input, result, ToolStatusSuccess)

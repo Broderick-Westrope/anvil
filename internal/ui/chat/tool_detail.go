@@ -180,10 +180,22 @@ func detailPrefix(sty *styles.Styles, focused bool) string {
 // width.
 func renderDetailPrefixed(sty *styles.Styles, focused bool, width int, render func(inner int) string) string {
 	prefix := detailPrefix(sty, focused)
-	return prefixDetailLines(prefix, render(max(1, width-lipgloss.Width(prefix))))
+	return fitDetailLines(prefix, render(max(1, width-lipgloss.Width(prefix))), width)
 }
 
-// prefixDetailLines puts prefix before each line of rendered.
+// fitDetailLines puts prefix before each line of rendered and cuts the line
+// at width, which only shortens it when width is too narrow to hold the bar
+// and an indent.
+func fitDetailLines(prefix, rendered string, width int) string {
+	lines := strings.Split(prefixDetailLines(prefix, rendered), "\n")
+	for i, ln := range lines {
+		lines[i] = ansi.Truncate(ln, width, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// prefixDetailLines puts prefix before each line of rendered. An image
+// goes through it uncut, since its lines carry graphics placeholders.
 func prefixDetailLines(prefix, rendered string) string {
 	lines := strings.Split(rendered, "\n")
 	for i, ln := range lines {
@@ -587,7 +599,7 @@ func (o *toolDetailOutputItem) Render(width int) string {
 	}
 
 	// The source lays its output out beside the focus bar itself.
-	rendered := prefixDetailLines(detailPrefix(o.sty, o.focused), o.renderOutput(width))
+	rendered := fitDetailLines(detailPrefix(o.sty, o.focused), o.renderOutput(width), width)
 
 	o.cachedRender = rendered
 	o.cachedWidth = width
