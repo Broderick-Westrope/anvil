@@ -236,3 +236,16 @@ func TestToolDetailParamItemWrappedKeyKeepsColour(t *testing.T) {
 	}
 	require.Greater(t, keyLines, 1, "the key must wrap for this to test anything")
 }
+
+// Coloured output that wraps keeps its colour on every line.
+func TestToolOutputPlainContentWrappedKeepsColour(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	const red = "\x1b[31m"
+	lines := strings.Split(toolOutputPlainContent(&sty, red+strings.Repeat("red ", 20)+"\x1b[0m", 30, true, true), "\n")
+	require.Greater(t, len(lines), 1, "the output must wrap for this to test anything")
+	for i, line := range lines {
+		require.Contains(t, line, red+"red", "line %d lost its colour: %q", i, line)
+	}
+}

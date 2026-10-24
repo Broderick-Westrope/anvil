@@ -910,7 +910,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		}
 		if noTruncate {
 			// Wrapped lines keep the one-column indent of the first.
-			for _, part := range strings.Split(ansi.Wrap(ln, max(1, width-1), ""), "\n") {
+			for _, part := range strings.Split(lipgloss.Wrap(ln, max(1, width-1), ""), "\n") {
 				out = append(out, sty.Tool.ContentLine.Width(width).Render(" "+part))
 			}
 			continue
