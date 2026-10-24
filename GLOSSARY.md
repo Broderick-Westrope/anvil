@@ -88,7 +88,7 @@ A user-defined shell command in `anvil.json` that runs before a tool call and ca
 
 ## Injection
 
-A message added to a running subagent between its steps instead of as a user prompt. Its source is `human` (a steer), `orchestrator` (a resume prompt) or `harness` (a continue after a transient failure or interrupt). The model sees it wrapped in an `<injected_message source="…">` tag, and the stored message keeps a record of the source that compaction never summarises away.
+A message added to a running subagent between its steps instead of as a user prompt. Its source is `human` (a steer), `orchestrator` (a resume prompt) or `harness` (a continue after a transient failure or interrupt). A top-level turn resumed after a transient failure starts with a `harness` injection too. The model sees it wrapped in an `<injected_message source="…">` tag, and the stored message keeps a record of the source that compaction never summarises away.
 
 - **Code:** `message.MessageTypeSubagentInjection`, `message.InjectionContent` (`internal/message/injection.go`)
 - **Not:** queued prompt, which only runs after the current run ends. Job notices are also mid-run messages but have their own type.

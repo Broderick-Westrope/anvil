@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sync/atomic"
@@ -9,7 +10,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 )
 
@@ -151,20 +152,41 @@ func TestToolGoErrorContinuesRun(t *testing.T) {
 	require.Contains(t, errOut.Error.Error(), "permission denied")
 }
 
-func TestBuildToolsReportsToolErrorsToTheModel(t *testing.T) {
+// Tools a session agent is given directly, like agentic_fetch's, skip the
+// coordinator's tool building, so a Go error from one must still reach the
+// model instead of ending the turn.
+func TestSessionAgentReportsToolErrorsToTheModel(t *testing.T) {
 	t.Parallel()
-	cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
-	require.NoError(t, err)
-	cfg.Config().MCP = nil
-	c := &coordinator{cfg: cfg}
 
-	for _, depth := range []int{1, 3} {
-		builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, depth, nil, nil, nil, nil, nil, nil)
-		require.NoError(t, err)
-		require.NotEmpty(t, builtTools)
-		for _, tool := range builtTools {
-			_, ok := tool.(errorResultTool)
-			require.True(t, ok, "depth %d: %s is not wrapped", depth, tool.Info().Name)
-		}
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Tool error", t.TempDir())
+	require.NoError(t, err)
+	tool := fantasy.NewAgentTool("fetch", "fetches a URL",
+		func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, errors.New("failed to fetch URL: context deadline exceeded")
+		})
+	model := &dispatchModel{toolName: "fetch"}
+	a := NewSessionAgent(SessionAgentOptions{
+		LargeModel:   jobEventsModel(model),
+		SmallModel:   jobEventsModel(model),
+		SystemPrompt: "system",
+		IsYolo:       true,
+		Sessions:     env.sessions,
+		Messages:     env.messages,
+		Tools:        []fantasy.AgentTool{tool},
+	})
+
+	_, err = a.Run(dispatchCtx(t), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+
+	require.NoError(t, err)
+	require.Len(t, model.prompts, 2, "the model must get a second step to react to the error")
+	msgs, err := env.messages.List(t.Context(), sess.ID)
+	require.NoError(t, err)
+	var results []message.ToolResult
+	for _, msg := range msgs {
+		results = append(results, msg.ToolResults()...)
 	}
+	require.Len(t, results, 1)
+	require.True(t, results[0].IsError)
+	require.Equal(t, "failed to fetch URL: context deadline exceeded", results[0].Content)
 }

@@ -30,7 +30,7 @@ func newSubagentCallCoordinator(t *testing.T) (*coordinator, fakeEnv, session.Se
 	t.Helper()
 	env := testEnv(t)
 	c := newTestCoordinator(t, env, testProvider, config.ProviderConfig{ID: testProvider})
-	c.subagentRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	c.retryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 	parent, err := env.sessions.Create(t.Context(), "Parent", t.TempDir())
 	require.NoError(t, err)
 	return c, env, parent
@@ -134,7 +134,7 @@ func TestTransientFailureResumesInTheSameChildWithAHarnessMessage(t *testing.T) 
 	require.Equal(t, "fix it", calls[0].Prompt)
 	require.Equal(t, []message.InjectionContent{{
 		Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry,
-		Text: subagentContinueText, CallID: "msg-1$$call-1", Attempt: 1, MaxAttempts: 2, Reason: "503 overloaded",
+		Text: transientContinueText, CallID: "msg-1$$call-1", Attempt: 1, MaxAttempts: 2, Reason: "503 overloaded",
 	}}, calls[1].Injections)
 	require.True(t, strings.HasPrefix(resp.Content, "recovered output\n\nrecovered after 1 transient failure: 503 overloaded"), resp.Content)
 }
@@ -176,7 +176,7 @@ func TestPermanentFailuresAreNotRetried(t *testing.T) {
 func TestEscDuringBackoffCancelsTheCallAsHuman(t *testing.T) {
 	t.Parallel()
 	c, _, parent := newSubagentCallCoordinator(t)
-	c.subagentRetryDelays = []time.Duration{time.Hour, time.Hour}
+	c.retryDelays = []time.Duration{time.Hour, time.Hour}
 
 	failed := make(chan string, 1)
 	agent := newMockAgent(testProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -532,7 +532,7 @@ func TestNewTaskPromptCannotForgeAnInjection(t *testing.T) {
 
 func TestDefaultBackoffIsFiveThenThirtySeconds(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, []time.Duration{5 * time.Second, 30 * time.Second}, defaultSubagentRetryDelays)
+	require.Equal(t, []time.Duration{5 * time.Second, 30 * time.Second}, defaultRetryDelays)
 	c := &coordinator{}
 	require.Equal(t, 5*time.Second, c.backoffFor(0))
 	require.Equal(t, 30*time.Second, c.backoffFor(1))

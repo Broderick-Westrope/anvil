@@ -325,16 +325,19 @@ func toolCallReply(id, toolName string, usage fantasy.Usage) []fantasy.StreamPar
 	}
 }
 
-func TestStepUsageRecordedWhenToolFailsStep(t *testing.T) {
+func TestStepUsageRecordedWhenToolCancelsStep(t *testing.T) {
 	t.Parallel()
 
 	env := testEnv(t)
 	sess, err := env.sessions.Create(t.Context(), "Tool error", t.TempDir())
 	require.NoError(t, err)
 
-	failing := fantasy.NewAgentTool("explode", "Fails the step.",
-		func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			return fantasy.ToolResponse{}, errors.New("tool exploded")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	failing := fantasy.NewAgentTool("explode", "Cancels the step.",
+		func(ctx context.Context, _ struct{}, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			cancel()
+			return fantasy.ToolResponse{}, ctx.Err()
 		},
 	)
 	model := &usageModel{name: "scripted", respond: func(int) ([]fantasy.StreamPart, error) {
@@ -342,8 +345,8 @@ func TestStepUsageRecordedWhenToolFailsStep(t *testing.T) {
 	}}
 	a := testSessionAgent(env, model, model, "system", failing)
 
-	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
-	require.ErrorContains(t, err, "tool exploded")
+	_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.ErrorIs(t, err, context.Canceled)
 
 	rows := stepUsageRows(t, env)
 	require.Len(t, rows, 1)

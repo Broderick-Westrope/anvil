@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -540,13 +541,13 @@ func publishedLeaf(events <-chan pubsub.Event[session.Session], sessionID, leafI
 	}
 }
 
-// A step whose second tool fails critically and whose result can't be
-// saved leaves that call unanswered; the failure gives it an error result
-// and leaves the first, answered call alone.
+// A step whose second tool is canceled and whose result can't be saved
+// leaves that call unanswered; the failure gives it an error result and
+// leaves the first, answered call alone.
 func TestRunFailureAnswersOnlyUnansweredToolCalls(t *testing.T) {
 	t.Parallel()
 
-	const unanswered = "There was an error while executing the tool"
+	const unanswered = "Error: user cancelled assistant tool calling"
 	tests := map[string]struct {
 		rejectWhen  string
 		wantErr     string
@@ -572,10 +573,13 @@ func TestRunFailureAnswersOnlyUnansweredToolCalls(t *testing.T) {
 				" BEGIN SELECT RAISE(ABORT, 'insert blocked'); END")
 			require.NoError(t, err)
 
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			good := okToolWith("good", "fine")
-			bad := fantasy.NewAgentTool("bad", "Fails the step.",
-				func(context.Context, struct{}, fantasy.ToolCall) (fantasy.ToolResponse, error) {
-					return fantasy.ToolResponse{}, errors.New("BAD_TOOL_OUTPUT")
+			bad := fantasy.NewAgentTool("bad", "Cancels the run.",
+				func(ctx context.Context, _ struct{}, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+					cancel()
+					return fantasy.ToolResponse{}, fmt.Errorf("BAD_TOOL_OUTPUT: %w", ctx.Err())
 				})
 			model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
 				return []fantasy.StreamPart{
@@ -590,7 +594,7 @@ func TestRunFailureAnswersOnlyUnansweredToolCalls(t *testing.T) {
 			}}
 			a := turnAgent(env, model, "system", 200_000, good, bad)
 
-			_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+			_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
 			require.ErrorContains(t, err, tc.wantErr)
 			require.Equal(t, tc.wantResults, toolResultContents(t, env, sess.ID))
 		})
