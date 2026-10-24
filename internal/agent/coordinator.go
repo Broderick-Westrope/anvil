@@ -737,9 +737,9 @@ func (c *coordinator) resumeAfterTransientFailures(
 	for resumes := 0; resumes < maxTransientResumes; resumes++ {
 		retry, reason := classifyRunFailure(ctx, err)
 		if !retry || c.isUnauthorized(err) || last.state.summaryFailed {
-			break
+			return result, err
 		}
-		slog.Warn("Resuming turn after a transient failure", "reason", reason, "attempt", resumes+1, "error", err)
+		slog.Warn("Resuming turn after a transient failure", "reason", reason, "error", err)
 		timer := time.NewTimer(withProviderHint(err, c.backoffFor(resumes)))
 		select {
 		case <-ctx.Done():
