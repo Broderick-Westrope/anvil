@@ -1329,17 +1329,17 @@ func (c *Config) ValidateHooks() error {
 // empty route means auto.
 func (c *Config) ValidateMCPRoutes() error {
 	for _, name := range slices.Sorted(maps.Keys(c.MCP)) {
-		mcp := c.MCP[name]
-		switch mcp.Route {
+		server := c.MCP[name]
+		switch server.Route {
 		case "", MCPRouteAuto, MCPRouteCatalogue:
 		case MCPRouteDirect:
-			if mcp.IsLazy() {
+			if server.IsLazy() {
 				return fmt.Errorf("mcp %q: lazy_description and route \"direct\" can't be combined; "+
 					"remove route to reach it through the catalogue, or remove lazy_description "+
 					"to connect it at startup and list it directly", name)
 			}
 		default:
-			return fmt.Errorf("mcp %q: unknown route %q (want auto, catalogue or direct)", name, mcp.Route)
+			return fmt.Errorf("mcp %q: unknown route %q (want auto, catalogue or direct)", name, server.Route)
 		}
 	}
 	return nil

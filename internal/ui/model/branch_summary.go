@@ -132,7 +132,7 @@ func (b *branchSummaryFeature) Cancel() (tea.Cmd, bool) {
 }
 
 // BlockNavigation implements navigationGuard: nothing may move the leaf
-// (a rewind, a return, or a metadata entry such as an MCP toggle) while
+// (a rewind, a return, or a metadata entry such as a model change) while
 // the summary of the last rewind runs, or the summary would be dropped.
 func (b *branchSummaryFeature) BlockNavigation() tea.Cmd {
 	if !b.Busy(b.host.SessionID()) {

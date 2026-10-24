@@ -278,8 +278,9 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 					// Non-auth errors: retry the connection.
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateDeferred, mcp.StateDisabled:
-					// A deferred server connects on its first catalogue
-					// search; Enter connects it now.
+					// Enter connects a server that's off or not yet
+					// connected; a deferred one would otherwise connect on
+					// its first catalogue search.
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateConnected:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
