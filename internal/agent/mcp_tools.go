@@ -7,6 +7,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/hooks"
 )
 
@@ -23,6 +24,29 @@ type mcpListing struct {
 	// routed lists every server in the route map, in name order, so a
 	// direct-name call can be matched to its server.
 	routed []string
+}
+
+// mcpInstructions joins the instructions of connected MCP servers in name
+// order, leaving out catalogue servers (search results carry theirs). The
+// order is fixed so the system prompt is identical across runs and its
+// prompt cache stays valid.
+func mcpInstructions(listing mcpListing) string {
+	states := toolsmcp.GetStates()
+	var instructions strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(states)) {
+		server := states[name]
+		if server.State != toolsmcp.StateConnected {
+			continue
+		}
+		if listing.catalogue[name] && !listing.named[name] {
+			continue
+		}
+		if s := server.Client.InitializeResult().Instructions; s != "" {
+			instructions.WriteString(s)
+			instructions.WriteString("\n\n")
+		}
+	}
+	return instructions.String()
 }
 
 // agentMCPTools builds one agent's MCP tools. The tool list and the
