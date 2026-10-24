@@ -279,14 +279,17 @@ func TestTheFirstPromptUsesTheRouteMapNotThePreSnapshotBuild(t *testing.T) {
 }
 
 func TestAnEnableMCPCallFromAnOldSessionFailsAndTheTurnCarriesOn(t *testing.T) {
-	tests := map[string]config.MCPConfig{
-		"with a catalogue server":  {Type: config.MCPHttp, LazyDescription: "Pings things."},
-		"with only direct servers": {Type: config.MCPHttp},
+	tests := map[string]struct {
+		cfg config.MCPConfig
+	}{
+		"with a catalogue server":  {cfg: config.MCPConfig{Type: config.MCPHttp, LazyDescription: "Pings things."}},
+		"with only direct servers": {cfg: config.MCPConfig{Type: config.MCPHttp}},
 	}
-	for name, mcpCfg := range tests {
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			const server = "catoldenable"
 			var calls atomic.Int32
+			mcpCfg := tc.cfg
 			mcpCfg.URL = countingServer(t, &calls)
 			f := newRoutedFixture(t, config.MCPs{server: mcpCfg})
 			session := seedOldEnableMCPSession(t, f, server)
