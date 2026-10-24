@@ -57,7 +57,11 @@ const (
 	MessageTypeLabel               MessageType = "label"
 	MessageTypeModelChange         MessageType = "model_change"
 	MessageTypeThinkingLevelChange MessageType = "thinking_level_change"
-	MessageTypeMCPToggle           MessageType = "mcp_toggle"
+	// MessageTypeMCPToggle marks the palette's lazy MCP toggles in old
+	// sessions. Nothing writes or reads them any more (ADR 0008); the type
+	// stays so those sessions still decode and the toggles stay out of
+	// context.
+	MessageTypeMCPToggle MessageType = "mcp_toggle"
 	// MessageTypeJobEvent is a user-role notice about background job
 	// events. It is sent to the model like any user message.
 	MessageTypeJobEvent MessageType = "job_event"
@@ -243,7 +247,8 @@ type ThinkingLevelChangeContent struct {
 
 func (ThinkingLevelChangeContent) isPart() {}
 
-// MCPToggleContent stores metadata for an MCP server toggle entry.
+// MCPToggleContent is the part of an old MCPToggle message. It is kept
+// only so old sessions decode (ADR 0008).
 type MCPToggleContent struct {
 	ServerName string `json:"server_name"`
 	Enabled    bool   `json:"enabled"`
