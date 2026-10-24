@@ -822,9 +822,12 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 	if len(params) == 0 {
 		return ""
 	}
-	// A header kept to one line renders as if collapsed.
+	// A header kept to one line renders as if collapsed, because the
+	// drill-in drops the header's line and would show any more under Output.
 	if opts != nil && opts.OneLineHeader {
-		opts = nil
+		collapsed := *opts
+		collapsed.ExpandedContent = false
+		opts = &collapsed
 	}
 
 	mainParam := params[0]
