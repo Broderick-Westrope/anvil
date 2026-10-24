@@ -49,7 +49,7 @@ func TestInjectedMessagesRenderWithTheirSource(t *testing.T) {
 				ID: "m", Role: message.User, MessageType: message.MessageTypeSubagentInjection,
 				Parts: message.InjectionParts([]message.InjectionContent{tc.inj}),
 			}
-			items := ExtractMessageItems(&sty, msg, nil, nil)
+			items := ExtractMessageItems(&sty, msg, nil, ToolItemOptions{}, nil)
 			require.Len(t, items, 1)
 			out := ansi.Strip(items[0].Render(100))
 			require.Contains(t, out, tc.want)

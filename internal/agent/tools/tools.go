@@ -89,13 +89,17 @@ func GetModelNameFromContext(ctx context.Context) string {
 	return getContextValue(ctx, ModelNameContextKey, "")
 }
 
+// PermissionDeniedPrefix starts the content of every permission denied
+// tool response.
+const PermissionDeniedPrefix = "Permission denied"
+
 // NewPermissionDeniedResponse returns a tool response indicating the user
 // denied permission, with StopTurn set so the agent loop does not retry.
 // When reason is non-empty it is included in the error message.
 func NewPermissionDeniedResponse(reason string) fantasy.ToolResponse {
-	msg := "Permission denied"
+	msg := PermissionDeniedPrefix
 	if reason != "" {
-		msg = "Permission denied: " + reason
+		msg = PermissionDeniedPrefix + ": " + reason
 	}
 	resp := fantasy.NewTextErrorResponse(msg)
 	resp.StopTurn = true

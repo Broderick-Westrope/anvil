@@ -11,7 +11,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/attachments"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
@@ -30,10 +29,17 @@ type Identifiable interface {
 	ID() string
 }
 
-// Animatable is an interface for items that support animation.
+// Animatable is an interface for items that support animation. Items never
+// schedule their own frames: the UI runs a single animation clock and calls
+// Advance on every visible item that reports Spinning.
 type Animatable interface {
-	StartAnimation() tea.Cmd
-	Animate(msg anim.StepMsg) tea.Cmd
+	// Spinning reports whether the item shows a running animation and so
+	// needs clock ticks.
+	Spinning() bool
+	// Advance moves the animation forward by one frame and reports whether
+	// the rendered output changed. Implementations must bump their version
+	// when it did, so the list cache re-renders the item.
+	Advance() bool
 }
 
 // Expandable is an interface for items that can be expanded or collapsed.
@@ -387,28 +393,25 @@ func cappedMessageWidth(availableWidth int) int {
 //
 // For assistant messages with tool calls, pass a toolResults map to link results.
 // Use BuildToolResultMap to create this map from all messages in a session.
-func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, expandedPatterns []string) []MessageItem {
+// diagrams renders Mermaid diagrams; nil leaves them as code blocks.
+func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, opts ToolItemOptions, diagrams DiagramRenderer) []MessageItem {
 	switch msg.Role {
 	case message.User:
 		if msg.MessageType == message.MessageTypeJobEvent {
 			return []MessageItem{NewJobEventMessageItem(sty, msg)}
 		}
+		if msg.MessageType == message.MessageTypeBranchSummary {
+			return []MessageItem{newStoredBranchSummaryItem(sty, msg)}
+		}
 		if item, ok := NewWorkflowTurnMessageItem(sty, msg); ok {
 			return []MessageItem{item}
 		}
-		r := attachments.NewRenderer(
-			sty.Attachments.Normal,
-			sty.Attachments.Deleting,
-			sty.Attachments.Image,
-			sty.Attachments.Text,
-			sty.Attachments.Skill,
-			sty.Attachments.Remove,
-		)
+		r := attachments.NewRenderer(sty.Attachments)
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
 		var items []MessageItem
 		if ShouldRenderAssistantMessage(msg) {
-			items = append(items, NewAssistantMessageItem(sty, msg))
+			items = append(items, NewAssistantMessageItems(sty, msg, diagrams)...)
 		}
 		for _, tc := range msg.ToolCalls() {
 			var result *message.ToolResult
@@ -421,7 +424,7 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 				tc,
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
-				expandedPatterns,
+				opts,
 			)
 			SetToolMessageCreatedAt(item, msg.CreatedAt)
 			items = append(items, item)

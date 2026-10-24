@@ -104,6 +104,9 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err := cfg.ValidateMCPAuth(); err != nil {
 		return nil, fmt.Errorf("invalid MCP auth configuration: %w", err)
 	}
+	if err := cfg.ValidateMCPRoutes(); err != nil {
+		return nil, fmt.Errorf("invalid MCP route configuration: %w", err)
+	}
 
 	store.insideWorktree = isInsideWorktree()
 	cfg.applyLoadAdjustments(store.insideWorktree)
@@ -308,6 +311,8 @@ func prepareKnownProvider(p catwalk.Provider, config ProviderConfig, env env.Env
 		ExtraBody:          config.ExtraBody,
 		ExtraParams:        make(map[string]string),
 		Models:             p.Models,
+		ChatGPTModels:      config.ChatGPTModels,
+		GrokModels:         config.GrokModels,
 	}
 
 	complete, ok := knownProviderCompletions[p.ID]
@@ -334,7 +339,9 @@ var knownProviderCompletions = map[catwalk.InferenceProvider]providerCompletion{
 }
 
 func completeAPIKeyProvider(prepared *ProviderConfig, _ env.Env, resolver VariableResolver) func() {
-	if !hasAPIKey(resolver, prepared.APIKey) {
+	// An OAuth login is a credential too: OpenAI signed in with ChatGPT, or
+	// xAI with Grok, is configured without an API key.
+	if prepared.OAuthToken == nil && !hasAPIKey(resolver, prepared.APIKey) {
 		return func() {
 			slog.Warn("Skipping provider due to missing API key", "provider", prepared.ID)
 		}
@@ -1311,6 +1318,19 @@ func (c *Config) ValidateHooks() error {
 			if _, err := regexp.Compile(h.Matcher); err != nil {
 				return fmt.Errorf("hook %s[%d]: invalid matcher regex %q: %w", event, i, h.Matcher, err)
 			}
+		}
+	}
+	return nil
+}
+
+// ValidateMCPRoutes rejects an MCP server whose route isn't one Anvil
+// knows. An empty route means auto.
+func (c *Config) ValidateMCPRoutes() error {
+	for _, name := range slices.Sorted(maps.Keys(c.MCP)) {
+		switch c.MCP[name].Route {
+		case "", MCPRouteAuto, MCPRouteCatalogue, MCPRouteDirect:
+		default:
+			return fmt.Errorf("mcp %q: unknown route %q (want auto, catalogue or direct)", name, c.MCP[name].Route)
 		}
 	}
 	return nil

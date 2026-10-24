@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/session"
@@ -46,6 +47,10 @@ func (*composerWorkspace) Config() *config.Config                { return &confi
 
 func (*composerWorkspace) ListSessionJobs(string) []shell.JobInfo { return nil }
 
+func (*composerWorkspace) AnnotateCommands(cmds []commands.CustomCommand) []commands.CustomCommand {
+	return cmds
+}
+
 func (*composerWorkspace) MoveLeaf(context.Context, string, string) error { return nil }
 
 func (*composerWorkspace) GetSession(_ context.Context, id string) (session.Session, error) {
@@ -62,7 +67,7 @@ func newComposerTestUI() (*UI, *composerWorkspace) {
 	u.com.Workspace = ws
 	u.dialog = dialog.NewOverlay()
 	sty := u.com.Styles.Attachments
-	renderer := attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove)
+	renderer := attachments.NewRenderer(sty)
 	u.attachments = attachments.New(renderer, attachments.Keymap{})
 	return u, ws
 }

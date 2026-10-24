@@ -58,6 +58,11 @@ type AgentMD struct {
 	// routing hint is emitted.
 	RoutingHint string
 
+	// BranchSummarizer marks an agent that summarizes abandoned
+	// conversation branches. Such agents are offered when the user
+	// rewinds, and are never delegation targets.
+	BranchSummarizer bool
+
 	// Source indicates where the agent was discovered from. Empty string
 	// means embedded/builtin, "plugin:{name}" means from a plugin.
 	Source string
@@ -80,6 +85,7 @@ type agentFrontmatter struct {
 	Skills           []string            `yaml:"skills"`
 	MCPs             map[string][]string `yaml:"mcps"`
 	RoutingHint      string              `yaml:"routing_hint"`
+	BranchSummarizer bool                `yaml:"branch_summarizer"`
 }
 
 // ParseAgentMD parses an agent description file with YAML frontmatter.
@@ -138,6 +144,7 @@ func ParseAgentMD(name string, content []byte) (AgentMD, error) {
 	agent.DelegateWhen = fm.DelegateWhen
 	agent.DontDelegateWhen = fm.DontDelegateWhen
 	agent.Model = fm.Model
+	agent.BranchSummarizer = fm.BranchSummarizer
 	agent.ReasoningEffort = fm.ReasoningEffort
 	agent.Think = fm.Think
 	agent.Tools = fm.Tools
@@ -245,8 +252,12 @@ func BuildDelegationWorkflow(agents []AgentMD) string {
 func ValidateDelegatesTo(agents []AgentMD, disabledAgents []string) (errs []error, warnings []error) {
 	// Build lookup sets.
 	known := make(map[string]bool, len(agents))
+	summarizers := make(map[string]bool)
 	for _, a := range agents {
 		known[a.Name] = true
+		if a.BranchSummarizer {
+			summarizers[a.Name] = true
+		}
 	}
 
 	disabled := make(map[string]bool, len(disabledAgents))
@@ -256,7 +267,12 @@ func ValidateDelegatesTo(agents []AgentMD, disabledAgents []string) (errs []erro
 
 	for _, a := range agents {
 		for _, ref := range a.DelegatesTo {
-			if !known[ref] && !disabled[ref] {
+			if summarizers[ref] {
+				errs = append(errs, fmt.Errorf(
+					"agent %q delegates_to branch summarizer %q",
+					a.Name, ref,
+				))
+			} else if !known[ref] && !disabled[ref] {
 				errs = append(errs, fmt.Errorf(
 					"agent %q delegates_to unknown agent %q",
 					a.Name, ref,

@@ -1,0 +1,71 @@
+{
+  "why": "A read-only look around that the user abandoned needs a line or two, not a report.",
+  "max_lines": 3,
+  "trunk": [
+    {
+      "role": "user",
+      "text": "Here's the session-fix script. Tell me how to use it."
+    },
+    {
+      "role": "assistant",
+      "text": "Run it with the order ID: ./fix-session.ts <order-id>."
+    }
+  ],
+  "branch": [
+    {
+      "role": "user",
+      "text": "Could it fetch the events from the API instead of the database?"
+    },
+    {
+      "role": "assistant",
+      "text": "Looking at what the API exposes.",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "grep",
+          "input": {
+            "pattern": "getCustomerSession",
+            "path": "/repo/svc-promotions"
+          }
+        },
+        {
+          "id": "c2",
+          "name": "view",
+          "input": {
+            "file_path": "/repo/svc-promotions/src/client.ts"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "results": [
+        {
+          "id": "c1",
+          "content": "src/client.ts:42: export async function getCustomerSession("
+        },
+        {
+          "id": "c2",
+          "content": "42| export async function getCustomerSession(id: string) {"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "It could: getCustomerSession in svc-promotions/src/client.ts returns the session. That would mean replacing the SQL query in the script. Want me to do that?"
+    },
+    {
+      "role": "user",
+      "text": "No, never mind."
+    }
+  ],
+  "required": [
+    "getCustomerSession|API"
+  ],
+  "forbidden": [
+    "\\bcommit",
+    "\\bpushed\\b",
+    "## ",
+    "Corrections"
+  ]
+}

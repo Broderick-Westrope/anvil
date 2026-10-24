@@ -22,11 +22,6 @@ import (
 type timerWorkspace struct {
 	*jobsWorkspace
 	running map[string]bool
-	branch  []message.Message
-}
-
-func (w *timerWorkspace) GetBranchPath(context.Context, string) ([]message.Message, error) {
-	return w.branch, nil
 }
 
 func (*timerWorkspace) ListUserMessages(context.Context, string) ([]message.Message, error) {
@@ -57,7 +52,7 @@ func runningBash(id string, ago time.Duration) message.ToolCall {
 }
 
 func toolItemIn(u *UI, msgID string, tc message.ToolCall) chat.ToolMessageItem {
-	return chat.NewToolMessageItem(u.com.Styles, msgID, tc, nil, false, nil)
+	return chat.NewToolMessageItem(u.com.Styles, msgID, tc, nil, false, chat.ToolItemOptions{})
 }
 
 func renderedHeader(item chat.MessageItem) string {
@@ -170,11 +165,14 @@ func TestToolTimerStart(t *testing.T) {
 		load := func(running bool) (*UI, int) {
 			u, ws := newTimerTestUI()
 			ws.running["a1"] = running
-			ws.branch = []message.Message{{
+			msgs := []message.Message{{
 				ID: "a1", Role: message.Assistant, SessionID: "s1",
 				Parts: []message.ContentPart{runningBash("tc1", 30*time.Second)},
 			}}
-			_, cmd := u.Update(loadSessionMsg{session: &session.Session{ID: "s1", LeafMessageID: "a1"}})
+			_, cmd := u.Update(loadSessionMsg{
+				session:  &session.Session{ID: "s1", LeafMessageID: "a1"},
+				messages: msgs,
+			})
 			if batch, ok := cmd().(tea.BatchMsg); ok {
 				return u, len(batch)
 			}
@@ -195,7 +193,7 @@ func TestPermissionNotificationReachesEveryInstanceOfANestedCall(t *testing.T) {
 
 	agentItem := chat.NewToolMessageItem(u.com.Styles, "a1", message.ToolCall{
 		ID: "agent-call", Name: agent.TaskToolName, Input: `{"description":"look"}`, Finished: true,
-	}, nil, false, nil)
+	}, nil, false, chat.ToolItemOptions{})
 	nested := toolItemIn(u, "child-a1", runningBash("tc1", 0))
 	agentItem.(chat.NestedToolContainer).SetNestedTools([]chat.ToolMessageItem{nested})
 	u.chat.SetMessages(agentItem)

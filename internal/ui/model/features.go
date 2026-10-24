@@ -65,8 +65,8 @@ type preemptInputFeature interface {
 	PreemptInput(msg tea.Msg) (tea.Cmd, bool)
 }
 
-// drillInFeature draws a footer under a drilled-in chat.
-type drillInFeature interface {
+// drillInFooterFeature draws a footer under a drilled-in chat.
+type drillInFooterFeature interface {
 	// DrillInFooter returns the footer, or nil when it has none.
 	DrillInFooter() panelView
 }
@@ -74,6 +74,30 @@ type drillInFeature interface {
 // paletteFeature contributes entries to the command palette.
 type paletteFeature interface {
 	PaletteEntries() []*dialog.CommandItem
+}
+
+// cancelFeature can claim the cancel keys (esc, and ctrl+c on an empty
+// composer) before UI cancels a busy agent, for work of its own that
+// makes the agent look busy.
+type cancelFeature interface {
+	// Cancel cancels the feature's work and reports true, or reports
+	// false when it has nothing to cancel.
+	Cancel() (tea.Cmd, bool)
+}
+
+// navigationGuard can refuse a rewind (a move of the session's leaf).
+type navigationGuard interface {
+	// BlockNavigation returns the command that explains why the rewind
+	// is refused, or nil to allow it.
+	BlockNavigation() tea.Cmd
+}
+
+// drillInFeature hears which drill-in is on top, in the same Update that
+// changes it, whatever the message (including the keys that go back).
+type drillInFeature interface {
+	// DrillInChanged is called with the chat of the drill-in now on top,
+	// or nil when none is open.
+	DrillInChanged(top *Chat) tea.Cmd
 }
 
 // features is UI's ordered registry of features. Order is precedence:
@@ -84,9 +108,14 @@ type features struct {
 	panels   []panelFeature
 	palettes []paletteFeature
 	preempts []preemptInputFeature
-	footers  []drillInFeature
+	footers  []drillInFooterFeature
 	// calls is the task call tracker, which UI asks directly.
-	calls *subagentCalls
+	calls   *subagentCalls
+	cancels []cancelFeature
+	guards  []navigationGuard
+	drills  []drillInFeature
+	// top is the drill-in the drill features last heard of.
+	top *Chat
 }
 
 // register adds f, and the optional surfaces it implements, after the
@@ -102,10 +131,19 @@ func (fs *features) register(f feature) {
 	if p, ok := f.(paletteFeature); ok {
 		fs.palettes = append(fs.palettes, p)
 	}
+	if c, ok := f.(cancelFeature); ok {
+		fs.cancels = append(fs.cancels, c)
+	}
+	if g, ok := f.(navigationGuard); ok {
+		fs.guards = append(fs.guards, g)
+	}
+	if d, ok := f.(drillInFeature); ok {
+		fs.drills = append(fs.drills, d)
+	}
 	if p, ok := f.(preemptInputFeature); ok {
 		fs.preempts = append(fs.preempts, p)
 	}
-	if d, ok := f.(drillInFeature); ok {
+	if d, ok := f.(drillInFooterFeature); ok {
 		fs.footers = append(fs.footers, d)
 	}
 	if c, ok := f.(*subagentCalls); ok {
@@ -116,6 +154,17 @@ func (fs *features) register(f feature) {
 func (fs *features) preemptInput(msg tea.Msg) (tea.Cmd, bool) {
 	for _, f := range fs.preempts {
 		if cmd, ok := f.PreemptInput(msg); ok {
+			return cmd, true
+		}
+	}
+	return nil, false
+}
+
+// cancel offers the cancel keys to the features; the first to claim
+// them wins.
+func (fs *features) cancel() (tea.Cmd, bool) {
+	for _, f := range fs.cancels {
+		if cmd, ok := f.Cancel(); ok {
 			return cmd, true
 		}
 	}
@@ -133,12 +182,37 @@ func (fs *features) drillInFooter() panelView {
 	return nil
 }
 
+// blockNavigation returns the first feature's refusal of a rewind, or
+// nil.
+func (fs *features) blockNavigation() tea.Cmd {
+	for _, f := range fs.guards {
+		if cmd := f.BlockNavigation(); cmd != nil {
+			return cmd
+		}
+	}
+	return nil
+}
+
 // drillInFooterLines is the height of drillInFooter.
 func (fs *features) drillInFooterLines() int {
 	if v := fs.drillInFooter(); v != nil {
 		return v.Lines()
 	}
 	return 0
+}
+
+// drillInTop tells the drill features when top is a different drill-in
+// from the last one they heard of.
+func (fs *features) drillInTop(top *Chat) tea.Cmd {
+	if top == fs.top {
+		return nil
+	}
+	fs.top = top
+	var cmds []tea.Cmd
+	for _, f := range fs.drills {
+		cmds = append(cmds, f.DrillInChanged(top))
+	}
+	return tea.Batch(cmds...)
 }
 
 // isInput reports whether msg is keyboard, paste or mouse input, which

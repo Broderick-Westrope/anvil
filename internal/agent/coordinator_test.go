@@ -24,6 +24,7 @@ import (
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
+	"github.com/Broderick-Westrope/anvil/internal/discover"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -36,6 +37,7 @@ type mockSessionAgent struct {
 	model     Model
 	runFunc   func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error)
 	setModels func() // Optional; runs on every SetModels call.
+	overhead  int
 	cancelled []string
 }
 
@@ -43,7 +45,8 @@ func (m *mockSessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fan
 	return m.runFunc(ctx, call)
 }
 
-func (m *mockSessionAgent) Model() Model { return m.model }
+func (m *mockSessionAgent) Model() Model         { return m.model }
+func (m *mockSessionAgent) RequestOverhead() int { return m.overhead }
 func (m *mockSessionAgent) SetModels(large, small Model) {
 	if m.setModels != nil {
 		m.setModels()
@@ -51,7 +54,7 @@ func (m *mockSessionAgent) SetModels(large, small Model) {
 }
 func (m *mockSessionAgent) SetProviderConfig(_ config.ProviderConfig) {}
 func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)        {}
-func (m *mockSessionAgent) SetLazyMCPToolMap(_ map[string]string)     {}
+func (m *mockSessionAgent) SetMCPListing(mcpListing)                  {}
 func (m *mockSessionAgent) SetConnectFn(_ tools.ConnectFn)            {}
 func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)       {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
@@ -689,6 +692,41 @@ func TestTrustedReadPathsIncludesCommandDirectories(t *testing.T) {
 	require.Contains(t, got, "/plugins/p1/commands")
 }
 
+func TestGetProviderOptionsReasoningEffortCustomProvider(t *testing.T) {
+	t.Parallel()
+	// Custom local providers (lmstudio, ollama, omlx, litellm, llamacpp)
+	// go through the OpenAI-compat client and must receive the selected
+	// reasoning effort like any other OpenAI-compatible provider.
+	for _, providerType := range []string{"litellm", "llamacpp", "lmstudio", "ollama", "omlx"} {
+		t.Run(providerType, func(t *testing.T) {
+			t.Parallel()
+			require.True(t, discover.IsKnownCustomProvider(providerType))
+			model := Model{
+				CatwalkCfg: catwalk.Model{
+					ID:              "qwen/qwen3-8b",
+					CanReason:       true,
+					ReasoningLevels: []string{"low", "medium", "high"},
+				},
+				ModelCfg: config.SelectedModel{
+					Provider:        "local",
+					Model:           "qwen/qwen3-8b",
+					ReasoningEffort: "high",
+				},
+			}
+			providerCfg := config.ProviderConfig{ID: "local", Type: catwalk.Type(providerType)}
+
+			opts := getProviderOptions(model, providerCfg)
+
+			raw, ok := opts[openaicompat.Name]
+			require.True(t, ok, "options should be keyed under openaicompat.Name for type %q", providerType)
+			parsed, ok := raw.(*openaicompat.ProviderOptions)
+			require.True(t, ok)
+			require.NotNil(t, parsed.ReasoningEffort)
+			assert.Equal(t, "high", string(*parsed.ReasoningEffort))
+		})
+	}
+}
+
 func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 	t.Parallel()
 
@@ -838,7 +876,7 @@ func TestSkillsUsageParity(t *testing.T) {
 				for _, allowedSkills := range [][]string{nil, {}} {
 					agentCfg := config.Agent{ID: agentName, AllowedTools: tt.allowed, AllowedSkills: allowedSkills}
 					active := []*skills.Skill{{Name: "example", Description: "Example skill", SkillFilePath: "/private/example/SKILL.md"}}
-					builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, active, active, nil, nil, nil)
+					builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, active, active, nil, nil, nil, nil)
 					require.NoError(t, err)
 					hasView := false
 					for _, tool := range builtTools {
@@ -883,7 +921,7 @@ func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
 	require.NoError(t, err)
 	cfg.Config().MCP = nil
 	c := &coordinator{cfg: cfg}
-	builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil)
+	builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	var registered []string
@@ -934,7 +972,7 @@ func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
 			agentCfg := config.Agent{ID: "fixer", AllowedTools: tt.allowed}
-			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
@@ -972,7 +1010,7 @@ func TestBuildToolsWarnsOnInvalidAllowedTools(t *testing.T) {
 			require.NoError(t, err)
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
-			builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "fixer", AllowedTools: tt.allowed}, 1, nil, nil, nil, nil, nil)
+			builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "fixer", AllowedTools: tt.allowed}, 1, nil, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantWarn, strings.Contains(logs.String(), warning), logs.String())
 			hasBash := slices.ContainsFunc(builtTools, func(tool fantasy.AgentTool) bool { return tool.Info().Name == tools.BashToolName })
@@ -1007,7 +1045,7 @@ func TestBuildToolsTaskToolFollowsDelegates(t *testing.T) {
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
 			agentCfg := config.Agent{ID: tt.agentID, AllowedTools: []string{TaskToolName, tools.ViewToolName}}
-			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, tt.depth, nil, nil, nil, tt.agentMDs, nil)
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, tt.depth, nil, nil, nil, tt.agentMDs, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
@@ -1086,7 +1124,7 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.ViewToolName}, AllowedMCP: tt.allowedMCP}
-			builtTools, lazyMap, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			builtTools, lazyMap, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
@@ -1097,7 +1135,7 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 				}
 			}
 			require.Equal(t, tt.want, names)
-			require.Equal(t, tt.wantLazy, lazyMap)
+			require.Equal(t, tt.wantLazy, lazyMap.lazyTools)
 		})
 	}
 }
@@ -1465,4 +1503,195 @@ func TestConnectDeferredMCP(t *testing.T) {
 	t.Cleanup(func() { toolsmcp.DeleteStateForTest(connected) })
 	_, err = c.connectDeferredMCP(t.Context(), connected)
 	require.ErrorIs(t, err, errOrchestratorAgentNotConfigured, "a connected server goes on to refresh the tools")
+
+	toolsmcp.SetToolsForTest(connected, &toolsmcp.Tool{Name: "ping"})
+	t.Cleanup(func() { toolsmcp.DeleteToolsForTest(connected) })
+	orch := &toolRecordingSessionAgent{}
+	c.agentConfigs[config.AgentOrchestrator] = config.Agent{ID: config.AgentOrchestrator}
+	c.orchestrator = orch
+	count, err := c.connectDeferredMCP(t.Context(), connected)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	require.NotEmpty(t, orch.tools, "the rebuilt tools reach the orchestrator")
 }
+
+type toolRecordingSessionAgent struct {
+	mockSessionAgent
+	tools []fantasy.AgentTool
+}
+
+func (a *toolRecordingSessionAgent) SetTools(tools []fantasy.AgentTool) { a.tools = tools }
+
+func TestGetProviderOptionsTopKExtraBody(t *testing.T) {
+	// "ollama" has a registered discover.Enricher, so it is treated as a
+	// known custom provider speaking openai-compat.
+	knownCustomProviderCfg := config.ProviderConfig{ID: "ollama", Type: "ollama"}
+
+	t.Run("model top_k is injected into extra_body for known custom providers", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{ID: "llama3"},
+			ModelCfg:   config.SelectedModel{Provider: "ollama", TopK: ptr(int64(40))},
+		}
+
+		opts := getProviderOptions(model, knownCustomProviderCfg)
+
+		raw, ok := opts[openaicompat.Name]
+		require.True(t, ok)
+		parsed, ok := raw.(*openaicompat.ProviderOptions)
+		require.True(t, ok)
+		topK, ok := parsed.ExtraBody["top_k"].(int64)
+		require.True(t, ok)
+		assert.Equal(t, int64(40), topK)
+	})
+
+	t.Run("falls back to catwalk top_k when the model config has none", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{
+				ID:      "llama3",
+				Options: catwalk.ModelOptions{TopK: ptr(int64(64))},
+			},
+			ModelCfg: config.SelectedModel{Provider: "ollama"},
+		}
+
+		opts := getProviderOptions(model, knownCustomProviderCfg)
+
+		raw, ok := opts[openaicompat.Name]
+		require.True(t, ok)
+		parsed, ok := raw.(*openaicompat.ProviderOptions)
+		require.True(t, ok)
+		topK, ok := parsed.ExtraBody["top_k"].(int64)
+		require.True(t, ok)
+		assert.Equal(t, int64(64), topK)
+	})
+
+	t.Run("does not set extra_body when no top_k is configured anywhere", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{ID: "llama3"},
+			ModelCfg:   config.SelectedModel{Provider: "ollama"},
+		}
+
+		opts := getProviderOptions(model, knownCustomProviderCfg)
+
+		raw, ok := opts[openaicompat.Name]
+		require.True(t, ok)
+		parsed, ok := raw.(*openaicompat.ProviderOptions)
+		require.True(t, ok)
+		_, hasTopK := parsed.ExtraBody["top_k"]
+		assert.False(t, hasTopK)
+	})
+
+	t.Run("does not overwrite an explicitly configured extra_body.top_k", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{ID: "llama3"},
+			ModelCfg: config.SelectedModel{
+				Provider: "ollama",
+				TopK:     ptr(int64(40)),
+				ProviderOptions: map[string]any{
+					"extra_body": map[string]any{"top_k": 7},
+				},
+			},
+		}
+
+		opts := getProviderOptions(model, knownCustomProviderCfg)
+
+		raw, ok := opts[openaicompat.Name]
+		require.True(t, ok)
+		parsed, ok := raw.(*openaicompat.ProviderOptions)
+		require.True(t, ok)
+		assert.EqualValues(t, 7, parsed.ExtraBody["top_k"])
+	})
+
+	t.Run("is not injected for providers outside the known-custom-provider default branch", func(t *testing.T) {
+		model := Model{
+			CatwalkCfg: catwalk.Model{ID: "glm-5.2"},
+			ModelCfg:   config.SelectedModel{Provider: "zai", TopK: ptr(int64(40))},
+		}
+		providerCfg := config.ProviderConfig{ID: string(catwalk.InferenceProviderZAI), Type: openaicompat.Name}
+
+		opts := getProviderOptions(model, providerCfg)
+
+		raw, ok := opts[openaicompat.Name]
+		require.True(t, ok)
+		parsed, ok := raw.(*openaicompat.ProviderOptions)
+		require.True(t, ok)
+		_, hasTopK := parsed.ExtraBody["top_k"]
+		assert.False(t, hasTopK)
+	})
+}
+
+func TestGetProviderOptionsMalformedFallback(t *testing.T) {
+	model := Model{
+		CatwalkCfg: catwalk.Model{ID: "llama3"},
+		ModelCfg: config.SelectedModel{
+			Provider:        "ollama",
+			TopK:            ptr(int64(40)),
+			ProviderOptions: map[string]any{"user": 5.0},
+		},
+	}
+	providerCfg := config.ProviderConfig{ID: "test", Type: "ollama"}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	opts := getProviderOptions(model, providerCfg)
+
+	require.Contains(t, logs.String(), "falling back to top_k only")
+	require.NotContains(t, logs.String(), "this should never happen", "the top_k-only fallback parses")
+	raw, ok := opts[openaicompat.Name]
+	require.True(t, ok, "malformed provider_options should still fall back to top_k")
+	parsed, ok := raw.(*openaicompat.ProviderOptions)
+	require.True(t, ok)
+
+	// The malformed fields are dropped; only the injected top_k survives.
+	assert.Nil(t, parsed.User)
+	assert.Nil(t, parsed.ReasoningEffort)
+	require.Len(t, parsed.ExtraBody, 1)
+	topK, ok := parsed.ExtraBody["top_k"].(int64)
+	require.True(t, ok)
+	assert.Equal(t, int64(40), topK)
+}
+
+func TestCallTopK(t *testing.T) {
+	knownCustomProviderCfg := config.ProviderConfig{ID: "ollama", Type: "ollama"}
+
+	tests := []struct {
+		name        string
+		providerCfg config.ProviderConfig
+		want        *int64
+	}{
+		{
+			name:        "suppressed for known custom providers",
+			providerCfg: knownCustomProviderCfg,
+			want:        nil,
+		},
+		{
+			name:        "passed through for openai-compat hosted providers",
+			providerCfg: config.ProviderConfig{ID: "zai", Type: openaicompat.Name},
+			want:        ptr(int64(40)),
+		},
+		{
+			name:        "passed through for anthropic",
+			providerCfg: config.ProviderConfig{ID: "anthropic", Type: catwalk.Type(anthropic.Name)},
+			want:        ptr(int64(40)),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := callTopK(tc.providerCfg, ptr(int64(40)))
+			if tc.want == nil {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, *tc.want, *got)
+		})
+	}
+
+	t.Run("nil input stays nil regardless of provider", func(t *testing.T) {
+		assert.Nil(t, callTopK(knownCustomProviderCfg, nil))
+		assert.Nil(t, callTopK(config.ProviderConfig{Type: openaicompat.Name}, nil))
+	})
+}
+
+func ptr[T any](v T) *T { return &v }

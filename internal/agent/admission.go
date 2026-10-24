@@ -235,17 +235,24 @@ func (a *admission) submit(ctx context.Context, id string, job submission) (*fan
 	return a.execute(owner, job)
 }
 
-// hold stops new runs from starting in each of ids, then waits until none
-// of them has a run in flight. Holds nest. The returned release lifts the
-// hold and starts work that queued behind it.
-func (a *admission) hold(ctx context.Context, ids []string) (release func(), err error) {
+// reserve stops new runs from starting in each of ids at once, without
+// waiting for runs in flight. The returned release lifts it and starts
+// work that queued behind it.
+func (a *admission) reserve(ids []string) (release func()) {
 	a.mu.Lock()
 	for _, id := range ids {
 		a.held[id]++
 	}
 	a.mu.Unlock()
 	var once sync.Once
-	release = func() { once.Do(func() { a.unhold(ids) }) }
+	return func() { once.Do(func() { a.unhold(ids) }) }
+}
+
+// hold stops new runs from starting in each of ids, then waits until none
+// of them has a run in flight. Holds nest. The returned release lifts the
+// hold and starts work that queued behind it.
+func (a *admission) hold(ctx context.Context, ids []string) (release func(), err error) {
+	release = a.reserve(ids)
 	for {
 		a.mu.Lock()
 		busy := slices.ContainsFunc(ids, func(id string) bool { return a.owners[id] != nil })

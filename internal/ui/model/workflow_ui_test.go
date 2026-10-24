@@ -42,6 +42,8 @@ type workflowTestWorkspace struct {
 	respondErr error
 	// noSessionID makes CreateSession return a session without an ID.
 	noSessionID bool
+	// diagramsOff turns options.tui.diagrams off.
+	diagramsOff bool
 	controls    []string
 	history     []message.Message
 	notReady    bool
@@ -74,6 +76,7 @@ func (*workflowTestWorkspace) ParseAgentToolSessionID(string) (string, string, b
 }
 func (*workflowTestWorkspace) PermissionYoloLevel() config.YoloLevel { return config.YoloOff }
 func (*workflowTestWorkspace) PermissionBouncerConfigured() bool     { return false }
+func (w *workflowTestWorkspace) DiagramsEnabled() bool               { return !w.diagramsOff }
 func (w *workflowTestWorkspace) Config() *config.Config {
 	return &config.Config{
 		Options:   &config.Options{TUI: &config.TUIOptions{}, ProjectDirectory: w.projectDir},
@@ -179,7 +182,7 @@ func newWorkflowUIFixture(t *testing.T) *workflowUIFixture {
 	u.keyMap = DefaultKeyMap()
 	u.dialog = dialog.NewOverlay()
 	sty := u.com.Styles.Attachments
-	renderer := attachments.NewRenderer(sty.Normal, sty.Deleting, sty.Image, sty.Text, sty.Skill, sty.Remove)
+	renderer := attachments.NewRenderer(sty)
 	u.attachments = attachments.New(renderer, attachments.Keymap{})
 	u.slashAC = autocomplete.New(nil, 10)
 	sess := ws.sessions["sess-1"]

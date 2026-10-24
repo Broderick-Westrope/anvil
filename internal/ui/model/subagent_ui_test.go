@@ -127,7 +127,7 @@ func TestReloadedResumeShowsItsOwnStatsAndOwnsTheChild(t *testing.T) {
 	assistant := &message.Message{ID: "m2", Role: message.Assistant, Parts: []message.ContentPart{
 		message.ToolCall{ID: "c2", Name: agent.TaskToolName, Input: string(input), Finished: true},
 	}}
-	items := chat.ExtractMessageItems(u.com.Styles, assistant, nil, nil)
+	items := chat.ExtractMessageItems(u.com.Styles, assistant, nil, chat.ToolItemOptions{}, nil)
 	u.loadNestedToolCalls(items)
 
 	rendered := ansi.Strip(items[0].Render(120))

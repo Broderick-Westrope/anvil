@@ -960,6 +960,42 @@ func TestStartupSnapshotAndRawProjectDirectory(t *testing.T) {
 		RestartRequired(snapCfg, store.Config(), snapB, store.TrustedBouncer(), snapRaw, store.RawProjectDirectory()))
 }
 
+func TestDiagramsEnabledKeepsStartupValueAcrossReloads(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		startup, reloaded string
+		want              bool
+	}{
+		"unset means on":       {startup: "", reloaded: `, "options": {"tui": {"diagrams": false}}`, want: true},
+		"on stays on":          {startup: `, "options": {"tui": {"diagrams": true}}`, reloaded: `, "options": {"tui": {"diagrams": false}}`, want: true},
+		"off stays off":        {startup: `, "options": {"tui": {"diagrams": false}}`, reloaded: `, "options": {"tui": {"diagrams": true}}`, want: false},
+		"off with no reload":   {startup: `, "options": {"tui": {"diagrams": false}}`, want: false},
+		"unset with no reload": {startup: "", want: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store, configPath := loadConfiguredStore(t, tc.startup)
+			if tc.reloaded != "" {
+				require.NoError(t, os.WriteFile(configPath, []byte(fmt.Sprintf(configuredStoreJSON, tc.reloaded)), 0o600))
+				require.NoError(t, store.ReloadFromDisk(context.Background()))
+				require.Equal(t, []string{"options.tui"}, restartRequiredNow(store))
+			}
+			require.Equal(t, tc.want, store.DiagramsEnabled())
+		})
+	}
+}
+
+func TestDiagramsEnabledWithoutStartupSnapshotReadsConfig(t *testing.T) {
+	t.Parallel()
+
+	off := false
+	require.False(t, testStore(&Config{Options: &Options{TUI: &TUIOptions{Diagrams: &off}}}).DiagramsEnabled())
+	require.True(t, testStore(&Config{}).DiagramsEnabled())
+	require.True(t, testStore(&Config{Options: &Options{}}).DiagramsEnabled(), "no tui options")
+}
+
 func TestStartupSnapshot_UnconfiguredStore(t *testing.T) {
 	t.Parallel()
 

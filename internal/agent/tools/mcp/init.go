@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/version"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -140,6 +142,8 @@ func ArmInit() {
 func ResetInitForTest() {
 	initMu.Lock()
 	initStarted = false
+	startupSnapshot = nil
+	connecting.Reset(map[string]struct{}{})
 	initOnce = sync.Once{}
 	initDone = make(chan struct{})
 	initMu.Unlock()
@@ -277,9 +281,12 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 	dbQueries = queries
 	setSessionParentCtx(ctx)
 	slog.Info("Initializing MCP clients")
+	start := time.Now()
 	var wg sync.WaitGroup
-	// Initialize states for all configured MCPs
-	for name, m := range cfg.Config().MCP {
+	// Initialize states for all configured MCPs. A copy of the map feeds
+	// the startup snapshot, so a config write mid-init can't skew it.
+	mcps := maps.Clone(cfg.Config().MCP)
+	for name, m := range mcps {
 		if m.Disabled {
 			updateState(name, StateDisabled, nil, nil, Counts{})
 			slog.Debug("Skipping disabled MCP", "name", name)
@@ -314,13 +321,21 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 				}
 			}()
 
-			if err := initClient(ctx, cfg, name, m, cfg.Resolver(), queries); err != nil {
-				slog.Debug("Failed to initialize MCP client", "name", name, "error", err)
-			}
+			start := time.Now()
+			err := initClient(ctx, cfg, name, m, cfg.Resolver(), queries)
+			slog.Debug("MCP client initialization finished",
+				"name", name,
+				"duration", time.Since(start).Truncate(time.Millisecond).String(),
+				"error", err,
+			)
 		}(name, m)
 	}
 	wg.Wait()
+	recordSnapshot(mcps)
 	initOnce.Do(func() { close(initDone) })
+	// The first prompt waits for this to finish, so the total is the floor
+	// on its latency. Lazy servers are excluded; they connect on demand.
+	slog.Debug("Finished initializing MCP clients", "duration", time.Since(start).Truncate(time.Millisecond).String())
 }
 
 // WaitForInit blocks until MCP initialization is complete, i.e. until
@@ -370,7 +385,7 @@ var ErrAlreadyConnecting = errors.New("connection already in progress")
 
 // ConnectDeferred connects a deferred (lazy, never-connected) MCP server.
 // The connection runs under the package's long-lived session parent
-// context (see sessionParentCtx) with the handshake bounded by mcpTimeout
+// context (see sessionParentCtx) with the handshake bounded by ConnectTimeout
 // inside createSession; the caller's ctx only gates starting the attempt.
 // One automatic retry is performed for transient failures (timeout,
 // connection refused). Auth failures are not retried.
@@ -413,7 +428,11 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 	}
 
 	// Atomically mark as starting so concurrent callers see the
-	// transition and return ErrAlreadyConnecting.
+	// transition and return ErrAlreadyConnecting. connecting spans the
+	// retry too, so WaitSettled doesn't wake on the error a transient
+	// first failure publishes before the retry.
+	connecting.Set(name, struct{}{})
+	defer clearConnecting(name)
 	updateState(name, StateStarting, nil, nil, Counts{})
 
 	attempt := func() error {
@@ -422,7 +441,7 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 		// subprocess's process group) from this context, so a
 		// request-scoped or timeout-wrapped context would kill the server
 		// as soon as the enable call returns. The handshake itself is
-		// already bounded inside createSession by mcpTimeout.
+		// already bounded inside createSession by ConnectTimeout.
 		return InitializeSingle(sessionParent(), name, cfg, nil)
 	}
 
@@ -538,7 +557,7 @@ func DisableSingle(cfg *config.ConfigStore, name string) error {
 
 func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string) (*ClientSession, error) {
 	m := cfg.Config().MCP[name]
-	timeout := mcpTimeout(m)
+	timeout := ConnectTimeout(m)
 
 	// Fast path: reuse a healthy session without taking the renewal lock.
 	// NOTE: A concurrent locked renewal may close this session between the
@@ -581,8 +600,9 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 
 	state, _ := states.Get(name)
 	// StateError closes the dead session and clears its tools, prompts, and
-	// resources from the registry.
-	updateState(name, StateError, maybeTimeoutErr(pingErr, timeout), nil, state.Counts)
+	// resources from the registry. Report the failure against the exact
+	// session that failed the ping so only that session is torn down.
+	updateState(name, StateError, maybeTimeoutErr(pingErr, timeout), sess, state.Counts)
 
 	newSess, err := newSession(ctx, name, m, cfg.Resolver(), dbQueries)
 	if err != nil {
@@ -633,7 +653,34 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 func pingSession(ctx context.Context, s *ClientSession, timeout time.Duration) error {
 	pingCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return s.Ping(pingCtx, nil)
+	err := s.Ping(pingCtx, pingParams(s))
+	// MethodNotFound means the server answered; it just doesn't implement ping.
+	var wireErr *jsonrpc.Error
+	if errors.As(err, &wireErr) && wireErr.Code == jsonrpc.CodeMethodNotFound {
+		return nil
+	}
+	return err
+}
+
+// statelessProtocolVersion is the first MCP protocol revision (SEP-2575)
+// that requires per-request _meta on every call.
+const statelessProtocolVersion = "2026-07-28"
+
+// pingParams adds the SEP-2575 per-request _meta to a ping on a session that
+// negotiated the stateless protocol. go-sdk v1.8.0 adds it to list and call
+// requests but not to Ping, so servers reject a bare ping with -32602 and the
+// healthy session would be torn down and rebuilt on every tool call. Ping
+// carries no capability-dependent behaviour, so empty client capabilities
+// satisfy the required field.
+func pingParams(s *ClientSession) *mcp.PingParams {
+	res := s.InitializeResult()
+	if res == nil || res.ProtocolVersion < statelessProtocolVersion {
+		return nil
+	}
+	return &mcp.PingParams{Meta: mcp.Meta{
+		mcp.MetaKeyProtocolVersion:    res.ProtocolVersion,
+		mcp.MetaKeyClientCapabilities: map[string]any{},
+	}}
 }
 
 // closeSession closes an MCP session, logging only unexpected errors. EOF,
@@ -662,23 +709,37 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 	case StateConnected:
 		info.ConnectedAt = time.Now()
 	case StateError:
-		// A session that has errored is dead to us. Atomically remove it and
-		// close it so the child process and its stdio pipes are released — the
-		// bare map delete this used to do leaked both. Clearing the tool
-		// registry keeps the agent from advertising tools it can no longer
-		// call: without it, anvil_info / the MCP palette and the tool list
-		// handed to the LLM diverge, so a server still reads "connected, N
-		// tools" while every call fails with "tool not found".
-		if old, ok := sessions.Take(name); ok {
-			closeSession(name, old)
+		// A session that has errored is dead to us: close it so the child
+		// process and its stdio pipes are released, and clear its registry
+		// entries so the agent stops advertising capabilities it can no
+		// longer call (without that, anvil_info / the MCP palette and the
+		// tool list handed to the LLM diverge). Crucially, close exactly the
+		// session that errored (the client argument): if the registry
+		// already holds a DIFFERENT session — a newer, healthy one another
+		// path installed — leave it and its registrations alone. Closing
+		// "whatever is in the map" here let a stale error transition (e.g. a
+		// refresh that raced a renewal) tear down the healthy replacement.
+		switch {
+		case client != nil:
+			if cur, ok := sessions.Get(name); ok && cur == client {
+				sessions.Del(name)
+				allTools.Del(name)
+				allPrompts.Del(name)
+				allResources.Del(name)
+			}
+			closeSession(name, client)
+		default:
+			// No specific session errored (e.g. connect itself failed);
+			// anything still registered under this name is unusable.
+			if old, ok := sessions.Take(name); ok {
+				closeSession(name, old)
+			}
+			allTools.Del(name)
+			allPrompts.Del(name)
+			allResources.Del(name)
 		}
-		// Drop every registry entry for the dead server. Leaving prompts or
-		// resources behind lets a disconnected server keep advertising
-		// capabilities the agent can no longer fulfil, the same divergence the
-		// tool clear prevents.
-		allTools.Del(name)
-		allPrompts.Del(name)
-		allResources.Del(name)
+		// Never publish a dead session on the state.
+		info.Client = nil
 	}
 	states.Set(name, info)
 
@@ -730,7 +791,7 @@ func shouldNotifyAuth(name string) bool {
 }
 
 func createSession(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver, queries db.Querier) (*ClientSession, error) {
-	timeout := mcpTimeout(m)
+	timeout := ConnectTimeout(m)
 	mcpCtx, cancel := context.WithCancel(ctx)
 	cancelTimer := time.AfterFunc(timeout, cancel)
 
@@ -918,7 +979,9 @@ func (rt headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-func mcpTimeout(m config.MCPConfig) time.Duration {
+// ConnectTimeout is how long a connection to the server may take: its
+// configured timeout, or the default for its transport.
+func ConnectTimeout(m config.MCPConfig) time.Duration {
 	if m.Timeout > 0 {
 		return time.Duration(m.Timeout) * time.Second
 	}
@@ -933,7 +996,14 @@ func mcpTimeout(m config.MCPConfig) time.Duration {
 func stdioCheck(old *exec.Cmd) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, old.Path, old.Args...)
+	// old.Args includes argv0 as the first element; exec.CommandContext
+	// prepends old.Path as argv0, so we must skip it to avoid duplication
+	// (e.g. "npx npx -y pkg" instead of "npx -y pkg").
+	args := old.Args
+	if len(args) > 0 {
+		args = args[1:]
+	}
+	cmd := exec.CommandContext(ctx, old.Path, args...)
 	cmd.Env = old.Env
 	out, err := cmd.CombinedOutput()
 	if err == nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {

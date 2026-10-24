@@ -12,7 +12,7 @@ import (
 func TestAuthRequiredResponse_ContainsServerName(t *testing.T) {
 	t.Parallel()
 
-	resp := authRequiredResponse("slack")
+	resp := authRequiredResponse("slack", EnableMCPToolName)
 	require.Contains(t, resp.Content, "slack")
 	require.False(t, resp.IsError,
 		"authRequiredResponse must be a success response, not an error")
@@ -23,7 +23,7 @@ func TestAuthRequiredResponse_IncludesCLIHint(t *testing.T) {
 
 	// The CLI hint is always included (interactivity detection was
 	// dropped in favour of unconditional inclusion).
-	resp := authRequiredResponse("slack")
+	resp := authRequiredResponse("slack", EnableMCPToolName)
 	require.Contains(t, resp.Content, "anvil mcp auth slack")
 }
 

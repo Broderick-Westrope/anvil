@@ -129,7 +129,7 @@ func (m *UI) viewedSessionStats() (turns, toolCalls int) {
 	c := m.chat
 	for i := range c.Len() {
 		item := c.ItemAt(i)
-		if _, ok := item.(*chat.AssistantMessageItem); ok {
+		if chat.IsAssistantHead(item) {
 			turns++
 		}
 		if _, ok := item.(chat.ToolMessageItem); ok {

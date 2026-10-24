@@ -113,7 +113,7 @@ type SessionAgent interface {
 	SetModels(large Model, small Model)
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
-	SetLazyMCPToolMap(m map[string]string)
+	SetMCPListing(listing mcpListing)
 	SetConnectFn(fn tools.ConnectFn)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
@@ -131,6 +131,11 @@ type SessionAgent interface {
 	RunWake(ctx context.Context, call SessionAgentCall, eligible func() bool) (*fantasy.AgentResult, error)
 	IsSummarizing(sessionID string) bool
 	Model() Model
+	// RequestOverhead is the size, in characters, of what every request
+	// this agent sends carries besides the conversation: its system
+	// prompt, with the MCP instructions a run adds, and the schemas of the
+	// tools its model sees, with every lazy MCP server off.
+	RequestOverhead() int
 }
 
 type Model struct {
@@ -146,7 +151,7 @@ type sessionAgent struct {
 	systemPromptPrefix *csync.Value[string]
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
-	lazyMCPToolMap     *csync.Map[string, string]
+	mcpListing         *csync.Value[mcpListing]
 	connectFn          *csync.Value[tools.ConnectFn]
 	// runningSteps holds the assistant message IDs of steps in flight.
 	// The coordinator shares one set between all its agents.
@@ -260,7 +265,7 @@ func NewSessionAgent(
 		messages:             opts.Messages,
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
-		lazyMCPToolMap:       csync.NewMap[string, string](),
+		mcpListing:           csync.NewValue(mcpListing{}),
 		connectFn:            csync.NewValue[tools.ConnectFn](nil),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
@@ -314,15 +319,15 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
 	agentTools := a.tools.Copy()
 	t := &turn{
-		a:              a,
-		call:           call,
-		largeModel:     a.largeModel.Get(),
-		providerCfg:    a.providerConfig.Get(),
-		promptPrefix:   a.systemPromptPrefix.Get(),
-		lazyMCPToolMap: a.lazyMCPToolMap.Copy(),
-		injected:       newInjectedMessages(),
-		runID:          uuid.NewString(),
-		sanitized:      make(map[string]bool),
+		a:            a,
+		call:         call,
+		largeModel:   a.largeModel.Get(),
+		providerCfg:  a.providerConfig.Get(),
+		promptPrefix: a.systemPromptPrefix.Get(),
+		mcpListing:   a.mcpListing.Get(),
+		injected:     newInjectedMessages(),
+		runID:        uuid.NewString(),
+		sanitized:    make(map[string]bool),
 	}
 
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
@@ -344,6 +349,11 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// Derive the lazy MCP state from conversation history and inject
 	// into the context so tool handlers can query it.
 	initialEnabled := deriveLazyMCPState(raw)
+	// A catalogue server enabled before it was routed through the
+	// catalogue stays off: its tools are never listed.
+	for server := range t.mcpListing.catalogue {
+		delete(initialEnabled, server)
+	}
 	t.lazyState = tools.NewLazyMCPState(initialEnabled)
 	ctx = tools.WithLazyMCPState(ctx, t.lazyState)
 
@@ -829,24 +839,9 @@ If not, please feel free to ignore. Again do not mention this message to the use
 			),
 		))
 	}
-	// Collect all tool call IDs present in assistant messages and all tool
-	// result IDs present in tool messages. This lets us detect both orphaned
-	// tool results (result without a call) and orphaned tool calls (call
-	// without a result).
-	knownToolCallIDs := make(map[string]struct{})
-	knownToolResultIDs := make(map[string]struct{})
-	for _, m := range msgs {
-		switch m.Role {
-		case message.Assistant:
-			for _, tc := range m.ToolCalls() {
-				knownToolCallIDs[tc.ID] = struct{}{}
-			}
-		case message.Tool:
-			for _, tr := range m.ToolResults() {
-				knownToolResultIDs[tr.ToolCallID] = struct{}{}
-			}
-		}
-	}
+	// Tool results are emitted right after the assistant message that
+	// requested them, not at their stored position; see toolResultIndex.
+	results := newToolResultIndex(msgs)
 
 	for _, m := range msgs {
 		// Skip empty messages, and assistant messages without content or
@@ -856,13 +851,11 @@ If not, please feel free to ignore. Again do not mention this message to the use
 		}
 		switch m.Role {
 		case message.Tool:
-			if msg, ok := filterOrphanedToolResults(m, knownToolCallIDs); ok {
-				history = append(history, msg)
-			}
+			// Tool results are emitted right after their assistant message.
 		case message.Assistant:
 			history = append(history, m.ToAIMessage()...)
-			if msg, ok := syntheticToolResultsForOrphanedCalls(m, knownToolResultIDs); ok {
-				history = append(history, msg)
+			if len(m.ToolCalls()) > 0 {
+				history = append(history, results.take(m))
 			}
 		default:
 			history = append(history, m.ToAIMessage()...)
@@ -910,70 +903,88 @@ func filterFileParts(parts []fantasy.MessagePart) []fantasy.MessagePart {
 	return filtered
 }
 
-// filterOrphanedToolResults converts a tool message to a fantasy.Message,
-// dropping any tool result parts whose tool_call_id has no matching tool call
-// in the known set. An orphaned result causes API validation to fail on every
-// subsequent turn, permanently locking the session. Returns the filtered
-// message and true if at least one valid part remains.
-func filterOrphanedToolResults(m message.Message, knownToolCallIDs map[string]struct{}) (fantasy.Message, bool) {
-	aiMsgs := m.ToAIMessage()
-	if len(aiMsgs) == 0 {
-		return fantasy.Message{}, false
-	}
-	var validParts []fantasy.MessagePart
-	for _, part := range aiMsgs[0].Content {
-		tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
-		if !ok {
-			validParts = append(validParts, part)
-			continue
+// toolResultIndex holds a transcript's tool results by the ID of the call
+// they answer. Messages can be written to a session concurrently (e.g.
+// resuming while a tool is still running), which interleaves user messages
+// between a tool call and its result, or stores a result before its call.
+// LLM APIs require every tool call to be followed by its results before any
+// other message, and strict-adjacency providers (e.g. Kimi, DeepSeek)
+// reject the request otherwise, permanently locking the session. So results
+// are re-emitted next to the assistant message that requested them.
+type toolResultIndex map[string][]fantasy.MessagePart
+
+// newToolResultIndex indexes the tool results in msgs, dropping any result
+// whose call is not in msgs: an orphaned result fails API validation on
+// every later turn.
+func newToolResultIndex(msgs []message.Message) toolResultIndex {
+	knownCalls := make(map[string]struct{})
+	var toolMsgs []fantasy.Message
+	for _, m := range msgs {
+		switch m.Role {
+		case message.Assistant:
+			for _, tc := range m.ToolCalls() {
+				knownCalls[tc.ID] = struct{}{}
+			}
+		case message.Tool:
+			toolMsgs = append(toolMsgs, m.ToAIMessage()...)
 		}
-		if _, known := knownToolCallIDs[tr.ToolCallID]; known {
-			validParts = append(validParts, part)
-		} else {
-			slog.Warn("Dropping orphaned tool result with no matching tool call",
-				"tool_call_id", tr.ToolCallID,
-			)
+	}
+	index := make(toolResultIndex)
+	for _, aiMsg := range toolMsgs {
+		for _, part := range aiMsg.Content {
+			tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part)
+			_, known := knownCalls[tr.ToolCallID]
+			switch {
+			case !ok:
+				// Tool-role ToAIMessage only emits ToolResultParts today;
+				// log so unexpected parts do not vanish silently.
+				slog.Warn(
+					"Dropping unexpected non-tool-result part from tool message",
+					"part_type", fmt.Sprintf("%T", part),
+				)
+			case !known:
+				slog.Warn(
+					"Dropping orphaned tool result with no matching tool call",
+					"tool_call_id", tr.ToolCallID,
+				)
+			default:
+				index[tr.ToolCallID] = append(index[tr.ToolCallID], part)
+			}
 		}
 	}
-	if len(validParts) == 0 {
-		return fantasy.Message{}, false
-	}
-	msg := aiMsgs[0]
-	msg.Content = validParts
-	return msg, true
+	return index
 }
 
-// syntheticToolResultsForOrphanedCalls returns a tool message containing
-// synthetic tool results for any tool calls in the assistant message that
-// have no matching result in knownToolResultIDs. LLM APIs require every
-// tool_use to be immediately followed by a tool_result; an interrupted
-// session can leave orphaned tool_use blocks that permanently lock the
-// conversation. Returns the message and true if any synthetic results were
-// produced.
-func syntheticToolResultsForOrphanedCalls(m message.Message, knownToolResultIDs map[string]struct{}) (fantasy.Message, bool) {
-	var syntheticParts []fantasy.MessagePart
+// take builds the tool message that must immediately follow the assistant
+// message m, removing its results from the index so a result stored in a
+// message that also holds results for other assistants' calls is emitted
+// exactly once. Tool calls without any stored result (e.g. an interrupted
+// session) receive a synthetic error response so the conversation keeps
+// working.
+func (idx toolResultIndex) take(m message.Message) fantasy.Message {
+	content := make([]fantasy.MessagePart, 0, len(m.ToolCalls()))
 	for _, tc := range m.ToolCalls() {
-		if _, hasResult := knownToolResultIDs[tc.ID]; hasResult {
+		parts := idx[tc.ID]
+		delete(idx, tc.ID)
+		if len(parts) > 0 {
+			content = append(content, parts...)
 			continue
 		}
 		slog.Warn("Injecting synthetic tool result for orphaned tool call",
 			"tool_call_id", tc.ID,
 			"tool_name", tc.Name,
 		)
-		syntheticParts = append(syntheticParts, fantasy.ToolResultPart{
+		content = append(content, fantasy.ToolResultPart{
 			ToolCallID: tc.ID,
 			Output: fantasy.ToolResultOutputContentError{
 				Error: errors.New("tool call was interrupted and did not produce a result, you may retry this call if the result is still needed"),
 			},
 		})
 	}
-	if len(syntheticParts) == 0 {
-		return fantasy.Message{}, false
-	}
 	return fantasy.Message{
 		Role:    fantasy.MessageRoleTool,
-		Content: syntheticParts,
-	}, true
+		Content: content,
+	}
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, sess session.Session) (filtered, raw []message.Message, err error) {
@@ -1150,7 +1161,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 
 	// Calculate usage and cost.
 	cost := usageCost(model, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
-	promptTokens := resp.TotalUsage.InputTokens + resp.TotalUsage.CacheCreationTokens
+	promptTokens := contextTokens(resp.TotalUsage)
 	completionTokens := resp.TotalUsage.OutputTokens
 
 	// Atomically update only title and usage fields to avoid overriding other
@@ -1231,11 +1242,22 @@ func (a *sessionAgent) saveSessionUsage(ctx context.Context, model Model, sess *
 	return a.sessions.AddCost(ctx, sess.ID, cost)
 }
 
+// contextTokens returns the size of the prompt the provider processed for
+// a step. Providers with prompt caching (Anthropic, Bedrock, Vercel) report
+// the prompt as three disjoint buckets: tokens served from cache, tokens
+// newly written to the cache, and the uncached remainder. All three occupy
+// the context window, so all three count. Providers without cache writes
+// leave CacheCreationTokens at zero, and the OpenAI-style providers already
+// subtract cached tokens from InputTokens, so nothing is counted twice.
+func contextTokens(usage fantasy.Usage) int64 {
+	return usage.InputTokens + usage.CacheReadTokens + usage.CacheCreationTokens
+}
+
 func updateSessionTokenCounters(session *session.Session, usage fantasy.Usage) {
 	if usage.OutputTokens != 0 {
 		session.CompletionTokens = usage.OutputTokens
 	}
-	if promptTokens := usage.InputTokens + usage.CacheReadTokens; promptTokens != 0 {
+	if promptTokens := contextTokens(usage); promptTokens != 0 {
 		session.PromptTokens = promptTokens
 	}
 }
@@ -1297,12 +1319,35 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 	a.tools.SetSlice(tools)
 }
 
-func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
-	a.lazyMCPToolMap.Reset(m)
+func (a *sessionAgent) SetMCPListing(listing mcpListing) {
+	a.mcpListing.Set(listing)
 }
 
 func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
 	a.connectFn.Set(fn)
+}
+
+func (a *sessionAgent) RequestOverhead() int {
+	off := tools.NewLazyMCPState(nil)
+	listing := a.mcpListing.Get()
+	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(listing, off))
+	for _, tool := range filterLazyMCPTools(a.tools.Copy(), listing.lazyTools, off) {
+		info := tool.Info()
+		schema, err := json.Marshal(struct {
+			Name        string   `json:"name"`
+			Description string   `json:"description"`
+			Parameters  any      `json:"parameters"`
+			Required    []string `json:"required"`
+		}{info.Name, info.Description, info.Parameters, info.Required})
+		if err != nil {
+			// Unencodable parameters can't be sent either; count what is
+			// known.
+			size += len(info.Name) + len(info.Description)
+			continue
+		}
+		size += len(schema)
+	}
+	return size
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
@@ -1343,7 +1388,7 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 			} else {
 				content := r.Text
 				if content == "" {
-					content = fmt.Sprintf("Loaded %s content", r.MediaType)
+					content = message.MediaPlaceholder(r.MediaType)
 				}
 				baseResult.Content = content
 				baseResult.Data = r.Data

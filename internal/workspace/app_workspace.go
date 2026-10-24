@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
@@ -130,11 +131,12 @@ func (w *AppWorkspace) MoveLeaf(ctx context.Context, sessionID, leafMessageID st
 	return w.app.Sessions.MoveLeaf(ctx, sessionID, leafMessageID)
 }
 
-// WriteMetadataEntry creates a metadata message and advances the leaf.
-// The leaf is advanced atomically inside Create() when ParentMessageID
-// is set, so no separate MoveLeaf call is needed.
+// WriteMetadataEntry creates a metadata message under the session's
+// current leaf, read in the same transaction, and advances the leaf to it.
+// The leaf the caller saw may be stale, for instance just after a branch
+// summary was stored.
 func (w *AppWorkspace) WriteMetadataEntry(ctx context.Context, sessionID string, params message.CreateMessageParams) error {
-	_, err := w.app.Messages.Create(ctx, sessionID, params)
+	_, err := w.app.Messages.AppendToLeaf(ctx, sessionID, params)
 	return err
 }
 
@@ -261,6 +263,39 @@ func (w *AppWorkspace) AgentSummarize(ctx context.Context, sessionID string) err
 		return errors.New("agent coordinator not initialized")
 	}
 	return w.app.AgentCoordinator.Summarize(ctx, sessionID)
+}
+
+func (w *AppWorkspace) AgentBranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error) {
+	if w.app.AgentCoordinator == nil {
+		return false, errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.BranchWorthSummarizing(ctx, fromLeaf, target)
+}
+
+func (w *AppWorkspace) AgentStartBranchSummary(req agent.BranchSummaryRequest) (string, error) {
+	return w.app.BranchSummaries.Start(req)
+}
+
+func (w *AppWorkspace) AgentCancelBranchSummary(sessionID string) {
+	w.app.BranchSummaries.Cancel(sessionID)
+}
+
+func (w *AppWorkspace) AgentBranchSummaryRunning(sessionID string) bool {
+	return w.app.BranchSummaries.Running(sessionID)
+}
+
+func (w *AppWorkspace) AgentDiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.DiscardBranchSummary(ctx, sessionID, summaryID)
+}
+
+func (w *AppWorkspace) AgentBranchSummarizers() []string {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.BranchSummarizers()
 }
 
 func (w *AppWorkspace) AgentRegenerateTitle(ctx context.Context, sessionID string) error {
@@ -408,6 +443,10 @@ func (w *AppWorkspace) Config() *config.Config {
 	return w.store.Config()
 }
 
+func (w *AppWorkspace) DiagramsEnabled() bool {
+	return w.store.DiagramsEnabled()
+}
+
 func (w *AppWorkspace) WorkingDir() string {
 	return w.store.WorkingDir()
 }
@@ -530,6 +569,13 @@ func (w *AppWorkspace) MCPRefreshResources(ctx context.Context, name string) {
 
 func (w *AppWorkspace) RefreshMCPTools(ctx context.Context, name string) {
 	mcptools.RefreshTools(ctx, w.store, name)
+}
+
+func (w *AppWorkspace) MCPRoutes() ([]agenttools.MCPRouteInfo, bool) {
+	if w.app.AgentCoordinator == nil {
+		return nil, false
+	}
+	return w.app.AgentCoordinator.MCPRoutes()
 }
 
 func (w *AppWorkspace) ReadMCPResource(ctx context.Context, name, uri string) ([]MCPResourceContents, error) {

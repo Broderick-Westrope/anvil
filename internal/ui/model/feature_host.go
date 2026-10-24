@@ -1,7 +1,10 @@
 package model
 
 import (
+	"image/color"
+
 	tea "charm.land/bubbletea/v2"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
 	"github.com/Broderick-Westrope/anvil/internal/ui/util"
@@ -40,6 +43,24 @@ type featureHost interface {
 	Reloading() bool
 	// KeyMap is a copy of the current key bindings.
 	KeyMap() KeyMap
+	// InvalidateDiagrams re-renders every diagram item, in the root chat
+	// and every drill-in, so an image that just arrived replaces its
+	// placeholder. Each chat keeps its scroll position (Chat.
+	// InvalidateDiagrams).
+	InvalidateDiagrams()
+	// AppBackground is the background Anvil paints the terminal with, or
+	// nil when the TUI is transparent and the terminal's own shows.
+	AppBackground() color.Color
+	// PushDrillIn opens c as a drill-in labelled label, scrolled to its
+	// top, focuses it and blurs the editor, as the tool and thinking
+	// drill-ins do.
+	PushDrillIn(c *Chat, label string)
+	// ShowChatItem appends item to the root chat, never a drill-in on top
+	// of it, and scrolls it into view when the chat follows its end. The
+	// command arms the animation clock if item spins.
+	ShowChatItem(item chat.MessageItem) tea.Cmd
+	// RemoveChatItem removes the root chat's item with id, if it has one.
+	RemoveChatItem(id string)
 	// ViewedChildSessionID is the subagent session being viewed: the topmost
 	// drill-in with a session, which a tool or thinking view on top still
 	// belongs to. It's "" when the root chat is viewed.
@@ -96,6 +117,45 @@ func (h uiHost) ComposerHasContent() bool {
 func (h uiHost) Reloading() bool { return h.m.reloading }
 
 func (h uiHost) KeyMap() KeyMap { return h.m.keyMap }
+
+func (h uiHost) InvalidateDiagrams() {
+	if h.m.chat != nil {
+		h.m.chat.InvalidateDiagrams()
+	}
+	for _, entry := range h.m.drillStack {
+		if entry.chat != nil {
+			entry.chat.InvalidateDiagrams()
+		}
+	}
+}
+
+func (h uiHost) AppBackground() color.Color {
+	if h.m.isTransparent {
+		return nil
+	}
+	return h.m.com.Styles.Background
+}
+
+func (h uiHost) PushDrillIn(c *Chat, label string) {
+	c.SetFollow(false)
+	c.Focus()
+	h.m.drillStack = append(h.m.drillStack, drillInEntry{chat: c, label: label})
+	h.m.textarea.Blur()
+	h.m.focus = uiFocusMain
+	h.m.updateLayoutAndSize()
+	// Sizing a new chat pins it to the bottom; start at the top.
+	c.ScrollToTop()
+}
+
+func (h uiHost) ShowChatItem(item chat.MessageItem) tea.Cmd {
+	h.m.chat.AppendMessages(item)
+	if h.m.chat.Follow() {
+		h.m.chat.ScrollToBottom()
+	}
+	return h.m.ensureAnimating()
+}
+
+func (h uiHost) RemoveChatItem(id string) { h.m.chat.RemoveMessage(id) }
 
 func (h uiHost) ViewedChildSessionID() string {
 	entry, _ := h.m.viewedSessionEntry()

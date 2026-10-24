@@ -121,7 +121,7 @@ func TestToolItemTimer(t *testing.T) {
 
 	t.Run("running call in a running step shows a live duration", func(t *testing.T) {
 		t.Parallel()
-		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, nil)
+		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, ToolItemOptions{})
 		timed := item
 		require.True(t, timed.TimerCandidate())
 		timed.SetStepRunning(true)
@@ -130,13 +130,13 @@ func TestToolItemTimer(t *testing.T) {
 
 	t.Run("orphaned call shows nothing", func(t *testing.T) {
 		t.Parallel()
-		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, nil)
+		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, ToolItemOptions{})
 		require.NotContains(t, headerLine(item), " · ")
 	})
 
 	t.Run("step ending hides the live duration", func(t *testing.T) {
 		t.Parallel()
-		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, nil)
+		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, ToolItemOptions{})
 		timed := item
 		timed.SetStepRunning(true)
 		require.Contains(t, headerLine(item), " · ")
@@ -146,7 +146,7 @@ func TestToolItemTimer(t *testing.T) {
 
 	t.Run("awaiting permission shows nothing", func(t *testing.T) {
 		t.Parallel()
-		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, nil)
+		item := NewToolMessageItem(&sty, "msg", runningFor(30*time.Second), nil, false, ToolItemOptions{})
 		item.SetStepRunning(true)
 		item.SetStatus(ToolStatusAwaitingPermission)
 		require.False(t, item.TimerCandidate())
@@ -156,7 +156,7 @@ func TestToolItemTimer(t *testing.T) {
 	t.Run("finished call keeps its final duration", func(t *testing.T) {
 		t.Parallel()
 		call := runningFor(time.Minute)
-		item := NewToolMessageItem(&sty, "msg", call, nil, false, nil)
+		item := NewToolMessageItem(&sty, "msg", call, nil, false, ToolItemOptions{})
 		item.SetResult(&message.ToolResult{ToolCallID: "tc", Content: "ok", FinishedAt: call.StartedAt + 12_000})
 		require.False(t, item.TimerCandidate())
 		require.True(t, strings.HasSuffix(headerLine(item), " · 12s"), headerLine(item))
@@ -165,7 +165,7 @@ func TestToolItemTimer(t *testing.T) {
 	t.Run("canceled call keeps the duration up to cancellation", func(t *testing.T) {
 		t.Parallel()
 		call := runningFor(time.Minute)
-		item := NewToolMessageItem(&sty, "msg", call, nil, true, nil)
+		item := NewToolMessageItem(&sty, "msg", call, nil, true, ToolItemOptions{})
 		item.SetResult(&message.ToolResult{ToolCallID: "tc", Content: "canceled", IsError: true, FinishedAt: call.StartedAt + 15_000})
 		require.True(t, strings.HasSuffix(headerLine(item), " · 15s"), headerLine(item))
 	})
@@ -182,7 +182,7 @@ func TestToolItemTimerOptOuts(t *testing.T) {
 				ID: "tc", Name: name, Input: `{"shell_id":"001","wait":true}`, Finished: true,
 				StartedAt: time.Now().Add(-30 * time.Second).UnixMilli(),
 			}
-			item := NewToolMessageItem(&sty, "msg", call, nil, false, nil)
+			item := NewToolMessageItem(&sty, "msg", call, nil, false, ToolItemOptions{})
 			timed := item
 			require.False(t, timed.TimerCandidate())
 			timed.SetStepRunning(true)
@@ -250,7 +250,7 @@ func TestToolItemTimerOtherHeaders(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			item := NewToolMessageItem(&sty, "msg", tc.call, nil, false, tc.expanded)
+			item := NewToolMessageItem(&sty, "msg", tc.call, nil, false, ToolItemOptions{ExpandedPatterns: tc.expanded})
 			item.SetResult(&tc.result)
 			require.True(t, strings.HasSuffix(headerLine(item), " · 12s"), headerLine(item))
 		})

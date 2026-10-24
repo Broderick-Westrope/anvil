@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"charm.land/fantasy"
@@ -40,7 +41,10 @@ func connectMCPServers(t *testing.T, instructions map[string]string, lazy ...str
 		m := config.MCPConfig{Type: config.MCPHttp, URL: ts.URL}
 		for _, l := range lazy {
 			if l == name {
+				// Pinned direct: these tests cover the enable_mcp
+				// flow, which auto routing replaces with the catalogue.
 				m.LazyDescription = "Lazy " + name
+				m.Route = config.MCPRouteDirect
 			}
 		}
 		cfg.Config().MCP[name] = m
@@ -92,7 +96,7 @@ func TestMCPInstructions(t *testing.T) {
 			for _, server := range tc.enabled {
 				state.Enable(server)
 			}
-			require.Equal(t, tc.want, mcpInstructions(tc.lazyMap, state))
+			require.Equal(t, tc.want, mcpInstructions(mcpListing{lazyTools: tc.lazyMap}, state))
 		})
 	}
 }
@@ -132,4 +136,16 @@ func TestRunLeavesSystemPromptWithoutMCPInstructions(t *testing.T) {
 	calls := model.recorded()
 	require.Len(t, calls, 1)
 	require.Equal(t, "system", textOf(calls[0].Prompt[0]))
+}
+
+// Not parallel: connectMCPServers registers global MCP state.
+func TestRequestOverhead_CountsMCPInstructions(t *testing.T) {
+	prompt := strings.Repeat("s", 100)
+	bare := NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt}).RequestOverhead()
+
+	connectMCPServers(t, map[string]string{"test-overhead-instr": strings.Repeat("i", 300)})
+
+	// mcpInstructions ends each server's instructions with a blank line.
+	require.Equal(t, bare+len(strings.Repeat("i", 300)+"\n\n"), NewSessionAgent(SessionAgentOptions{SystemPrompt: prompt}).RequestOverhead(),
+		"a connected server's instructions are sent with every request")
 }

@@ -211,7 +211,9 @@ Note: because the daemon is shared, a gopls crash affects all connected sessions
 
 - `type` (required): `stdio`, `sse`, or `http`
 - `command`, `args`, `env`, `headers`, and `url` are shell-expanded (see [Shell Expansion](#shell-expansion)).
-- Additional fields: `env`, `disabled`, `disabled_tools`, `timeout`.
+- Additional fields: `env`, `disabled`, `disabled_tools`, `enabled_tools`, `timeout`, `lazy_description`, `route`.
+- `route` (`auto`, `catalogue` or `direct`, default `auto`) says how the server's tools reach the model. Under `auto`, a server that's connected at startup with tools under 12,000 bytes is listed directly; every other server, including any with `lazy_description`, is reached through the `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool` catalogue, so its schemas never enter the tool list. `anvil_info` shows each server's route and why. Prefer this to narrowing a large server with `enabled_tools`.
+- `lazy_description` defers the server's connection until first use and introduces it to the model. A lazy server with `"route": "direct"` keeps the old `enable_mcp` flow instead of the catalogue.
 
 ## Options
 
@@ -224,7 +226,9 @@ Note: because the daemon is shared, a gopls crash affects all connected sessions
     "tui": {
       "compact_mode": false,
       "diff_mode": "unified",
-      "transparent": false
+      "transparent": false,
+      "mouse": true,
+      "diagrams": true
     },
     "auto_lsp": true,
     "debug": false,
@@ -241,9 +245,12 @@ Note: because the daemon is shared, a gopls crash affects all connected sessions
 > The following skill paths are loaded by default and DO NOT NEED to be added to `skills_paths`:
 > `.agents/skills`, `.anvil/skills`, `.claude/skills`, `.cursor/skills`
 
-Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_provider_auto_update`, `disable_default_providers`, `project_directory`, `initialize_as`, `lsp_idle_timeout`.
+Other options: `context_paths`, `progress`, `disable_notifications`, `disable_auto_summarize`, `disable_provider_auto_update`, `disable_default_providers`, `project_directory`, `initialize_as`, `lsp_idle_timeout`, `request_timeout`.
 
+- `tui.diagrams`: Render Mermaid fences in assistant messages as images where the terminal supports Kitty graphics (default `true`). Set `false` to keep them as code blocks and never load the renderer. Changing it needs a restart.
 - `lsp_idle_timeout`: Minutes of inactivity before an idle LSP server is stopped and its memory reclaimed (default `15`, `0` disables). Stopped servers restart transparently on next use. Known limitation: after an idle shutdown, project-wide `lsp_diagnostics` repopulates only as files are re-opened by subsequent tool use.
+- `request_timeout`: Seconds each LLM request may run (default `120`, `0` disables). Streams time out only after this long with no data, so a slow but active response is never cut off; non-streaming calls (titles, summaries) get a hard deadline. A timed-out request is not retried and ends the turn with "Request timed out". Raise it for local models or providers with long silent reasoning pauses.
+- `tui.mouse`: Mouse capture for clicks, scrolling and in-app selection (default `true`). Set `false`, or use the palette's "Disable Mouse", to let the terminal or tmux handle selection and copy/paste natively; keyboard navigation and keyboard selection still work.
 
 ## Hooks
 

@@ -1,0 +1,78 @@
+{
+  "why": "The branch found an earlier claim was wrong and fixed it in a PR body; after the return the agent repeated the wrong claim.",
+  "trunk": [
+    {
+      "role": "user",
+      "text": "Write up the webhook signature bypass for PR #155."
+    },
+    {
+      "role": "assistant",
+      "text": "Drafted. The bypass only affects the EU region, since only the EU deployment has signature checks disabled."
+    }
+  ],
+  "branch": [
+    {
+      "role": "user",
+      "text": "What's the downstream impact of the bypass? Check it properly."
+    },
+    {
+      "role": "assistant",
+      "text": "Checking the deployment config for each region.",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "grep",
+          "input": {
+            "pattern": "WEBHOOK_SECRET",
+            "path": "/home/dev/infra/regions"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "results": [
+        {
+          "id": "c1",
+          "content": "regions/au.tf: WEBHOOK_SECRET = var.shared_secret\nregions/eu.tf: WEBHOOK_SECRET = var.shared_secret\nregions/us.tf: WEBHOOK_SECRET = var.shared_secret"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "I was wrong earlier: it isn't EU only. All three regions (AU, EU, US) share one secret with no region suffix, so a forged signature works everywhere. Fixing the PR description.",
+      "calls": [
+        {
+          "id": "c2",
+          "name": "bash",
+          "input": {
+            "command": "gh pr edit 155 --body-file /tmp/pr155.md"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "results": [
+        {
+          "id": "c2",
+          "content": "https://github.com/acme/webhooks/pull/155",
+          "metadata": {
+            "exit_code": 0
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Updated PR #155: the impact section now says all three regions are affected."
+    }
+  ],
+  "required": [
+    "#?155",
+    "(all|every|three)\\b.{0,30}region",
+    "\\bEU\\b",
+    "EU.?only"
+  ],
+  "forbidden": []
+}

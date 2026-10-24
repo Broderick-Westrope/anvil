@@ -88,7 +88,36 @@ plugs into `UI` through the `feature` interface in `model/features.go`
 to `UI` and cases to the dispatchers. That keeps upstream's cases in
 `update`, `handleDialogMsg` and `handleKeyPressMsg` in their Crush shape,
 so cherry-picks still apply. See `docs/adr/0003-ui-complexity.md`. The
-workflow feature (`model/workflow.go`) is the worked example.
+workflow feature (`model/workflow.go`) is the worked example. The graphics
+feature (`model/graphics.go`), which draws Mermaid diagrams and tool images,
+is another. The smallest is `fileOpenFeature` (`model/file_open.go`), which
+only claims the open, edit and reveal messages a tool drill-in sends.
+
+Diagrams are the one exception that touches upstream-shaped code
+directly, because chat items are built in `UI` (`ExtractMessageItems`):
+
+- `UI` holds the feature in `m.graphics` whether or not diagrams are on,
+  and passes `m.graphics.For(chat)` to `BuildToolDetailItems` for a tool
+  drill-in. It holds the feature's `chat.DiagramRenderer` in `m.diagrams`,
+  set in `New` (nil when `options.tui.diagrams` is off), gives it to the
+  root chat with `Chat.SetDiagrams`, and passes it to every
+  `ExtractMessageItems` call except `loadNestedToolCalls`, whose assistant
+  text is never shown.
+- `UI.Update` tells `drillInFeature`s which drill-in is on top after
+  every message (`features.drillInTop`).
+- `updateSessionMessageToChat` calls `Chat.SyncAssistantSegments`.
+- `selectedItemBindings` adds the help entries of a diagram node, a
+  tool image (`chat.ShowsToolImage`), and the file keys of a tool
+  drill-in item (`chat.FileKeys`).
+- `Chat.Draw` prefetches nearby diagrams, `Chat.RemoveMessage` removes a
+  message's `<id>#<n>` nodes, `Chat.HandleDelayedClick` opens drill-ins
+  through `chat.ClickDrillInHandler`, and `sourceSelection` copies a
+  `chat.WholeSelectable` item's whole text.
+- `list.List` gained `SpliceItems`, `NearbyItems`, `ClampOffset` and
+  `ScrollPosition`.
+- `image.ResetCache` keeps the records of images a Kitty terminal holds.
+
+Keep any new diagram wiring behind these.
 
 `UI` registers features in `New`, in precedence order, and offers each one
 what the dispatchers don't own. Each hook is one generic line in `ui.go`:
@@ -109,11 +138,18 @@ Optional surfaces, found by type assertion when the feature registers:
   `Render` returns exactly `Lines()` lines, each one row; cut multi-line
   text at its first line. A panel with no lines isn't rendered.
 - `paletteFeature.PaletteEntries` adds entries to the command palette.
+- `cancelFeature.Cancel` can claim the cancel keys (Escape, and Ctrl+C on
+  an empty composer) before `UI` cancels a busy agent, for work of the
+  feature's own that makes the agent look busy.
+- `navigationGuard.BlockNavigation` can refuse anything that moves the
+  session's leaf: a rewind (`handleNavigateTree`), a return to the
+  pre-branch conversation (`beginBranchReturn`), an MCP toggle, and the
+  model and reasoning metadata writes (`canWriteLeafMetadata`).
 - `preemptInputFeature.PreemptInput` is offered key presses and pastes
   once no dialog is open, before upstream's Esc, focus and paste
   handling. Use it only for an input surface that must own keys the chat
   or editor would take; the subagent steer input is the one user.
-- `drillInFeature.DrillInFooter` returns a `panelView` drawn under a
+- `drillInFooterFeature.DrillInFooter` returns a `panelView` drawn under a
   drilled-in chat, or nil. It's called while rendering and laying out, so
   it must only read state.
 
@@ -200,16 +236,18 @@ tool names to specific types:
 | `chat/references.go`      | References                                               |
 | `chat/lsp_restart.go`     | LSPRestart                                               |
 | `chat/todos.go`           | Todos                                                    |
-| `chat/mcp.go`             | MCP tools (`mcp_` prefix)                                |
+| `chat/mcp.go`             | MCP tools (`mcp_` prefix), and `call_mcp_tool` as the inner tool |
 | `chat/generic.go`         | Fallback for unrecognized tools                          |
 | `chat/assistant.go`       | Assistant messages ("Thought for" line, content, errors) |
 | `chat/thinking_detail.go` | Full thinking text in the thinking drill-in              |
+| `chat/diagrams.go`        | Splitting messages at Mermaid fences; diagram nodes      |
+| `chat/diagram_detail.go`  | A diagram at full size in its drill-in                   |
 | `chat/user.go`            | User messages (input + attachments)                      |
 
 ### Drill-ins
 
 `UI.drillStack` holds the views opened on top of the root chat. There are
-three kinds, each opened by its own message:
+four kinds, each opened by its own message:
 
 - **Agent** (`util.AgentDrillInMsg`): a subagent's session. Its entry has
   a `sessionID`, and child-session events update its chat even when another
@@ -217,8 +255,12 @@ three kinds, each opened by its own message:
 - **Tool** (`util.ToolDrillInMsg`): a tool call's detail view.
 - **Thinking** (`util.ThinkingDrillInMsg`): an assistant message's full
   thinking, rendered by `chat.ThinkingDetailItem` from the live source item.
+- **Diagram** (`chat.DiagramOpenMsg`): a Mermaid diagram at full size,
+  rendered by `chat.DiagramDetailItem`. The diagram feature opens it
+  through `featureHost.PushDrillIn` and frees its image once the entry
+  leaves the stack.
 
-Tool and thinking entries have no `sessionID`, so `viewedSessionEntry`
+Tool, thinking and diagram entries have no `sessionID`, so `viewedSessionEntry`
 skips them when the header and sidebar look for the session being viewed.
 
 ### Styling

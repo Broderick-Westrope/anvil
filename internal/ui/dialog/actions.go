@@ -74,6 +74,7 @@ type (
 	ActionNewSession                  struct{}
 	ActionToggleHelp                  struct{}
 	ActionToggleCompactMode           struct{}
+	ActionToggleMouseSupport          struct{}
 	ActionToggleThinking              struct{}
 	ActionTogglePills                 struct{}
 	ActionExternalEditor              struct{}
@@ -211,7 +212,12 @@ type (
 		Role            message.MessageRole
 		Source          message.Message
 	}
-	ActionReturnToPreBranch struct{}
+	// ActionReturnToPreBranch returns to the conversation before the last
+	// branch. Pending is set when nothing has been sent since the branch,
+	// so the draft the branch replaced comes back too.
+	ActionReturnToPreBranch struct {
+		Pending bool
+	}
 )
 
 // Messages for API key input dialog.
@@ -241,6 +247,23 @@ type (
 	// ActionOAuthErrored is sent when the device flow encounters an error.
 	ActionOAuthErrored struct {
 		Error error
+	}
+
+	// ActionCloseOAuth closes the OAuth dialog and runs the given cleanup
+	// command, cancelling any in-flight authorization so a dismissed
+	// dialog does not leave a poller or loopback listener running.
+	ActionCloseOAuth struct {
+		Cmd tea.Cmd
+	}
+
+	// ActionSelectAuthMethod is sent when the user picks how to
+	// authenticate a provider that supports both an account sign-in and an
+	// API key.
+	ActionSelectAuthMethod struct {
+		Provider  catwalk.Provider
+		Model     config.SelectedModel
+		ModelType config.SelectedModelType
+		UseOAuth  bool
 	}
 )
 

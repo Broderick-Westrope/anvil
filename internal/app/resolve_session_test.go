@@ -104,6 +104,10 @@ func (m *mockSessionService) MoveLeaf(context.Context, string, string) error {
 	return nil
 }
 
+func (m *mockSessionService) Refresh(context.Context, string) error {
+	return nil
+}
+
 func (m *mockSessionService) IsAgentToolSession(sessionID string) bool {
 	_, _, ok := m.ParseAgentToolSessionID(sessionID)
 	return ok

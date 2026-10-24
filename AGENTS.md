@@ -46,6 +46,8 @@ internal/
     migrations/                    Schema migrations
   lsp/                             LSP client manager, auto-discovery, on-demand startup, idle reaping
   herdr/                           Reports TUI status and session to the Herdr multiplexer via its CLI
+  mermaid/                         Exports diagrams as HTML pages; layout and pixels come from pele-go's raster module
+  mermaidbench/                    Test-only latency and memory harness comparing two builds of the pipeline
   ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
@@ -128,9 +130,10 @@ Terms with a specific meaning in this codebase are defined in
   the coordinator level. Hooks run before permission checks. See
   `docs/hooks/README.md` for the user-facing protocol.
 - **Lazy MCPs**: MCP servers with `lazy_description` set in `anvil.json`
-  don't connect at startup, and their tools are excluded from the LLM
-  context until explicitly enabled; the first enable connects them. The
-  `enable_mcp` built-in tool lets the agent activate
+  don't connect at startup. Under the default route they go through the
+  MCP tool catalogue (below); routed `direct`, their tools are excluded
+  from the LLM context until explicitly enabled; the first enable
+  connects them. The `enable_mcp` built-in tool lets the agent activate
   them; humans toggle via the MCP palette dialog (Ctrl+P → "MCP Servers").
   Enabled state is branch-scoped — derived from message history
   (`deriveLazyMCPState` in `internal/agent/lazy_mcp.go`) so it persists
@@ -138,6 +141,29 @@ Terms with a specific meaning in this codebase are defined in
   list on every turn. The `LazyMCPState` type in
   `internal/agent/tools/lazy_mcp_state.go` holds the per-Run enabled set.
   See `docs/adr/0002-lazy-mcp-state-from-messages.md`.
+- **MCP tool catalogue**: each MCP server resolves once per process to a
+  route, `direct` (in the tool list) or `catalogue`, from the snapshot
+  `mcp.Initialize` records before closing `initDone`
+  (`mcp.StartupSnapshot`, `deriveMCPRoutes` in
+  `internal/agent/mcp_routes.go`). Under `route: auto` a server is direct
+  only when connected at startup with sent tools under 12,000 bytes
+  (`mcp.SentToolBytes`). Catalogue servers are never built into any tool
+  list: `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool`
+  (`internal/agent/tools/catalogue.go`) reach them through a per-agent
+  resolver, and `agentMCPTools` (`internal/agent/mcp_tools.go`) builds
+  both the listed tools and the resolved ones, so access and wrapping
+  rules can't drift. `call_mcp_tool` validates arguments with
+  `jsonschema-go`, then runs the wrapped inner tool under the outer call
+  ID, so permissions, hooks and timers see `mcp_<server>_<tool>`. A call
+  to a catalogue tool by its direct name is forwarded to `call_mcp_tool`
+  by `repairToolCall` (`internal/agent/catalogue_repair.go`), which must
+  stay on the `AgentStreamCall` in `turn.go`: fantasy's `Stream` ignores
+  an agent-level repair function. The
+  route map never changes mid-process; never let a connect, renewal or
+  reload change it. The registry (`mcp.RegisteredTool`) holds each tool's
+  parameters normalised once on a private copy, because fantasy normalises
+  `Info().Parameters` in place. See `docs/adr/0007-mcp-tool-catalogue.md`
+  and `plans/completed/design-2026-10-23-mcp-tool-catalogue.md`.
 - **LSP memory management**: auto-configured gopls runs with `-remote=auto`
   so concurrent Anvil processes share one gopls daemon
   (`applyGoplsDaemonDefaults` in `internal/lsp/manager.go`); user-configured
@@ -145,6 +171,15 @@ Terms with a specific meaning in this codebase are defined in
   `lsp_idle_timeout` minutes of inactivity (default 15, `0` disables) and
   restart on demand. Any code path that reads a client must call
   `Manager.Touch(name)` so active clients are never reaped.
+- **Memory across instances**: people run many Anvil instances at once,
+  so anything a feature holds per instance is multiplied. Share it through
+  the first of these that meets a measured need, and say in the design
+  why earlier steps don't: (1) load on first use and release when idle;
+  (2) let the OS share it (memory-map read-only data; on-disk caches only
+  cut load time and peaks); (3) use the resource's own sharing mode, built
+  in the resource when we own it; (4) a shared process Anvil manages,
+  which doesn't exist yet and needs its own ADR. See
+  `docs/adr/0005-cross-instance-sharing.md`.
 - **Herdr reporting**: inside a Herdr pane the interactive TUI reports
   `idle`/`working`/`blocked` and names its tab via the `herdr` CLI
   (`internal/herdr`, wired in `internal/cmd/root.go`). The UI snapshots
@@ -164,6 +199,30 @@ Terms with a specific meaning in this codebase are defined in
   the duration once it reaches 10s (`internal/ui/chat/tool_timer.go`,
   refreshed by the elapsed tick in `internal/ui/model/tool_timer.go`).
   Design: `plans/completed/design-2026-10-18-tool-call-timer.md`.
+- **Branch summaries**: rewinding past an assistant reply, or away from
+  an earlier branch summary to anywhere but its parent, offers a
+  summarizer agent (frontmatter `branch_summarizer: true`; the built-in
+  is `templates/agents/branch-summarizer.md`) that summarises the branch
+  left behind. `internal/agent/branchsummary` holds the pure parts: the
+  abandoned range, the ledger built from tool calls, the serialised
+  prompt (redacted, budgeted, with tags content can't forge) and the
+  stored text. `coordinator.SummarizeBranch` runs the agent with
+  read-only tools in an agent-tool child session and stores a
+  `branch_summary` message under the rewind target with
+  `messages.CreateAtLeaf`, which checks the leaf in the same transaction.
+  `internal/app/branchsummaries.Service` owns runs (one per root session)
+  and reserves the session synchronously when one starts, so a message
+  sent meanwhile queues behind it. The TUI feature
+  (`internal/ui/model/branch_summary.go`) renders only the service's
+  events, showing the run as a live agent item. The built-in prompt has
+  an evaluation set in `internal/agent/testdata/branch_summary_eval`
+  (made-up conversations modelled on real failures, each with required
+  facts, forbidden claims and an optional length bound). It runs live
+  against your configured model with
+  `ANVIL_BRANCH_SUMMARY_EVAL=1 go test ./internal/agent -run
+  TestBranchSummaryEval -v`; run it whenever you change the prompt or
+  the serialisation. Design:
+  `plans/completed/design-2026-10-20-branch-summaries.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
   normalised token counts, prices and hashed request fingerprints. The
@@ -213,6 +272,98 @@ Terms with a specific meaning in this codebase are defined in
   tool restriction, pinned model and a `submit_result` tool for schemas.
   Startup marks runs of dead instances interrupted and prunes run
   directories older than 14 days (`Store.PruneRunDirs`).
+- **Mermaid diagrams**: when an assistant message finishes, each top-level
+  ```` ```mermaid ```` fence becomes its own chat node
+  (`chat.NewAssistantMessageItems`, spliced in by
+  `Chat.SyncAssistantSegments`); the head keeps the message ID and the
+  rest are `<id>#<n>`. `graphicsFeature` (`internal/ui/model/graphics.go`
+  for its cache and messages, `mermaid_render.go` for the worker) renders
+  them on one goroutine with `github.com/Broderick-Westrope/pele-go/raster`
+  (pele-go, a Go port of Pele, for SVG, resvg in wazero for pixels; see
+  `docs/adr/0004-mermaid-rendering.md` and `docs/adr/0006-pele-go.md`)
+  and sends Kitty graphics with Unicode placeholders. Items get the renderer through their constructors
+  as a `chat.DiagramRenderer`, which reports a `chat.DiagramState`: the
+  code block shows while pending, without Kitty support, or (with a note)
+  after a failure. When the view moves, the chat tells the renderer which
+  diagrams are on or within a screen of it (`Chat.SetDiagrams`,
+  `chat.DiagramRenderer.InView`), which renders them ahead and never
+  evicts them while they stay there. An image arriving re-renders
+  only diagram items (`Chat.InvalidateDiagrams`), which keeps the scroll
+  position. The terminal holds the pixels; Anvil keeps none once sent, and
+  deletes the least recently drawn images out of view past 128 MB (a wide
+  diagram on a HiDPI screen is ~17 MB). resvg loads on the
+  first diagram and drops after 20 seconds idle. Its compiled
+  code goes in wazero's compilation cache under the user cache dir
+  (`anvil/wasm`), shared by every process, so only the first load after
+  an upgrade compiles it (~300 ms and ~50 MB peak, against ~11 ms).
+  `Y` copies a diagram as a PNG: since Anvil keeps no pixels, the worker
+  renders it again (`diagramJobCopy`) at twice its layout size (within
+  `raster.MaxPixels`) on an opaque background, then writes it to the
+  clipboard itself, so copies land in order. `writeClipboardImage`
+  writes natively on macOS and Windows and through `wl-copy` or `xclip`
+  on other Unix desktops (the native X11 clipboard can't do large
+  transfers), giving up after 5 seconds. `imageClipboardReady` refuses
+  a copy that can't land before anything renders, and it's refused when
+  `SSH_CONNECTION` or `SSH_TTY` is set, since the clipboard isn't the
+  user's and OSC 52 carries only text. Colours come from
+  `Styles.Diagram`. `options.tui.diagrams` (default on) needs a
+  restart: `ConfigStore.DiagramsEnabled` reads the startup snapshot,
+  and both the UI (a nil renderer means no split) and the system prompt
+  line gate on it. Design:
+  `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
+  measurements and resvg workarounds:
+  `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
+- **Tool images**: a tool result carrying image data (`view`, MCP) is
+  drawn as the Output item of its tool drill-in
+  (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any
+  text the tool returned with it, through the
+  same `graphicsFeature` cache as diagrams: each cache key names its
+  producer (Mermaid or bitmap), and bitmaps decode on the worker without
+  loading the Mermaid engines (`internal/ui/model/tool_image.go`). They
+  draw at actual size, shrunk to the drill-in's width, 297 rows and
+  16 Mpx once padded to whole cells, never enlarged; a source over
+  8192 px a side, 32 Mpx, or 128 MB of what its decoder holds at once
+  (`decodeBytesPerPixel`: progressive JPEG and lossless WebP hold far
+  more than their pixels) isn't decoded. Only the drill-in on
+  top holds a full-size image (diagram or bitmap): `UI.Update` tells
+  features which chat is on top after every message, keys included
+  (`drillInFeature.DrillInChanged`), and the cache frees the old one at
+  once. Drill-in items ask through a handle bound to their chat
+  (`graphicsFeature.For`) that queues nothing while it's covered, and a
+  generation in full-size keys keeps late results and deletes from an
+  earlier opening off the current image. `o` writes the result's bytes
+  to the diagram export dir and opens them in the OS viewer, even when
+  Anvil can't draw them, but only when the bytes sniff as a raster type
+  that can't carry scripts (`imageExts`). `Y` copies it through the
+  diagram copy path (`diagramJobCopy`, same SSH and clipboard checks): a
+  PNG's own bytes, anything else decoded within the same limits
+  (`decodeBitmap`) and encoded as PNG. The cache exists whatever
+  `options.tui.diagrams` says. Design:
+  `plans/completed/design-2026-10-21-tool-image-drill-in.md`.
+- **Opening a tool's file**: in a drill-in of a built-in tool whose call
+  has a `file_path` (`fileTools` in `internal/ui/chat/tool_file.go`; an
+  MCP tool's may not be local), `o` opens the file in the OS default app,
+  `e` opens it in `$EDITOR` (at `view`'s offset), and `r` shows it in the
+  file manager, from any item. The drill-in's items share one
+  `chat.toolFile`, which re-parses the input only when it changes, since
+  it's asked on every render. When the call returned an image, `o` opens
+  that image instead, from every item. That rule is `toolFile.keys`: item
+  keys and the header hints read it directly, and the help reads it
+  through `chat.FileKeys`. The header drops hints from the right when they
+  don't fit. `fileOpenFeature` (`internal/ui/model/file_open.go`) refuses
+  UNC and device paths in any slash as the model wrote them, before
+  anything touches them (`isNetworkPath`), joins relative ones like the
+  tools (`filepathext.SmartJoin`), and follows symlinks. The model chose
+  the path and may have written the file, so `o` opens only passive types
+  whose bytes sniff as that type (`openTypes`, an allowlist like
+  `imageExts`: text, source and raster images; HTML content under a text
+  name is refused too), never an executable file; `e` opens anything as
+  text. `r` runs `revealCommands`, each with its own timeout: `open -R` on
+  macOS, and on Windows `explorer /select,"<path>"` as a raw command line
+  (`setRawCmdLine`), since Explorer parses its own. On Linux it makes the
+  FileManager1 D-Bus call, falling back to a detached `xdg-open` on the
+  file's directory. They open at most the directory, so `r` needs no
+  allowlist.
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 

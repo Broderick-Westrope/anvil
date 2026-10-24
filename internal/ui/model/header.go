@@ -9,7 +9,6 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/fsext"
-	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/logo"
@@ -179,10 +178,6 @@ func renderHeaderDetails(
 		}
 		formattedPercentage := t.Header.Percentage.Render(percentageText)
 		parts = append(parts, formattedPercentage)
-	}
-
-	if mode := com.Workspace.PermissionBouncerMode(); mode != permission.BouncerOff {
-		parts = append(parts, t.Header.Percentage.Render("bouncer:"+string(mode)))
 	}
 
 	const keystroke = "ctrl+d"

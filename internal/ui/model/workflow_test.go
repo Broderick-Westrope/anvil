@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"image/color"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/commands"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
 	"github.com/Broderick-Westrope/anvil/internal/ui/notification"
@@ -37,7 +40,14 @@ type fakeHost struct {
 	// viewedChild is the drilled-in subagent session on screen.
 	viewedChild string
 	restored    []string
+	// chatItems are the items shown in the root chat, in order.
+	chatItems []chat.MessageItem
 }
+
+// The diagram surface is unused by workflows.
+func (*fakeHost) InvalidateDiagrams()        {}
+func (*fakeHost) AppBackground() color.Color { return nil }
+func (*fakeHost) PushDrillIn(*Chat, string)  {}
 
 func (h *fakeHost) SessionID() string {
 	if h.session == nil {
@@ -86,6 +96,15 @@ func (h *fakeHost) KeyMap() KeyMap               { return h.keyMap }
 func (h *fakeHost) ViewedChildSessionID() string { return h.viewedChild }
 func (h *fakeHost) RestoreToComposer(text string) {
 	h.restored = append(h.restored, text)
+}
+
+func (h *fakeHost) ShowChatItem(item chat.MessageItem) tea.Cmd {
+	h.chatItems = append(h.chatItems, item)
+	return nil
+}
+
+func (h *fakeHost) RemoveChatItem(id string) {
+	h.chatItems = slices.DeleteFunc(h.chatItems, func(item chat.MessageItem) bool { return item.ID() == id })
 }
 
 // workflowFixture drives a workflow feature through its surface.

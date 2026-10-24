@@ -1,17 +1,18 @@
 module github.com/Broderick-Westrope/anvil
 
-go 1.27.2
+go 1.27.3
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.0.8
+	charm.land/bubbletea/v2 v2.0.9
 	charm.land/catwalk v0.52.64
 	charm.land/fang/v2 v2.0.1
 	charm.land/fantasy v0.45.2
 	charm.land/glamour/v2 v2.0.1
-	charm.land/lipgloss/v2 v2.0.5
+	charm.land/lipgloss/v2 v2.0.6
 	charm.land/log/v2 v2.0.1
 	charm.land/x/vcr v0.1.1
+	github.com/Broderick-Westrope/pele-go/raster v0.1.0
 	github.com/Broderick-Westrope/wtp/v3 v3.3.0
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/PuerkitoBio/goquery v1.13.0
@@ -23,8 +24,8 @@ require (
 	github.com/charlievieth/fastwalk v1.0.14
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/openai-go v0.0.0-20260921175203-216db9e71b83
-	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7
-	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886
+	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/editor v0.2.0
 	github.com/charmbracelet/x/etag v0.2.0
 	github.com/charmbracelet/x/exp/charmtone v0.1.0
@@ -66,6 +67,7 @@ require (
 	github.com/tidwall/sjson v1.2.5
 	github.com/zeebo/xxh3 v1.1.0
 	go.uber.org/goleak v1.3.0
+	golang.org/x/image v0.45.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
@@ -73,9 +75,9 @@ require (
 	golang.org/x/text v0.43.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.57.0
-	mvdan.cc/sh/moreinterp v0.0.0-20250902163504-3cf4fd5717a5
+	modernc.org/sqlite v1.58.0
 	mvdan.cc/sh/v3 v3.14.1
+	mvdan.cc/sh/x v0.0.0-20260907232430-b5028a3332a4
 )
 
 require (
@@ -84,6 +86,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
+	github.com/Broderick-Westrope/pele-go v0.1.0 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.68.0 // indirect
@@ -168,9 +171,10 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af // indirect
+	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
-	github.com/u-root/u-root v0.14.1-0.20250807200646-5e7721023dc7 // indirect
+	github.com/u-root/u-root v0.15.1-0.20251208185023-2f8c7e763cf8 // indirect
 	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
 	github.com/urfave/cli/v3 v3.3.8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
@@ -188,7 +192,6 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.3 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
-	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/api v0.294.0 // indirect

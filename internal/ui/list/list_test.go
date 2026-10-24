@@ -913,3 +913,82 @@ func TestList_ScrollToSelectedWithMargin_FitsViewport(t *testing.T) {
 		require.Equal(t, 0, l.Offset(), "selected=%d", sel)
 	}
 }
+
+// tallItem renders a fixed number of lines, so tests can build lists
+// whose first visible item is taller than the viewport.
+type tallItem struct {
+	*Versioned
+	lines int
+}
+
+func newTallItem(lines int) *tallItem {
+	return &tallItem{Versioned: NewVersioned(), lines: lines}
+}
+
+func (t *tallItem) Render(width int) string {
+	return strings.TrimSuffix(strings.Repeat("x\n", t.lines), "\n")
+}
+
+func (t *tallItem) Finished() bool { return false }
+
+// TestList_AtBottom_TallFirstVisibleItem covers the case where the item
+// at offsetIdx is taller than the viewport: the accumulated height passes
+// the viewport height long before the end of the list, but the lines
+// scrolled out of view (offsetLine) make up the difference. AtBottom must
+// account for offsetLine before bailing out early.
+func TestList_AtBottom_TallFirstVisibleItem(t *testing.T) {
+	t.Parallel()
+
+	for _, gap := range []int{0, 1} {
+		l := NewList(newTallItem(50), newTallItem(3))
+		l.SetGap(gap)
+		l.SetSize(40, 10)
+
+		l.ScrollToBottom()
+		require.True(t, l.AtBottom(), "gap=%d: at bottom after ScrollToBottom", gap)
+
+		l.ScrollBy(-1)
+		require.False(t, l.AtBottom(), "gap=%d: not at bottom after scrolling up", gap)
+
+		l.ScrollBy(1)
+		require.True(t, l.AtBottom(), "gap=%d: back at bottom after scrolling down", gap)
+	}
+}
+
+// TestList_ScrollToSelected_BeforeSized covers dialogs that set their
+// selection before the first Draw sizes the list: with no viewport height,
+// ScrollToSelected must keep the selected item in view instead of
+// scrolling past it.
+func TestList_ScrollToSelected_BeforeSized(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 20)
+	for i := range items {
+		items[i] = newTrackedItem(strconv.Itoa(i), "body", true)
+	}
+	l := NewList(items...)
+	l.SetSelected(12)
+	l.ScrollToSelected()
+
+	l.SetSize(40, 5)
+	require.Equal(t, 12, l.Offset())
+	require.True(t, l.SelectedItemInView())
+}
+
+func TestList_ItemTopAboveView(t *testing.T) {
+	t.Parallel()
+
+	l := NewList(newTallItem(5), newTallItem(20), newTallItem(5))
+	l.SetSize(40, 10)
+
+	require.False(t, l.ItemTopAboveView(0), "top of list")
+	require.False(t, l.ItemTopAboveView(1))
+
+	l.ScrollBy(5)
+	require.True(t, l.ItemTopAboveView(0), "first item scrolled past")
+	require.False(t, l.ItemTopAboveView(1), "second item starts at the top row")
+
+	l.ScrollBy(1)
+	require.True(t, l.ItemTopAboveView(1), "one line into the second item")
+	require.False(t, l.ItemTopAboveView(2))
+}

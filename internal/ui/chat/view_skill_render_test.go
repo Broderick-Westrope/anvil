@@ -133,12 +133,12 @@ func TestViewSkillDetailFormatting(t *testing.T) {
 			require.NoError(t, err)
 			call := message.ToolCall{ID: "view-skill-detail", Name: tools.ViewToolName, Input: tc.input, Finished: true}
 			source := NewViewToolMessageItem(&sty, call, &message.ToolResult{Metadata: string(metadata), Content: "wrapped response"}, false)
-			items := BuildToolDetailItems(&sty, source)
+			items := BuildToolDetailItems(&sty, source, nil)
 			output := items[len(items)-1]
 
 			fileCall := message.ToolCall{ID: "view-file-detail", Name: tools.ViewToolName, Input: `{"file_path":"SKILL.md"}`, Finished: true}
 			fileSource := NewViewToolMessageItem(&sty, fileCall, &message.ToolResult{Content: content}, false)
-			fileItems := BuildToolDetailItems(&sty, fileSource)
+			fileItems := BuildToolDetailItems(&sty, fileSource, nil)
 			fileOutput := fileItems[len(fileItems)-1]
 
 			for _, width := range []int{40, 120} {

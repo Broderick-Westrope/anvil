@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/Broderick-Westrope/anvil/internal/ui/anim"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
@@ -88,10 +87,11 @@ type Chat struct {
 	list     *list.List
 	idInxMap map[string]int // Map of message IDs to their indices in the list
 
-	// Animation visibility optimization: track animations paused due to items
-	// being scrolled out of view. When items become visible again, their
-	// animations are restarted.
-	pausedAnimations map[string]struct{}
+	// frozenSpinners holds items whose spinner must stay still even though
+	// they report spinning. A session killed mid-turn leaves an assistant
+	// message with no Finish part; reloading it while the agent is idle
+	// freezes those items until a message event for them arrives.
+	frozenSpinners map[string]struct{}
 
 	// Mouse state
 	mouseDown     bool
@@ -114,6 +114,11 @@ type Chat struct {
 	// follow is a flag to indicate whether the view should auto-scroll to
 	// bottom on new messages.
 	follow bool
+
+	// diagrams, when set, is told which diagrams are on or near the view
+	// whenever it moves; prefetchedView is the view it was last told for.
+	diagrams       chat.DiagramRenderer
+	prefetchedView prefetchView
 
 	// drawCache memoizes the decoded form of the last list.Render output so
 	// repeat frames with byte-identical content skip the per-cell ANSI
@@ -151,9 +156,9 @@ type chatDrawCache struct {
 // messages.
 func NewChat(com *common.Common) *Chat {
 	c := &Chat{
-		com:              com,
-		idInxMap:         make(map[string]int),
-		pausedAnimations: make(map[string]struct{}),
+		com:            com,
+		idInxMap:       make(map[string]int),
+		frozenSpinners: make(map[string]struct{}),
 	}
 	l := list.NewList()
 	l.SetGap(1)
@@ -179,6 +184,7 @@ func (m *Chat) Height() int {
 // invalidate it.
 func (m *Chat) Draw(scr uv.Screen, area uv.Rectangle) {
 	rendered := m.list.Render()
+	m.prefetchNearby()
 	method, ok := scr.WidthMethod().(ansi.Method)
 	if !ok {
 		// Width method isn't an ansi.Method (unlikely in practice — both
@@ -193,6 +199,40 @@ func (m *Chat) Draw(scr uv.Screen, area uv.Rectangle) {
 		m.drawCache = newChatDrawCache(rendered, method)
 	}
 	drawCachedBuffer(scr, area, m.drawCache.buf)
+}
+
+// prefetchView is where a chat's view is: what decides which items are
+// near it.
+type prefetchView struct {
+	idx, line, items, width, height int
+}
+
+// SetDiagrams sets the renderer told which diagrams are on or near the
+// view (see prefetchNearby). Only chats that show diagrams need it.
+func (m *Chat) SetDiagrams(diagrams chat.DiagramRenderer) { m.diagrams = diagrams }
+
+// prefetchNearby tells the diagram renderer which diagrams are on screen or
+// within a screen above or below it, so they render before they're
+// scrolled to and are never evicted while in view.
+func (m *Chat) prefetchNearby() {
+	if m.diagrams == nil {
+		return
+	}
+	idx, line := m.list.ScrollPosition()
+	view := prefetchView{idx: idx, line: line, items: m.list.Len(), width: m.list.Width(), height: m.list.Height()}
+	if view == m.prefetchedView {
+		return
+	}
+	m.prefetchedView = view
+	var items []list.Item
+	start, end := m.list.VisibleItemIndices()
+	for i := start; i <= end; i++ {
+		if item := m.list.ItemAt(i); item != nil {
+			items = append(items, item)
+		}
+	}
+	items = append(items, m.list.NearbyItems(m.list.Height())...)
+	chat.ReportDiagramsInView(m.diagrams, items, m.list.Width())
 }
 
 // newChatDrawCache builds a chatDrawCache for the given rendered string by
@@ -323,6 +363,27 @@ func (m *Chat) InvalidateRenderCaches() {
 	chat.ClearItemCaches(m.MessageItems())
 }
 
+// InvalidateDiagrams re-renders the items that show diagrams, after an
+// image arrives or the terminal's capabilities change. They may change
+// height, which leaves the line offset stale: stay pinned to the bottom if
+// following, otherwise keep the offset inside its item. Being at the
+// bottom isn't enough: a drill-in whose short placeholder fits on screen
+// must stay at the top when it grows.
+func (m *Chat) InvalidateDiagrams() {
+	var diagrams []chat.MessageItem
+	for _, item := range m.MessageItems() {
+		if _, ok := item.(chat.DiagramShower); ok {
+			diagrams = append(diagrams, item)
+		}
+	}
+	chat.ClearItemCaches(diagrams)
+	if m.follow {
+		m.ScrollToBottom()
+		return
+	}
+	m.list.ClampOffset()
+}
+
 // MessageItems returns the chat's message items in order.
 func (m *Chat) MessageItems() []chat.MessageItem {
 	items := make([]chat.MessageItem, 0, m.list.Len())
@@ -337,7 +398,7 @@ func (m *Chat) MessageItems() []chat.MessageItem {
 // SetMessages sets the chat messages to the provided list of message items.
 func (m *Chat) SetMessages(msgs ...chat.MessageItem) {
 	m.idInxMap = make(map[string]int)
-	m.pausedAnimations = make(map[string]struct{})
+	clear(m.frozenSpinners)
 
 	items := make([]list.Item, len(msgs))
 	for i, msg := range msgs {
@@ -372,7 +433,8 @@ func (m *Chat) AppendMessages(msgs ...chat.MessageItem) {
 }
 
 // UpdateNestedToolIDs updates the ID map for nested tools within a container.
-// Call this after modifying nested tools to ensure animations work correctly.
+// Call this after modifying nested tools so lookups by a nested tool's ID
+// resolve to its container.
 func (m *Chat) UpdateNestedToolIDs(containerID string) {
 	idx, ok := m.idInxMap[containerID]
 	if !ok {
@@ -395,69 +457,76 @@ func (m *Chat) UpdateNestedToolIDs(containerID string) {
 	}
 }
 
-// Animate animates items in the chat list. Only propagates animation messages
-// to visible items to save CPU. When items are not visible, their animation ID
-// is tracked so it can be restarted when they become visible again.
-func (m *Chat) Animate(msg anim.StepMsg) tea.Cmd {
-	idx, ok := m.idInxMap[msg.ID]
-	if !ok {
-		return nil
+// animating reports whether the item at idx needs animation frames.
+func (m *Chat) animating(idx int) (chat.Animatable, bool) {
+	item := m.list.ItemAt(idx)
+	animatable, ok := item.(chat.Animatable)
+	if !ok || !animatable.Spinning() {
+		return nil, false
 	}
-
-	animatable, ok := m.list.ItemAt(idx).(chat.Animatable)
-	if !ok {
-		return nil
+	if identifiable, ok := item.(chat.Identifiable); ok {
+		if _, frozen := m.frozenSpinners[identifiable.ID()]; frozen {
+			return nil, false
+		}
 	}
-
-	// Check if item is currently visible.
-	startIdx, endIdx := m.list.VisibleItemIndices()
-	isVisible := idx >= startIdx && idx <= endIdx
-
-	if !isVisible {
-		// Item not visible - pause animation by not propagating.
-		// Track it so we can restart when it becomes visible.
-		m.pausedAnimations[msg.ID] = struct{}{}
-		return nil
-	}
-
-	// Item is visible - remove from paused set and animate.
-	delete(m.pausedAnimations, msg.ID)
-	return animatable.Animate(msg)
+	return animatable, true
 }
 
-// RestartPausedVisibleAnimations restarts animations for items that were paused
-// due to being scrolled out of view but are now visible again.
-func (m *Chat) RestartPausedVisibleAnimations() tea.Cmd {
-	if len(m.pausedAnimations) == 0 {
-		return nil
+// HasVisibleAnimation reports whether any item in the viewport needs
+// animation frames. Only visible items count, so a spinner scrolled out of
+// view costs nothing until it is scrolled back.
+func (m *Chat) HasVisibleAnimation() bool {
+	if m.list.Len() == 0 {
+		return false
 	}
-
 	startIdx, endIdx := m.list.VisibleItemIndices()
-	var cmds []tea.Cmd
+	for idx := startIdx; idx <= endIdx; idx++ {
+		if _, ok := m.animating(idx); ok {
+			return true
+		}
+	}
+	return false
+}
 
-	for id := range m.pausedAnimations {
-		idx, ok := m.idInxMap[id]
-		if !ok {
-			// Item no longer exists.
-			delete(m.pausedAnimations, id)
+// AdvanceVisible moves every visible spinning item forward by one frame and
+// reports whether any did.
+func (m *Chat) AdvanceVisible() bool {
+	if m.list.Len() == 0 {
+		return false
+	}
+	advanced := false
+	startIdx, endIdx := m.list.VisibleItemIndices()
+	for idx := startIdx; idx <= endIdx; idx++ {
+		if animatable, ok := m.animating(idx); ok && animatable.Advance() {
+			advanced = true
+		}
+	}
+	return advanced
+}
+
+// FreezeSpinners stops every item that currently reports spinning from
+// animating until [Chat.UnfreezeSpinners] names it.
+func (m *Chat) FreezeSpinners() {
+	for idx := range m.list.Len() {
+		item := m.list.ItemAt(idx)
+		animatable, ok := item.(chat.Animatable)
+		if !ok || !animatable.Spinning() {
 			continue
 		}
-
-		if idx >= startIdx && idx <= endIdx {
-			// Item is now visible - restart its animation.
-			if animatable, ok := m.list.ItemAt(idx).(chat.Animatable); ok {
-				if cmd := animatable.StartAnimation(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-			delete(m.pausedAnimations, id)
+		if identifiable, ok := item.(chat.Identifiable); ok {
+			m.frozenSpinners[identifiable.ID()] = struct{}{}
 		}
 	}
+}
 
-	if len(cmds) == 0 {
-		return nil
+// UnfreezeSpinners lets the named items animate again.
+func (m *Chat) UnfreezeSpinners(ids ...string) {
+	if len(m.frozenSpinners) == 0 {
+		return
 	}
-	return tea.Batch(cmds...)
+	for _, id := range ids {
+		delete(m.frozenSpinners, id)
+	}
 }
 
 // Focus sets the focus state of the chat component.
@@ -521,34 +590,6 @@ func (m *Chat) ScrollToSelected() {
 func (m *Chat) ScrollToIndex(index int) {
 	m.list.ScrollToIndex(index)
 	m.follow = m.AtBottom() // Disable follow mode if user scrolls up
-}
-
-// ScrollToTopAndAnimate scrolls the chat view to the top and returns a command to restart
-// any paused animations that are now visible.
-func (m *Chat) ScrollToTopAndAnimate() tea.Cmd {
-	m.ScrollToTop()
-	return m.RestartPausedVisibleAnimations()
-}
-
-// ScrollToBottomAndAnimate scrolls the chat view to the bottom and returns a command to
-// restart any paused animations that are now visible.
-func (m *Chat) ScrollToBottomAndAnimate() tea.Cmd {
-	m.ScrollToBottom()
-	return m.RestartPausedVisibleAnimations()
-}
-
-// ScrollByAndAnimate scrolls the chat view by the given number of line deltas and returns
-// a command to restart any paused animations that are now visible.
-func (m *Chat) ScrollByAndAnimate(lines int) tea.Cmd {
-	m.ScrollBy(lines)
-	return m.RestartPausedVisibleAnimations()
-}
-
-// ScrollToSelectedAndAnimate scrolls the chat view to the selected item and returns a
-// command to restart any paused animations that are now visible.
-func (m *Chat) ScrollToSelectedAndAnimate() tea.Cmd {
-	m.ScrollToSelected()
-	return m.RestartPausedVisibleAnimations()
 }
 
 // SelectedItemInView returns whether the selected item is currently in view.
@@ -637,6 +678,13 @@ func (m *Chat) SelectFirst() {
 	}
 }
 
+// ScrollToBottomAndSelectLast scrolls to the bottom, which turns follow
+// mode back on, and selects the last item.
+func (m *Chat) ScrollToBottomAndSelectLast() {
+	m.ScrollToBottom()
+	m.SelectLast()
+}
+
 // SelectLast selects the last message in the chat list.
 func (m *Chat) SelectLast() {
 	if !m.list.SelectLast() {
@@ -677,10 +725,33 @@ func (m *Chat) SelectLastInView() {
 	}
 }
 
+// SelectNearestInView moves an out-of-view selection to the visible edge
+// nearest to it: the top row when the selection is above the viewport, the
+// bottom row when it is below. With no selection, scrolledUp picks the
+// bottom row (the content the user is moving towards) and otherwise the
+// top row.
+func (m *Chat) SelectNearestInView(scrolledUp bool) {
+	startIdx, _ := m.list.VisibleItemIndices()
+	sel := m.list.Selected()
+	if sel < 0 {
+		if scrolledUp {
+			m.SelectLastInView()
+		} else {
+			m.SelectFirstInView()
+		}
+		return
+	}
+	if sel < startIdx {
+		m.SelectFirstInView()
+		return
+	}
+	m.SelectLastInView()
+}
+
 // ClearMessages removes all messages from the chat list.
 func (m *Chat) ClearMessages() {
 	m.idInxMap = make(map[string]int)
-	m.pausedAnimations = make(map[string]struct{})
+	clear(m.frozenSpinners)
 	m.list.SetItems()
 	m.ClearMouse()
 }
@@ -698,15 +769,21 @@ func (m *Chat) RemoveMessage(id string) {
 	// Remove from index map
 	delete(m.idInxMap, id)
 
-	// Rebuild index map for all items after the removed one
-	for i := idx; i < m.list.Len(); i++ {
-		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
-			m.idInxMap[item.ID()] = i
+	// Remove the nodes a split message shows after its head. ItemAt is nil
+	// past the end.
+	for {
+		item, ok := m.list.ItemAt(idx).(chat.MessageItem)
+		if !ok || !chat.IsSegmentOf(item.ID(), id) {
+			break
 		}
+		m.list.RemoveItem(idx)
+		delete(m.idInxMap, item.ID())
 	}
 
-	// Clean up any paused animations for this message
-	delete(m.pausedAnimations, id)
+	// Rebuild index map for all items after the removed one
+	m.reindexFrom(idx)
+
+	delete(m.frozenSpinners, id)
 }
 
 // MessageItem returns the message item with the given ID, or nil if not found.
@@ -730,13 +807,21 @@ func (m *Chat) SelectedItem() list.Item {
 // ToggleExpandedSelectedItem expands the selected message item if it is expandable.
 func (m *Chat) ToggleExpandedSelectedItem() {
 	if expandable, ok := m.list.SelectedItem().(chat.Expandable); ok {
-		wasFollowing := m.follow
-		if !expandable.ToggleExpanded() {
-			m.ScrollToIndex(m.list.Selected())
-		}
-		if wasFollowing {
-			m.ScrollToBottom()
-		}
+		m.toggleExpanded(expandable)
+	}
+}
+
+// toggleExpanded toggles the selected item and keeps the view where it is.
+// Collapsing an item whose top is scrolled above the viewport would leave
+// it off screen, so only then is the view moved to the item's first line.
+func (m *Chat) toggleExpanded(expandable chat.Expandable) {
+	wasFollowing := m.follow
+	selected := m.list.Selected()
+	if !expandable.ToggleExpanded() && m.list.ItemTopAboveView(selected) {
+		m.ScrollToIndex(selected)
+	}
+	if wasFollowing {
+		m.ScrollToBottom()
 	}
 }
 
@@ -868,23 +953,17 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) (bool, tea.Cmd) {
 
 	if clickable, ok := selectedItem.(list.MouseClickable); ok {
 		handled := clickable.HandleMouseClick(ansi.MouseButton1, msg.X, msg.Y)
-		// A handled click on an assistant message is on its "Thought for"
-		// line, which opens the thinking drill-in.
-		if assistant, ok := selectedItem.(*chat.AssistantMessageItem); ok && handled {
-			return true, assistant.ThinkingDrillIn()
+		// A handled click on an assistant message's "Thought for" line or
+		// on a diagram opens its drill-in.
+		if driller, ok := selectedItem.(chat.ClickDrillInHandler); ok && handled {
+			return true, driller.ClickDrillIn()
 		}
 		// Toggle expansion only when the item signalled it handled the
 		// click, so clicks outside an item's expandable region (such as a
 		// tool's header) don't toggle it.
 		if handled {
 			if expandable, ok := selectedItem.(chat.Expandable); ok {
-				wasFollowing := m.follow
-				if !expandable.ToggleExpanded() {
-					m.ScrollToIndex(m.list.Selected())
-				}
-				if wasFollowing {
-					m.ScrollToBottom()
-				}
+				m.toggleExpanded(expandable)
 			}
 		}
 		return handled, nil
@@ -977,6 +1056,9 @@ func (m *Chat) HighlightContent() string {
 // its formatting. ok is false when the item has no source or the selection
 // cannot be mapped.
 func sourceSelection(item list.Item, rendered string, area uv.Rectangle, startLine, startCol, endLine, endCol int) (string, bool) {
+	if whole, ok := item.(chat.WholeSelectable); ok {
+		return whole.SelectedText(), true
+	}
 	ss, ok := item.(list.SourceSelectable)
 	if !ok {
 		return "", false

@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -45,6 +46,12 @@ type BashResponseMetadata struct {
 	WorkingDirectory string `json:"working_directory"`
 	Background       bool   `json:"background,omitempty"`
 	ShellID          string `json:"shell_id,omitempty"`
+	// ExitCode and Interrupted say how a finished command ended. They are
+	// zero for a command still running as a job. ExitCode is always
+	// written, so a reader can tell a recorded zero from a result stored
+	// before exit codes were.
+	ExitCode    int  `json:"exit_code"`
+	Interrupted bool `json:"interrupted,omitempty"`
 }
 
 const (
@@ -228,11 +235,12 @@ func (t *bashTool) Info() fantasy.ToolInfo {
 	return info
 }
 
-// NewBashTool builds the bash tool. wakeOnJobEvents, when non-nil,
-// reports whether finished background jobs wake an idle session; nil
-// means they never do.
-func NewBashTool(permissions permission.Service, workingDir string, wakeOnJobEvents func() bool) fantasy.AgentTool {
-	tool := newBashTool(permissions, workingDir)
+// NewBashTool builds the bash tool. Output too long to return in full is
+// spilled to a file under spillDir; see [TruncateOutput]. wakeOnJobEvents,
+// when non-nil, reports whether finished background jobs wake an idle
+// session; nil means they never do.
+func NewBashTool(permissions permission.Service, workingDir, spillDir string, wakeOnJobEvents func() bool) fantasy.AgentTool {
+	tool := newBashTool(permissions, workingDir, spillDir)
 	if wakeOnJobEvents == nil {
 		return tool
 	}
@@ -243,7 +251,7 @@ func NewBashTool(permissions permission.Service, workingDir string, wakeOnJobEve
 	}
 }
 
-func newBashTool(permissions permission.Service, workingDir string) fantasy.AgentTool {
+func newBashTool(permissions permission.Service, workingDir, spillDir string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
 		bashDescription(false),
@@ -283,7 +291,7 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 				}
 			}
 
-			launch := newBashLaunch(params)
+			launch := newBashLaunch(params, spillDir)
 			startTime := time.Now()
 
 			// Start with detached context so it can survive if moved to background
@@ -316,7 +324,7 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 					return fantasy.ToolResponse{}, fmt.Errorf("error executing command: %w", execErr)
 				}
 
-				stdout = formatOutput(stdout, stderr, execErr)
+				stdout = formatOutput(stdout, stderr, execErr, spillDir)
 
 				metadata := BashResponseMetadata{
 					StartTime:        startTime.UnixMilli(),
@@ -325,6 +333,8 @@ func newBashTool(permissions permission.Service, workingDir string) fantasy.Agen
 					Description:      params.Description,
 					Background:       params.RunInBackground,
 					WorkingDirectory: bgShell.WorkingDir,
+					ExitCode:         exitCode,
+					Interrupted:      interrupted,
 				}
 				if stdout == "" {
 					return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil
@@ -380,7 +390,7 @@ type bashLaunch struct {
 	handover func(jobID string, elapsed time.Duration, stdout, stderr string) string
 }
 
-func newBashLaunch(params BashParams) bashLaunch {
+func newBashLaunch(params BashParams, spillDir string) bashLaunch {
 	if params.RunInBackground {
 		return bashLaunch{
 			origin:   shell.OriginExplicit,
@@ -419,18 +429,18 @@ func newBashLaunch(params BashParams) bashLaunch {
 			}
 		},
 		handover: func(jobID string, elapsed time.Duration, stdout, stderr string) string {
-			return formatAutoBackgroundResponse(jobID, elapsed, joinOutput(stdout, stderr))
+			return formatAutoBackgroundResponse(jobID, elapsed, joinOutput(stdout, stderr), spillDir)
 		},
 	}
 }
 
 // formatAutoBackgroundResponse renders the response for a command moved
 // to the background after the auto-background threshold.
-func formatAutoBackgroundResponse(jobID string, elapsed time.Duration, output string) string {
+func formatAutoBackgroundResponse(jobID string, elapsed time.Duration, output, spillDir string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Command is still running after %s and has been moved to the background as job %s.", shell.FormatRuntime(elapsed), jobID)
 	if tail := shell.LastLines(output, 20); tail != "" {
-		fmt.Fprintf(&b, "\n\nOutput so far (last 20 lines):\n%s", TruncateOutput(tail))
+		fmt.Fprintf(&b, "\n\nOutput so far (last 20 lines):\n%s", TruncateOutput(tail, spillDir))
 	}
 	b.WriteString("\n\nThe first job_output call returns all output from the start. Use job_output with wait=true (and pattern for readiness lines) to wait, or job_kill to stop it.")
 	return b.String()
@@ -453,12 +463,12 @@ func otherRunningJobsNote(bgManager *shell.BackgroundShellManager, sessionID, jo
 }
 
 // formatOutput formats the output of a completed command with error handling
-func formatOutput(stdout, stderr string, execErr error) string {
+func formatOutput(stdout, stderr string, execErr error, spillDir string) string {
 	interrupted := shell.IsInterrupt(execErr)
 	exitCode := shell.ExitCode(execErr)
 
-	stdout = truncateOutput(stdout)
-	stderr = truncateOutput(stderr)
+	stdout = TruncateOutput(stdout, spillDir)
+	stderr = TruncateOutput(stderr, spillDir)
 
 	errorMessage := stderr
 	if errorMessage == "" && execErr != nil {
@@ -490,7 +500,11 @@ func formatOutput(stdout, stderr string, execErr error) string {
 	return stdout
 }
 
-func TruncateOutput(content string) string {
+// TruncateOutput keeps the head and tail of oversized tool output. The
+// complete output is written to a file under spillDir (see
+// [shell.SpillOutput]) and the truncation marker names it, so the agent can
+// read back the omitted middle rather than losing it for good.
+func TruncateOutput(content, spillDir string) string {
 	if ansi.StringWidth(content) <= MaxOutputLength {
 		return content
 	}
@@ -500,11 +514,13 @@ func TruncateOutput(content string) string {
 	end := ansi.TruncateLeft(content, ansi.StringWidth(content)-halfLength, "")
 
 	truncatedLinesCount := max(strings.Count(content, "\n")-strings.Count(start, "\n")-strings.Count(end, "\n"), 0)
-	return fmt.Sprintf("%s\n\n... [%d lines truncated] ...\n\n%s", start, truncatedLinesCount, end)
-}
-
-func truncateOutput(content string) string {
-	return TruncateOutput(content)
+	marker := fmt.Sprintf("... [%d lines truncated] ...", truncatedLinesCount)
+	if path, err := shell.SpillOutput(ansi.Strip(content), spillDir); err == nil {
+		marker = fmt.Sprintf("... [%d lines truncated, full output: %s] ...", truncatedLinesCount, path)
+	} else {
+		slog.Debug("Could not spill tool output", "dir", spillDir, "error", err)
+	}
+	return fmt.Sprintf("%s\n\n%s\n\n%s", start, marker, end)
 }
 
 func normalizeWorkingDir(path string) string {

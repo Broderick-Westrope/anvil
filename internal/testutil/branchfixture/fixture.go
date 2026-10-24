@@ -6,17 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
@@ -138,6 +141,7 @@ type Fixture struct {
 	Workspace   *workspace.AppWorkspace
 	Config      *config.ConfigStore
 	Provider    *Provider
+	Permissions permission.Service
 	Context     context.Context
 }
 
@@ -150,6 +154,16 @@ type Option func(*options)
 
 type options struct {
 	agents []string
+	mcps   config.MCPs
+}
+
+// WithMCP configures MCP servers before the coordinator is built, as if
+// they were in anvil.json at startup: enabled non-lazy servers are
+// connected, lazy ones are left deferred. MCP state is global, so tests
+// using it must not run in parallel and should give each server its own
+// name.
+func WithMCP(mcps config.MCPs) Option {
+	return func(o *options) { o.mcps = mcps }
 }
 
 // WithAgents adds specialist agents, defined in a plugin, that can use
@@ -213,6 +227,7 @@ func New(t *testing.T, opts ...Option) *Fixture {
 	cfg.Config().LSP = nil
 	cfg.Config().MCP = nil
 	cfg.Config().Plugins = nil
+	connectMCPs(t, ctx, cfg, o.mcps)
 	if len(o.agents) > 0 {
 		pluginDir := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, "agents"), 0o755))
@@ -241,5 +256,27 @@ func New(t *testing.T, opts ...Option) *Fixture {
 		coord.(interface{ WaitBackgroundJobs() }).WaitBackgroundJobs()
 		require.NoError(t, messages.FlushAll(context.Background()))
 	})
-	return &Fixture{Conn: conn, Queries: queries, Messages: messages, Sessions: sessions, Coordinator: coord, Workspace: w, Config: cfg, Provider: provider, Context: ctx}
+	return &Fixture{Conn: conn, Queries: queries, Messages: messages, Sessions: sessions, Coordinator: coord, Workspace: w, Config: cfg, Provider: provider, Permissions: permissions, Context: ctx}
+}
+
+func connectMCPs(t *testing.T, ctx context.Context, cfg *config.ConfigStore, mcps config.MCPs) {
+	t.Helper()
+	cfg.Config().MCP = mcps
+	for _, name := range slices.Sorted(maps.Keys(mcps)) {
+		t.Cleanup(func() {
+			_ = toolsmcp.DisableSingle(cfg, name)
+			toolsmcp.DeleteStateForTest(name)
+			toolsmcp.DeleteToolsForTest(name)
+		})
+		switch m := mcps[name]; {
+		case m.Disabled:
+			toolsmcp.SetStateForTest(name, toolsmcp.StateDisabled)
+		case m.IsLazy():
+			toolsmcp.SetStateForTest(name, toolsmcp.StateDeferred)
+		default:
+			// A server that fails to connect is left in error, as at
+			// startup; tests can assert on that.
+			_ = toolsmcp.InitializeSingle(ctx, name, cfg, nil)
+		}
+	}
 }

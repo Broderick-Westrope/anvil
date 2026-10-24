@@ -222,7 +222,7 @@ func (f *subagentSteer) HandleAction(dialog.Action) (tea.Cmd, bool) { return nil
 
 func bindingHelp(k key.Binding) string { return k.Help().Key + " " + k.Help().Desc }
 
-// DrillInFooter implements drillInFeature. It only reads: until the next
+// DrillInFooter implements drillInFooterFeature. It only reads: until the next
 // input or message syncs the feature to a newly viewed subagent, the
 // footer shows that subagent's saved draft, unfocused.
 func (f *subagentSteer) DrillInFooter() panelView {

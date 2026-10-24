@@ -29,3 +29,5 @@ func (w *workflowTestWorkspace) AgentTakeReturnedSteers(string) []agent.Subagent
 }
 
 func (w *jobsWorkspace) AgentTakeReturnedSteers(string) []agent.SubagentSteersReturned { return nil }
+
+func (w *animWorkspace) AgentSubagentRunning(string) bool { return false }

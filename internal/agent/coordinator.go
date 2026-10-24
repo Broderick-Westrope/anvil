@@ -37,6 +37,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
 	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
 	"golang.org/x/sync/errgroup"
 
@@ -84,9 +85,24 @@ type Coordinator interface {
 	// work such as summarizing is refused. Holds nest. The idempotent
 	// release lifts the hold and starts work queued behind it.
 	Hold(ctx context.Context, sessionIDs []string) (release func(), err error)
+	// ReserveSession stops new runs from starting in sessionID at once,
+	// without waiting for runs in flight, until release. Messages sent
+	// meanwhile queue.
+	ReserveSession(sessionID string) (release func())
 	// RunWake starts a turn for an idle session to deliver its pending
 	// job events. See SessionAgent.RunWake.
 	RunWake(ctx context.Context, sessionID string, eligible func() bool) (*fantasy.AgentResult, error)
+	// SummarizeBranch summarizes the branch a user rewound from and stores
+	// the summary under the rewind target. See BranchSummaryRequest.
+	SummarizeBranch(ctx context.Context, req BranchSummaryRequest) (message.Message, error)
+	// DiscardBranchSummary deletes an unused branch summary and moves the
+	// leaf back to its parent.
+	DiscardBranchSummary(ctx context.Context, sessionID, summaryID string) error
+	// BranchSummarizers lists the agents that can summarize branches.
+	BranchSummarizers() []string
+	// BranchWorthSummarizing reports whether rewinding from fromLeaf to
+	// target leaves anything a summary could say.
+	BranchWorthSummarizing(ctx context.Context, fromLeaf, target string) (bool, error)
 	IsSummarizing(sessionID string) bool
 	Cancel(sessionID string)
 	CancelAll()
@@ -123,6 +139,9 @@ type Coordinator interface {
 	// PrepareStep would still use a stale snapshot that omits the
 	// server's tools.
 	RefreshMCPTools(ctx context.Context, name string) error
+	// MCPRoutes returns how each MCP server's tools reach the model, in
+	// name order, and false until MCP initialisation has finished.
+	MCPRoutes() ([]tools.MCPRouteInfo, bool)
 
 	// SteerSubagent sends a human message to the subagent running in
 	// childSessionID, delivered at its next step boundary. With interrupt,
@@ -186,6 +205,11 @@ type coordinator struct {
 	// builds when two goroutines race on the same agent name. Lock order:
 	// agentBuildMu, then orchestratorMu.
 	agentBuildMu sync.Mutex
+
+	// routesMu guards routes, the MCP route map. It stays nil until the
+	// startup snapshot exists and is never written after.
+	routesMu sync.Mutex
+	routes   mcpRoutes
 
 	// Admission gate for top-level runs (Run, RunWake, Summarize). While
 	// pauses > 0 new runs wait on resumed; active counts admitted calls
@@ -667,7 +691,7 @@ func (c *coordinator) runOwned(ctx context.Context, sessionID, prompt string, st
 			ProviderOptions:  mergedOptions,
 			Temperature:      temp,
 			TopP:             topP,
-			TopK:             topK,
+			TopK:             callTopK(providerCfg, topK),
 			FrequencyPenalty: freqPenalty,
 			PresencePenalty:  presPenalty,
 			state:            state,
@@ -736,7 +760,7 @@ func (c *coordinator) RunWake(ctx context.Context, sessionID string, eligible fu
 		ProviderOptions:  mergedOptions,
 		Temperature:      temp,
 		TopP:             topP,
-		TopK:             topK,
+		TopK:             callTopK(providerCfg, topK),
 		FrequencyPenalty: freqPenalty,
 		PresencePenalty:  presPenalty,
 		OnAuthRefresh:    c.makeAuthRefreshCallback(providerCfg),
@@ -840,12 +864,12 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 				return err
 			}
 		}
-		agentTools, lazyMap, buildErr := c.buildTools(ctx, agentCfg, depth)
+		agentTools, listing, buildErr := c.buildTools(ctx, agentCfg, depth)
 		if buildErr != nil {
 			return buildErr
 		}
 		result.SetTools(agentTools)
-		result.SetLazyMCPToolMap(lazyMap)
+		result.SetMCPListing(listing)
 		return nil
 	})
 
@@ -923,8 +947,9 @@ func buildOrchestratorBlocksFromState(
 ) (agentsBlock, delegationWorkflow string) {
 	activeAgents := make([]prompt.AgentMD, 0, len(agentMDs))
 	for name, md := range agentMDs {
-		// Only include agents that are configured and not the orchestrator itself.
-		if _, ok := agentConfigs[name]; ok && name != config.AgentOrchestrator {
+		// Only include agents that are configured, not the orchestrator
+		// itself, and not branch summarizers, which the user runs.
+		if _, ok := agentConfigs[name]; ok && name != config.AgentOrchestrator && !md.BranchSummarizer {
 			activeAgents = append(activeAgents, md)
 		}
 	}
@@ -949,7 +974,22 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 	if modelOverride != "" {
 		cacheKey = fmt.Sprintf("%s|%d|%s", agentName, depth, modelOverride)
 	}
+	return c.getOrBuild(cacheKey, agentName, func(agentCfg config.Agent) (SessionAgent, error) {
+		// Apply model override to a copy of the agent config when requested.
+		if modelOverride != "" {
+			agentCfg.Model = modelOverride
+		}
+		// Lazily-built specialist agents pass waitForMCP=true: by the time a
+		// specialist is requested (via the task tool during a Run), MCP init has
+		// already completed, so the wait is instant in practice, but keeping it
+		// explicit makes correctness independent of that call-order assumption.
+		return c.buildAgent(ctx, agentName, agentCfg, depth, true)
+	})
+}
 
+// getOrBuild returns the agent cached under cacheKey, or builds it from
+// agentName's config and caches it. Only one goroutine builds at a time.
+func (c *coordinator) getOrBuild(cacheKey, agentName string, build func(config.Agent) (SessionAgent, error)) (SessionAgent, error) {
 	if existing, ok := c.agents.Get(cacheKey); ok {
 		return existing, nil
 	}
@@ -970,16 +1010,7 @@ func (c *coordinator) getOrBuildAgent(ctx context.Context, agentName string, dep
 		return nil, fmt.Errorf("agent %q not configured", agentName)
 	}
 
-	// Apply model override to a copy of the agent config when requested.
-	if modelOverride != "" {
-		agentCfg.Model = modelOverride
-	}
-
-	// Lazily-built specialist agents pass waitForMCP=true: by the time a
-	// specialist is requested (via the task tool during a Run), MCP init has
-	// already completed, so the wait is instant in practice, but keeping it
-	// explicit makes correctness independent of that call-order assumption.
-	built, err := c.buildAgent(ctx, agentName, agentCfg, depth, true)
+	built, err := build(agentCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1014,7 +1045,9 @@ func (c *coordinator) orchestratorConfig() (config.Agent, bool) {
 // At depth ≤ 1 the task delegation tool is excluded.
 // AllowedTools is applied via ParseFilterList; AllowedMCP is applied per server.
 // It snapshots coordinator fields under RLock to avoid races with ReloadPlugins.
-func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int) ([]fantasy.AgentTool, map[string]string, error) {
+// named lists tools a workflow agent asked for by name; a named MCP tool
+// is listed even when its server is routed through the catalogue.
+func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth int, named ...string) ([]fantasy.AgentTool, mcpListing, error) {
 	c.orchestratorMu.RLock()
 	allSkills := c.allSkills
 	activeSkills := c.activeSkills
@@ -1022,7 +1055,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, depth 
 	agentMDs := c.agentMDs
 	plugins := c.plugins
 	c.orchestratorMu.RUnlock()
-	return c.buildToolsWithState(ctx, agent, depth, allSkills, activeSkills, skillTracker, agentMDs, plugins)
+	return c.buildToolsWithState(ctx, agent, depth, allSkills, activeSkills, skillTracker, agentMDs, plugins, named)
 }
 
 func (c *coordinator) buildToolsWithState(
@@ -1034,7 +1067,8 @@ func (c *coordinator) buildToolsWithState(
 	skillTracker *skills.Tracker,
 	agentMDs map[string]prompt.AgentMD,
 	plugins []*plugin.Plugin,
-) ([]fantasy.AgentTool, map[string]string, error) {
+	namedTools []string,
+) ([]fantasy.AgentTool, mcpListing, error) {
 	isSubAgent := depth < 3
 
 	logFile := filepath.Join(c.cfg.Config().Options.ProjectDirectory, "logs", "anvil.log")
@@ -1052,7 +1086,7 @@ func (c *coordinator) buildToolsWithState(
 	if depth > 1 && (agent.ID == config.AgentOrchestrator || len(agentMDs[agent.ID].DelegatesTo) > 0) {
 		taskTool, err := c.taskTool(ctx, agent.ID, depth)
 		if err != nil {
-			return nil, nil, err
+			return nil, mcpListing{}, err
 		}
 		candidateTools = append(candidateTools, taskTool)
 	}
@@ -1060,17 +1094,19 @@ func (c *coordinator) buildToolsWithState(
 	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
 	agenticFetch, err := c.agenticFetchTool(ctx, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, mcpListing{}, err
 	}
+	spillDataDir := config.GlobalDataDir()
+	jobOpts := tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive, SpillDir: spillDataDir}
 	candidateTools = append(
 		candidateTools,
 		agenticFetch,
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.jobWakeEnabled),
-		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), spillDataDir, c.jobWakeEnabled),
+		tools.NewAnvilInfoTool(c.cfg, c.lspManager, allSkills, activeSkills, skillTracker, c.MCPRoutes),
 		tools.NewAnvilLogsTool(logFile),
-		tools.NewJobOutputTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
-		tools.NewJobKillTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
-		tools.NewJobListTool(tools.JobToolOptions{Events: c.jobEvents, Archive: c.jobArchive}),
+		tools.NewJobOutputTool(jobOpts),
+		tools.NewJobKillTool(jobOpts),
+		tools.NewJobListTool(jobOpts),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
@@ -1080,7 +1116,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, []string{shell.SpillDir(spillDataDir)}, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 	)
 
@@ -1117,42 +1153,33 @@ func (c *coordinator) buildToolsWithState(
 		}
 	}
 
-	cfg := c.cfg.Config()
-	lazyMCPToolMap := make(map[string]string)
-	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
-		if !access.allowsMCPTool(tool.MCP(), tool.MCPToolName()) {
-			slog.Debug("MCP tool not allowed", "tool", tool.Name(), "agent", agent.Name)
-			continue
-		}
-		filteredTools = append(filteredTools, tool)
-
-		// Record lazy MCP tool mapping for filtering at run time.
-		if mcpCfg, ok := cfg.MCP[tool.MCP()]; ok && mcpCfg.IsLazy() {
-			lazyMCPToolMap[tool.Name()] = tool.MCP()
-		}
+	mcpTools := c.newAgentMCPTools(access, hookRunner, isSubAgent)
+	listed, listing := mcpTools.listed(namedTools)
+	filteredTools = append(filteredTools, listed...)
+	if enableMCP := mcpTools.enableMCPTool(c.connectDeferredMCP); enableMCP != nil {
+		filteredTools = append(filteredTools, enableMCP)
 	}
-
-	// The enable_mcp tool only exposes the lazy MCPs the agent may use.
-	lazyMCPs := make(map[string]string)
-	for name, mcpCfg := range cfg.MCP {
-		if mcpCfg.IsLazy() && access.allowsMCPServer(name) {
-			lazyMCPs[name] = mcpCfg.LazyDescription
-		}
-	}
-	if len(lazyMCPs) > 0 {
-		filteredTools = append(filteredTools, tools.NewEnableMCPTool(lazyMCPs, c.connectDeferredMCP))
-	}
-	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
-		return strings.Compare(a.Info().Name, b.Info().Name)
-	})
 
 	// Wrap tools with hook interception for the top-level agent only.
 	// Sub-agents run without hook interception to avoid firing the user's
 	// hooks N times per delegated turn. The top-level invocation of the
 	// sub-agent tool itself is still wrapped from the orchestrator's side.
-	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
+	filteredTools = mcpTools.wrap(filteredTools)
 
-	return filteredTools, lazyMCPToolMap, nil
+	// call_mcp_tool is not hook-wrapped: the inner tool it runs is, so a
+	// hook fires once per call, under the inner name.
+	for _, tool := range mcpTools.catalogueTools() {
+		if tool.Info().Name == tools.CallMCPToolToolName {
+			filteredTools = append(filteredTools, wrapToolsWithErrorResults([]fantasy.AgentTool{tool})...)
+		} else {
+			filteredTools = append(filteredTools, mcpTools.wrap([]fantasy.AgentTool{tool})...)
+		}
+	}
+	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
+		return strings.Compare(a.Info().Name, b.Info().Name)
+	})
+
+	return filteredTools, listing, nil
 }
 
 // buildAgentModels resolves the large and small models for an agent.
@@ -1231,19 +1258,10 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 		return Model{}, Model{}, err
 	}
 
-	var largeCatwalkModel *catwalk.Model
-	var smallCatwalkModel *catwalk.Model
-
-	for _, m := range largeProviderCfg.Models {
-		if m.ID == largeModelCfg.Model {
-			largeCatwalkModel = &m
-		}
-	}
-	for _, m := range smallProviderCfg.Models {
-		if m.ID == smallModelCfg.Model {
-			smallCatwalkModel = &m
-		}
-	}
+	// A ChatGPT or Grok login serves its own catalog, which lives outside
+	// Models; FindModel looks there first.
+	largeCatwalkModel := largeProviderCfg.FindModel(largeModelCfg.Model)
+	smallCatwalkModel := smallProviderCfg.FindModel(smallModelCfg.Model)
 
 	if largeCatwalkModel == nil {
 		return Model{}, Model{}, errLargeModelNotFound
@@ -1272,6 +1290,12 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 	if err != nil {
 		return Model{}, Model{}, err
 	}
+
+	// Bound every request so a hung provider fails instead of blocking the
+	// session. Applied per request, so each retry gets a fresh budget.
+	requestTimeout := c.cfg.Config().Options.GetRequestTimeout()
+	largeModel = newRequestTimeoutModel(largeModel, requestTimeout)
+	smallModel = newRequestTimeoutModel(smallModel, requestTimeout)
 
 	return Model{
 		Model:      largeModel,
@@ -1326,6 +1350,10 @@ func (c *coordinator) Hold(ctx context.Context, sessionIDs []string) (release fu
 	return c.admission.hold(ctx, sessionIDs)
 }
 
+func (c *coordinator) ReserveSession(sessionID string) (release func()) {
+	return c.admission.reserve([]string{sessionID})
+}
+
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
 	return c.getOrchestrator().IsSessionBusy(sessionID)
 }
@@ -1342,6 +1370,10 @@ func (c *coordinator) Model() Model {
 // UpdateModels rebuilds the orchestrator with the latest model config and
 // clears the lazy agent map so sub-agents are rebuilt on next delegation.
 func (c *coordinator) UpdateModels(ctx context.Context) error {
+	// A ChatGPT or Grok login whose catalog fetch failed at sign-in would
+	// leave its models missing; fill it in. A no-op once it exists.
+	c.cfg.RefetchMissingSubscriptionModels(ctx)
+
 	orchestratorCfg, ok := c.orchestratorConfig()
 	if !ok {
 		return errOrchestratorAgentNotConfigured
@@ -1361,12 +1393,12 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		orch.SetProviderConfig(largeProviderCfg)
 	}
 
-	agentTools, lazyMap, err := c.buildTools(ctx, orchestratorCfg, 3)
+	agentTools, listing, err := c.buildTools(ctx, orchestratorCfg, 3)
 	if err != nil {
 		return err
 	}
 	orch.SetTools(agentTools)
-	orch.SetLazyMCPToolMap(lazyMap)
+	orch.SetMCPListing(listing)
 
 	// Inject the connect callback so the agent can reconnect replayed
 	// deferred servers at Run start.
@@ -1390,7 +1422,7 @@ func (c *coordinator) connectDeferredMCP(ctx context.Context, name string) (int,
 
 // refreshMCPTools rebuilds the orchestrator's tool list and lazy MCP
 // tool map after a deferred MCP server has been connected. It pushes
-// the new tools to live agents via SetTools/SetLazyMCPToolMap so the
+// the new tools to live agents via SetTools/SetMCPListing so the
 // same run's next PrepareStep sees the newly registered tools. Returns
 // the number of tools registered for the named server.
 //
@@ -1404,25 +1436,16 @@ func (c *coordinator) refreshMCPTools(ctx context.Context, name string) (int, er
 		return 0, errOrchestratorAgentNotConfigured
 	}
 
-	agentTools, lazyMap, err := c.buildTools(ctx, orchestratorCfg, 3)
+	agentTools, listing, err := c.buildTools(ctx, orchestratorCfg, 3)
 	if err != nil {
 		return 0, fmt.Errorf("rebuilding tools after MCP connect: %w", err)
 	}
 
 	orch := c.getOrchestrator()
 	orch.SetTools(agentTools)
-	orch.SetLazyMCPToolMap(lazyMap)
+	orch.SetMCPListing(listing)
 
-	// Count tools for the just-connected server.
-	toolCount := 0
-	for mcpName, mcpTools := range toolsmcp.Tools() {
-		if mcpName == name {
-			toolCount = len(mcpTools)
-			break
-		}
-	}
-
-	return toolCount, nil
+	return len(toolsmcp.ServerTools(name)), nil
 }
 
 // RefreshMCPTools rebuilds the orchestrator's tool list after an MCP
@@ -1654,7 +1677,7 @@ func (c *coordinator) subAgentCall(ctx context.Context, agent SessionAgent, sess
 		ProviderOptions:  mergedOptions,
 		Temperature:      temp,
 		TopP:             topP,
-		TopK:             topK,
+		TopK:             callTopK(providerCfg, topK),
 		FrequencyPenalty: freqPenalty,
 		PresencePenalty:  presPenalty,
 		NonInteractive:   true,
@@ -1780,7 +1803,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) ([]PluginWarning, error
 		return pluginWarnings, fmt.Errorf("building orchestrator system prompt: %w", err)
 	}
 
-	agentTools, lazyMap, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins)
+	agentTools, listing, err := c.buildToolsWithState(ctx, orchestratorCfg, 3, newAll, newActive, newSkillTracker, newAgentMDs, plugins, nil)
 	if err != nil {
 		return pluginWarnings, fmt.Errorf("rebuilding orchestrator tools: %w", err)
 	}
@@ -1804,7 +1827,7 @@ func (c *coordinator) ReloadPlugins(ctx context.Context) ([]PluginWarning, error
 	c.agents.Reset(make(map[string]SessionAgent))
 	orch.SetSystemPrompt(systemPrompt)
 	orch.SetTools(agentTools)
-	orch.SetLazyMCPToolMap(lazyMap)
+	orch.SetMCPListing(listing)
 	c.orchestratorMu.Unlock()
 
 	slog.Info("Plugin reload complete",

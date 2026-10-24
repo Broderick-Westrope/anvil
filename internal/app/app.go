@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/notify"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
+	"github.com/Broderick-Westrope/anvil/internal/app/branchsummaries"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/bouncer"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -61,6 +63,8 @@ type App struct {
 	// Workflows runs workflow commands. It is nil until the orchestrator
 	// agent exists.
 	Workflows *workflowhost.Service
+	// BranchSummaries runs the summaries offered when the user rewinds.
+	BranchSummaries *branchsummaries.Service
 
 	LSPManager *lsp.Manager
 
@@ -180,6 +184,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 	app.jobWaker = newJobWaker(app.jobEvents, sessions)
 	go app.jobWaker.run(ctx)
 
+	app.BranchSummaries = branchsummaries.New(ctx, app.branchSummaryCoordinator)
+
 	app.setupEvents()
 
 	// Sample memory and event-broker health in the background so
@@ -188,6 +194,13 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)
+	// ChatGPT and Grok model catalogs are fetched at login; renew them
+	// once per start so they follow plan changes.
+	go func() {
+		refreshCtx, cancel := context.WithTimeout(ctx, subscriptionRefreshTimeout)
+		defer cancel()
+		store.RefreshSubscriptionModels(refreshCtx)
+	}()
 
 	// Arm initialization synchronously before launching it so WaitForInit
 	// blocks for the in-flight init instead of racing the goroutine and
@@ -310,7 +323,7 @@ func (app *App) resolveSession(ctx context.Context, continueSessionID string, us
 // RunNonInteractive runs prompt to completion and streams the reply to
 // output. onResponse is called when the reply starts or the run ends, and
 // may be called more than once.
-func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel string, onResponse func(), continueSessionID string, useLast bool) error {
+func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel, reasoningEffort string, onResponse func(), continueSessionID string, useLast bool) error {
 	slog.Info("Running in non-interactive mode")
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -319,6 +332,11 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	if largeModel != "" || smallModel != "" {
 		if err := app.overrideModelsForNonInteractive(ctx, largeModel, smallModel); err != nil {
 			return fmt.Errorf("failed to override models: %w", err)
+		}
+	}
+	if reasoningEffort != "" {
+		if err := app.overrideReasoningEffort(ctx, reasoningEffort); err != nil {
+			return err
 		}
 	}
 
@@ -407,6 +425,24 @@ func (app *App) UpdateAgentModel(ctx context.Context) error {
 	return app.AgentCoordinator.UpdateModels(ctx)
 }
 
+// overrideReasoningEffort sets the large model's reasoning effort for this
+// run only, after checking the model supports it, then rebuilds the agent.
+func (app *App) overrideReasoningEffort(ctx context.Context, effort string) error {
+	cfg := app.config.Config()
+	selected, ok := cfg.Models[config.SelectedModelTypeLarge]
+	if !ok {
+		return fmt.Errorf("no large model selected; set one with --model")
+	}
+	if err := cfg.ValidateReasoningEffort(selected.Provider, selected.Model, effort); err != nil {
+		return err
+	}
+	selected.ReasoningEffort = effort
+	slog.Info("Overriding reasoning effort for non-interactive run",
+		"provider", selected.Provider, "model", selected.Model, "reasoning_effort", effort)
+	app.config.OverridePreferredModel(config.SelectedModelTypeLarge, selected)
+	return app.AgentCoordinator.UpdateModels(ctx)
+}
+
 // overrideModelsForNonInteractive parses the model strings and temporarily
 // overrides the model configurations, then rebuilds the agent.
 // Format: "model-name" (searches all providers) or "provider/model-name".
@@ -481,6 +517,21 @@ func (app *App) GetDefaultSmallModel(providerID string) config.SelectedModel {
 		return largeModelCfg
 	}
 
+	// A ChatGPT or Grok login serves only the models its plan grants, so
+	// the small model has to come from that catalog too.
+	if pc, ok := cfg.Providers.Get(providerID); ok {
+		if sub := pc.SubscriptionModels(); len(sub) > 0 {
+			small := subscriptionSmallModel(sub)
+			slog.Info("Using subscription small model", "provider", providerID, "model", small.ID)
+			return config.SelectedModel{
+				Provider:        providerID,
+				Model:           small.ID,
+				MaxTokens:       small.DefaultMaxTokens,
+				ReasoningEffort: small.DefaultReasoningEffort,
+			}
+		}
+	}
+
 	defaultSmallModelID := knownProvider.DefaultSmallModelID
 	model := cfg.GetModel(providerID, defaultSmallModelID)
 	if model == nil {
@@ -497,6 +548,20 @@ func (app *App) GetDefaultSmallModel(providerID string) config.SelectedModel {
 	}
 }
 
+// subscriptionSmallModel picks a lightweight model from a subscription
+// catalog: a "mini" or "fast" variant if there is one, else the last entry
+// (catalogs list heavier models first). models must not be empty.
+func subscriptionSmallModel(models []catwalk.Model) catwalk.Model {
+	for _, marker := range []string{"mini", "fast"} {
+		for _, m := range models {
+			if strings.Contains(m.ID, marker) {
+				return m
+			}
+		}
+	}
+	return models[len(models)-1]
+}
+
 func (app *App) setupEvents() {
 	ctx, cancel := context.WithCancel(app.globalCtx)
 	app.eventsCtx = ctx
@@ -508,6 +573,7 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "skills", skills.SubscribeEvents, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "branch-summaries", app.BranchSummaries.Subscribe, app.events)
 	cleanupFunc := func(context.Context) error {
 		cancel()
 		app.serviceEventsWG.Wait()
@@ -602,6 +668,15 @@ func (app *App) startWorkflows() {
 		SkipApproval: app.skipWorkflowApproval,
 	})
 	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "workflows", app.Workflows.Subscribe, app.events)
+}
+
+// branchSummaryCoordinator returns the current coordinator for branch
+// summaries, or nil before it exists.
+func (app *App) branchSummaryCoordinator() branchsummaries.Coordinator {
+	if app.AgentCoordinator == nil {
+		return nil
+	}
+	return app.AgentCoordinator
 }
 
 // skipWorkflowApproval reports whether workflow scripts run without
@@ -760,6 +835,10 @@ func initFailure(ctx context.Context, err error, logs ...namedLog) error {
 	)
 }
 
+// subscriptionRefreshTimeout bounds the startup refresh of the ChatGPT and
+// Grok model catalogs.
+const subscriptionRefreshTimeout = 30 * time.Second
+
 // backgroundJobsShutdownWait bounds how long shutdown waits for agent
 // background jobs such as title generation.
 const backgroundJobsShutdownWait = 2 * time.Second
@@ -822,6 +901,12 @@ func (app *App) Shutdown() {
 		stopWorkflows(app.Workflows, workflowShutdownReason, workflowShutdownWait)
 	}
 	app.retiredWorkflows.Wait()
+
+	// Branch summaries run agents too; end them before the coordinator
+	// cancels everything, so they report and clean up their sessions.
+	if app.BranchSummaries != nil {
+		app.BranchSummaries.Shutdown()
+	}
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.

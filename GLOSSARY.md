@@ -16,6 +16,20 @@ One root-to-leaf path through a session's message tree. Sending from an earlier 
 - **Code:** `message/tree.go`, `session.Session.LeafMessageID` marks the current branch's tip
 - **Not:** fork, separate session. A branch never creates a new session.
 
+## Branch Ledger
+
+The facts a branch summary records from the abandoned branch's tool calls rather than from the model: files modified and read, and each state-changing `git`, `gh` or `wtp` command with how it ended and the SHAs and pull request URLs it printed. Later summaries carry it forward.
+
+- **Code:** `message.BranchLedger`, `message.LedgerEvent`; built by `branchsummary.Ledger`
+- **Not:** a transcript or current state. It records what was attempted and observed.
+
+## Branch Summary
+
+A summary of the branch the user left by rewinding, written by a summarizer agent and stored as a message under the point they rewound to, so the conversation they return to knows what the tangent changed, decided and left open. It carries a ledger built in code from the tangent's tool calls.
+
+- **Code:** `message.BranchSummaryContent` and `message.BranchLedger` (`internal/message`), `coordinator.SummarizeBranch` (`internal/agent/branch_summary.go`), range, ledger and prompt in `internal/agent/branchsummary`, runs owned by `branchsummaries.Service` (`internal/app/branchsummaries`)
+- **Not:** compaction (summary), which replaces history on the current branch to save context; a branch summary describes a different branch.
+
 ## Child Session
 
 A session linked to the session that started it: the session a subagent runs in (a task session), or the one used to generate a title.
@@ -44,18 +58,25 @@ A provider the user defines in `anvil.json` that isn't in the Catwalk catalog, o
 - **Code:** `prepareCustomProvider`, `discoverCustomProviderModels` (`internal/config/load.go`)
 - **Not:** known provider.
 
+## Diagram Node
+
+A chat item showing one top-level Mermaid fence from a finished assistant message, as an image where the terminal can show it and as its code block otherwise. The message stays one `message.Message`; the UI shows it as several nodes in document order. The first node is the head and keeps the message ID; the others are `<id>#<n>`.
+
+- **Code:** `chat.DiagramItem`, `chat.NewAssistantMessageItems` (`internal/ui/chat/diagrams.go`); `graphicsFeature` (`internal/ui/model/graphics.go`)
+- **Not:** a message. Lookups by message ID find the head, and branching from any node branches from the message.
+
 ## Drill-in
 
-A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, or a message's thinking.
+A view that opens on top of the chat to show one item in detail: a subagent's session, a tool call, a message's thinking, or a diagram at full size. Drill-ins stack; the one on top is the only one that may hold a full-size image.
 
-- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`)
+- **Code:** `util.AgentDrillInMsg`, `util.ToolDrillInMsg`, `util.ThinkingDrillInMsg` (`internal/ui/util`), `chat.DiagramOpenMsg`; `drillInFeature`, `UI.topDrillIn` (`internal/ui/model`)
 - **Not:** dialog. Dialogs ask for input; drill-ins show detail.
 
 ## Feature
 
-In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows are the first.
+In the TUI, a fork feature (one upstream Crush doesn't have) built as a type that owns its state and is routed to from `UI`'s dispatchers through one surface, instead of adding fields to `UI` and cases to its switches. Workflows and graphics (Mermaid diagrams and tool images) are features.
 
-- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`)
+- **Code:** `feature`, `featureHost` (`internal/ui/model/features.go`, `feature_host.go`); `workflowFeature` (`internal/ui/model/workflow.go`); `graphicsFeature` (`internal/ui/model/graphics.go`)
 - **Not:** sub-component such as `Chat` or `Attachments`, which `UI` calls directly; feature flag.
 
 ## Hook
@@ -90,10 +111,24 @@ The `disable_default_providers` option and its error message call known provider
 
 ## Lazy MCP
 
-An MCP server with `lazy_description` set. It doesn't connect at startup, and its tools are hidden from the model until the agent calls `enable_mcp` or the user enables it from the MCP palette. Whether it is enabled is derived from the current branch's messages (see `docs/adr/0002`).
+An MCP server with `lazy_description` set. It doesn't connect at startup. Under the default route it goes through the MCP catalogue and connects on its first search. Routed `direct`, its tools are hidden from the model until the agent calls `enable_mcp` or the user enables it from the MCP palette, and whether it is enabled is derived from the current branch's messages (see `docs/adr/0002`).
 
 - **Code:** `agent/lazy_mcp.go`, `agent/tools/enable_mcp.go`, `mcp.StateLazy`
 - **Not:** disabled MCP. A disabled MCP is off for every session.
+
+## MCP Tool Catalogue
+
+The three tools (`search_mcp_tools`, `describe_mcp_tool`, `call_mcp_tool`) through which an agent finds and runs the tools of catalogue-routed MCP servers, whose schemas never enter the tool list. A proxied call runs as the inner tool, under its `mcp_<server>_<tool>` name.
+
+- **Code:** `NewCatalogueTools` (`internal/agent/tools/catalogue.go`), `agentMCPTools` (`internal/agent/mcp_tools.go`)
+- **Not:** lazy loading through `enable_mcp`, which puts a whole server in the tool list.
+
+## MCP Route
+
+How one MCP server's tools reach the model for the life of the process: `direct` (in the tool list) or `catalogue`. Set by the server's `route`, or under `auto` by the size of its tools in the startup snapshot.
+
+- **Code:** `mcpRoutes`, `deriveMCPRoutes` (`internal/agent/mcp_routes.go`), `mcp.StartupSnapshot`
+- **Not:** connection state. A catalogue server can be connected, deferred or in error.
 
 ## Memory Monitor
 
@@ -146,10 +181,10 @@ Knowledge or a procedure in a `SKILL.md` file that an agent loads into its conve
 
 ## Specialist Agent
 
-An agent defined in a plugin's agent `.md` file, with its own model, tools and prompt. The orchestrator delegates to it, and it runs in a child session.
+An agent defined in an agent `.md` file, built in or from a plugin, with its own model, tools and prompt. The orchestrator delegates to it, and it runs in a child session.
 
 - **Code:** built by the coordinator, prompt from `templates/specialist.md.tpl`
-- **Not:** subagent. A specialist agent is the definition; a subagent is one instance of it running in a child session.
+- **Not:** subagent. A specialist agent is the definition; a subagent is one instance of it running in a child session. A summarizer agent is defined the same way but is never delegated to.
 
 ## Steer
 
@@ -178,6 +213,13 @@ One instance of a specialist agent running in a child session for task calls. It
 - **Code:** `session.Subagent`, the `subagents` table (`internal/session/subagent.go`)
 - **Not:** specialist agent (the definition), child session (the storage, which title generation and workflows also use).
 
+## Summarizer Agent
+
+An agent marked `branch_summarizer: true` in its frontmatter, which the user can pick to write a branch summary when they rewind. Anvil ships `branch-summarizer`, and plugins can add their own. It runs with at most the read-only tools `view`, `grep`, `glob` and `ls`, and it is never a delegation target.
+
+- **Code:** `prompt.AgentMD.BranchSummarizer`, `coordinator.BranchSummarizers`; built-in prompt in `internal/agent/templates/agents/branch-summarizer.md`
+- **Not:** specialist agent, which the orchestrator delegates to.
+
 ## Task Call
 
 One call of the `task` tool: it either starts a new subagent or resumes one. It holds a lease on the subagent's child session for its whole life, including automatic resumes after transient failures, and its result always ends with the `subagent_id`.
@@ -194,10 +236,17 @@ The exclusive hold a task call has on its subagent's child session. A second tas
 
 ## Tool Access
 
-Which tools an agent may use: built-in tools by its `allowed_tools` filter and the global `disabled_tools` list, MCP tools and lazy MCPs by its `allowed_mcp` map. The job tools come with bash.
+Which tools an agent may use: built-in tools by its `allowed_tools` filter and the global `disabled_tools` list, MCP tools, lazy MCPs and the MCP catalogue by its `allowed_mcp` map. The job tools come with bash. A positive `allowed_tools` list naming only built-ins keeps the catalogue; `disabled_tools` or a `!name` entry in a negative list removes it.
 
 - **Code:** `toolAccess` (`internal/agent/tool_access.go`)
 - **Not:** permissions. Tool access decides which tools the model sees; the permission service decides whether one call may run.
+
+## Tool Image
+
+An image a tool result carries as base64 data with an `image/*` type, from `view` or an MCP tool. It is drawn full size as the Output of the tool's drill-in, by the bitmap producer of the graphics cache; the chat shows only its "Loaded Image" line.
+
+- **Code:** `toolDetailOutputItem`, `chat.ImageRenderer`, `chat.ImageOpenMsg`, `chat.ImageCopyMsg` (`internal/ui/chat/tool_image.go`); `producerBitmap`, `renderBitmap`, `copyBitmap` (`internal/ui/model/tool_image.go`)
+- **Not:** an attachment, which the user adds to a prompt; a diagram node.
 
 ## Turn
 
