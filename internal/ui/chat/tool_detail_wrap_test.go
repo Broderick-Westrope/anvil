@@ -23,7 +23,7 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	long := strings.Repeat("lorem ipsum dolor sit amet ", 12)
 	word := strings.Repeat("abcdefghij", 15)
 	multi := long + "\n" + word + "\n" + long
-	output := multi + "\n" + strings.Repeat("x", 300)
+	output := multi + "\n" + strings.Repeat("x", 300) + "\n10%\r50%\r100%\tdone"
 	// Edits read the old and new content, writes a unified diff. Tools
 	// that don't read metadata ignore it.
 	metadata := map[string]string{

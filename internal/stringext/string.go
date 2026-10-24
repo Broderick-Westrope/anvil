@@ -13,12 +13,14 @@ func Capitalize(text string) string {
 }
 
 // NormalizeSpace normalizes whitespace in the given content string.
-// It replaces Windows-style line endings with Unix-style line endings,
-// converts tabs to four spaces, and trims leading and trailing newlines.
+// It replaces Windows-style line endings and lone carriage returns with
+// Unix-style line endings, converts tabs to four spaces, and trims leading
+// and trailing newlines.
 // Per-line indentation is preserved: trimming spaces would eat the first
 // line's leading whitespace and corrupt indentation in code previews.
 func NormalizeSpace(content string) string {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
 	content = strings.ReplaceAll(content, "\t", "    ")
 	content = strings.Trim(content, "\n")
 	return content
