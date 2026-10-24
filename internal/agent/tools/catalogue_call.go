@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"charm.land/fantasy"
@@ -94,9 +95,20 @@ func unknownToolMessage(server, name string, tools []CatalogueTool) string {
 	return fmt.Sprintf("no tool %q on %s. Closest matches: %s", name, server, strings.Join(names, ", "))
 }
 
+// checkableDrafts are the $schema values jsonschema-go validates against.
+// It resolves other drafts (draft-04, 2019-09) but refuses to validate
+// them, which would reject every call. Empty means 2020-12.
+var checkableDrafts = []string{
+	"",
+	"http://json-schema.org/draft-07/schema#",
+	"https://json-schema.org/draft-07/schema#",
+	"https://json-schema.org/draft/2020-12/schema",
+}
+
 // validateArguments checks args against the tool's input schema and
-// describes any violations. A schema jsonschema-go can't load (it won't
-// unmarshal, or has a remote $ref) passes every call through.
+// describes any violations. A schema jsonschema-go can't check (it won't
+// unmarshal, declares another draft, or has a remote $ref) passes every
+// call through; the server still checks.
 func validateArguments(tool *Tool, args []byte) string {
 	raw, err := json.Marshal(tool.InputSchema())
 	if err != nil {
@@ -105,6 +117,10 @@ func validateArguments(tool *Tool, args []byte) string {
 	var schema jsonschema.Schema
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		slog.Debug("MCP tool schema won't load; passing call through unvalidated", "tool", tool.Name(), "error", err)
+		return ""
+	}
+	if !slices.Contains(checkableDrafts, schema.Schema) {
+		slog.Debug("MCP tool schema draft can't be checked; passing call through unvalidated", "tool", tool.Name(), "schema", schema.Schema)
 		return ""
 	}
 	resolved, err := schema.Resolve(nil)

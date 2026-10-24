@@ -239,7 +239,7 @@ Declined:
 
 ### Why validate arguments in Anvil?
 **The model now writes arguments from a schema it read in a tool result, and a precise error before the call costs one step.** Providers never enforced MCP schemas (fantasy sends tools with `Strict: false`, and `Info()` strips `$defs` and `oneOf`), so this check is new. In the spike, genuine schema mistakes were 2 in 269 calls (0.7%), and every run still finished correctly. Two cases soften the strictness:
-- An unresolvable schema passes calls through.
+- A schema the validator can't check (unresolvable, or a draft other than 07 or 2020-12) passes calls through.
 - A server whose schema rejects calls it would accept can be routed `direct`.
 
 ### Why server instructions in search results, not the system prompt?

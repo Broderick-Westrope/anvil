@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -49,4 +50,33 @@ func TestValidateArgumentsReportsInvalidJSON(t *testing.T) {
 	tool := bareTool("s", "t", "")
 
 	require.Equal(t, "arguments are not valid JSON: unexpected end of JSON input", validateArguments(tool.MCP, []byte("{")))
+}
+
+func TestCallPassesThroughSchemasOfDraftsItCantCheck(t *testing.T) {
+	drafts := map[string]string{
+		"draft-04": "http://json-schema.org/draft-04/schema#",
+		"2019-09":  "https://json-schema.org/draft/2019-09/schema",
+	}
+	for name, draft := range drafts {
+		t.Run(name, func(t *testing.T) {
+			server := "cat-draft-" + name
+			schema := map[string]any{"$schema": draft, "type": "object", "required": []any{"query"}}
+			f := newCatalogueFixture(t, server, "", false, catalogueServerTool{name: "q", description: "Q.", schema: schema})
+
+			resp := f.run(t, CallMCPToolToolName, map[string]any{"server": server, "tool": "q", "arguments": map[string]any{}})
+
+			require.False(t, resp.IsError, resp.Content)
+			require.Equal(t, int32(1), f.calls.Load(), "the server checks what Anvil can't")
+		})
+	}
+}
+
+func TestCallStillValidatesDraft07Schemas(t *testing.T) {
+	schema := map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "required": []any{"query"}}
+	f := newCatalogueFixture(t, "cat-draft-07", "", false, catalogueServerTool{name: "q", description: "Q.", schema: schema})
+
+	resp := f.run(t, CallMCPToolToolName, map[string]any{"server": "cat-draft-07", "tool": "q", "arguments": map[string]any{}})
+
+	require.True(t, strings.HasPrefix(resp.Content, InvalidArgumentsPrefix), resp.Content)
+	require.Zero(t, f.calls.Load())
 }
