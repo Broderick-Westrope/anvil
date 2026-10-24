@@ -215,3 +215,24 @@ func TestToolOutputPlainContentTruncatesLongLines(t *testing.T) {
 		require.Equal(t, 30, lipgloss.Width(line))
 	}
 }
+
+// A key that wraps keeps its colour on every line.
+func TestToolDetailParamItemWrappedKeyKeepsColour(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	key := "some very long key with spaces in it that wraps"
+	item := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: key, value: "v"}
+
+	colour := sgrPrefix(t, sty.Tool.NameNested.Render("x"))
+	require.NotEmpty(t, colour)
+	lines := strings.Split(item.Render(30), "\n")
+	var keyLines int
+	for _, line := range lines {
+		if text := strings.TrimSpace(ansi.Strip(line)); text != "" && text != "v" {
+			keyLines++
+			require.Contains(t, line, colour+strings.Fields(text)[0], "a key line lost its colour: %q", line)
+		}
+	}
+	require.Greater(t, keyLines, 1, "the key must wrap for this to test anything")
+}

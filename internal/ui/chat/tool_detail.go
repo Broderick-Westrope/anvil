@@ -461,7 +461,7 @@ const minParamValueWidth = 20
 // renderBody renders the parameter at width, without the focus bar.
 func (p *toolDetailParamItem) renderBody(width int) string {
 	key := p.sty.Tool.NameNested.Render(p.key + ":")
-	keyLine := indentLines(ansi.Wrap(key, max(1, width-2), ""), 2, 2)
+	keyLine := indentLines(lipgloss.Wrap(key, max(1, width-2), ""), 2, 2)
 
 	if val, multi := p.isMultiLine(); multi {
 		if p.expanded {
