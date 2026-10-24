@@ -94,6 +94,8 @@ type WorkflowRunMessageItem struct {
 	marker  message.WorkflowRunContent
 	// view is nil until the run's view has loaded.
 	view *workflowhost.RunView
+	// now is the clock a running run's elapsed time is measured by.
+	now func() time.Time
 }
 
 // NewWorkflowRunMessageItem creates the node for a workflow_run marker,
@@ -108,6 +110,7 @@ func NewWorkflowRunMessageItem(sty *styles.Styles, msg *message.Message) (*Workf
 				workflowRunItem: newWorkflowRunItem(sty, msg.ID),
 				message:         msg,
 				marker:          marker,
+				now:             time.Now,
 			}, true
 		}
 	}
@@ -204,7 +207,7 @@ func (w *WorkflowRunMessageItem) summary() string {
 			parts = append(parts, detail)
 		}
 	}
-	parts = append(parts, runningState(*v), formatRunDuration(time.Since(v.StartedAt)))
+	parts = append(parts, runningState(*v), formatRunDuration(w.now().Sub(v.StartedAt)))
 	return strings.Join(parts, " · ") + formatRunCost(v.Cost)
 }
 

@@ -78,8 +78,14 @@ func newTestWorkflowRunNode(t *testing.T, input string) *WorkflowRunMessageItem 
 	}}
 	node, ok := NewWorkflowRunMessageItem(&sty, msg)
 	require.True(t, ok)
+	// A fixed clock, so a running run's elapsed time doesn't depend on how
+	// long the test takes to render it.
+	node.now = func() time.Time { return testNow }
 	return node
 }
+
+// testNow is the time a test node's clock reads.
+var testNow = time.Unix(100_000, 0)
 
 func TestNewWorkflowRunMessageItemNeedsAWorkflowRunMarker(t *testing.T) {
 	t.Parallel()
@@ -160,7 +166,7 @@ func TestWorkflowRunNodeSummarisesTheRun(t *testing.T) {
 	}
 	running := func(view workflowhost.RunView) *workflowhost.RunView {
 		view.Status = workflowhost.StatusRunning
-		view.StartedAt = time.Now().Add(-90 * time.Second)
+		view.StartedAt = testNow.Add(-90 * time.Second)
 		return &view
 	}
 	tests := map[string]struct {
@@ -189,7 +195,7 @@ func TestWorkflowRunNodeSummarisesTheRun(t *testing.T) {
 			want: "waiting for you · 1m30s",
 		},
 		"started in the future": {
-			view: &workflowhost.RunView{Status: workflowhost.StatusRunning, StartedAt: time.Now().Add(time.Hour)},
+			view: &workflowhost.RunView{Status: workflowhost.StatusRunning, StartedAt: testNow.Add(time.Hour)},
 			want: "running · 0s",
 		},
 		"completed with no result": {
@@ -274,7 +280,7 @@ func TestWorkflowRunNodeTickRedrawsElapsedTime(t *testing.T) {
 	t.Parallel()
 
 	node := newTestWorkflowRunNode(t, "")
-	view := workflowhost.RunView{Status: workflowhost.StatusRunning, StartedAt: time.Now().Add(-90 * time.Second)}
+	view := workflowhost.RunView{Status: workflowhost.StatusRunning, StartedAt: testNow.Add(-90 * time.Second)}
 	node.SetView(view)
 	require.Equal(t, "  running · 1m30s", plainLines(node.RawRender(200))[1])
 
