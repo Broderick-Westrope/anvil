@@ -1,0 +1,190 @@
+package chat
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/ui/list"
+	"github.com/Broderick-Westrope/anvil/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/stretchr/testify/require"
+)
+
+// Every line of every drill-in item fits the width it was rendered at, and
+// none of the text is lost, whatever the tool, so nothing is clipped at the
+// screen's edge.
+func TestToolDetailItemsFitWidth(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("lorem ipsum dolor sit amet ", 12)
+	word := strings.Repeat("abcdefghij", 15)
+	multi := long + "\n" + word + "\n" + long
+	output := multi + "\n" + strings.Repeat("x", 300)
+
+	tools := []string{
+		"bash", "view", "edit", "multiedit", "write", "grep", "glob", "ls",
+		"fetch", "agentic_fetch", "download", "sourcegraph", "todos",
+		"lsp_diagnostics", "lsp_references", "job_output", "job_list",
+		"mcp_server_tool", "task", "unknown_tool",
+	}
+	inputs := map[string]string{
+		"raw":    long + word,
+		"params": mustJSON(t, map[string]any{"command": long + word, "file_path": "/tmp/" + word, "content": multi, "count": 3, "nested": map[string]any{"key": long}}),
+	}
+
+	for _, name := range tools {
+		for inputName, input := range inputs {
+			for _, width := range []int{40, 80, 121} {
+				for _, expanded := range []bool{false, true} {
+					result := &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output}
+					source := helperToolItem(t, name, input, result, ToolStatusSuccess)
+					sty := styles.TokyoNight()
+					for _, item := range BuildToolDetailItems(&sty, source, nil) {
+						if expanded {
+							if e, ok := item.(Expandable); ok {
+								e.ToggleExpanded()
+							}
+						}
+						for _, focused := range []bool{false, true} {
+							if f, ok := item.(interface{ SetFocused(bool) }); ok {
+								f.SetFocused(focused)
+							}
+							for i, line := range strings.Split(item.Render(width), "\n") {
+								require.LessOrEqual(t, lipgloss.Width(line), width,
+									"tool %s, input %s, width %d, expanded %v: line %d of %s overflows: %q",
+									name, inputName, width, expanded, i, item.ID(), line)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(b)
+}
+
+// squash strips styling and all whitespace, so wrapped text compares equal
+// to the text it came from.
+func squash(s string) string {
+	return strings.Join(strings.Fields(ansi.Strip(s)), "")
+}
+
+// A long value wraps beside its key, its continuation lines aligned under
+// its first, with none of it dropped.
+func TestToolDetailParamItemWrapsBesideKey(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	value := strings.Repeat("lorem ipsum dolor ", 10) + strings.Repeat("z", 90)
+	item := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: "command", value: value}
+
+	const width = 60
+	lines := strings.Split(ansi.Strip(item.Render(width)), "\n")
+	require.Greater(t, len(lines), 2, "the value must wrap for this to test anything")
+	col := strings.Index(lines[0], "lorem")
+	require.Equal(t, len("    command: "), col, "the value starts beside its key")
+	for i, line := range lines[1:] {
+		require.Equal(t, strings.Repeat(" ", col), line[:col], "line %d isn't aligned under the value", i+1)
+		require.NotEqual(t, ' ', line[col], "line %d is indented past the value", i+1)
+	}
+	require.Equal(t, squash("command:"+value), squash(strings.Join(lines, "\n")))
+}
+
+// When the room beside the key is too narrow to read, the value goes on
+// the lines below it.
+func TestToolDetailParamItemStacksWhenNarrow(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	value := strings.Repeat("abc ", 20)
+	item := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: strings.Repeat("k", 20), value: value}
+
+	// The key line is 2+21 columns behind a 2-column bar; 2+21+1+20 is the
+	// narrowest width that keeps the value beside it.
+	beside := strings.Split(ansi.Strip(item.Render(2+2+21+1+minParamValueWidth)), "\n")
+	require.Contains(t, beside[0], "abc")
+
+	item.cachedRender = ""
+	stacked := strings.Split(ansi.Strip(item.Render(2+2+21+minParamValueWidth)), "\n")
+	require.NotContains(t, stacked[0], "abc")
+	require.True(t, strings.HasPrefix(stacked[1], "      abc"), "the value is indented under the key: %q", stacked[1])
+	require.Equal(t, squash(item.key+":"+value), squash(strings.Join(stacked, "\n")))
+}
+
+// A key too long for the width wraps instead of running off the edge.
+func TestToolDetailParamItemWrapsLongKey(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	key := strings.Repeat("k", 50)
+	item := &toolDetailParamItem{Versioned: list.NewVersioned(), sty: &sty, key: key, value: "v"}
+
+	out := item.Render(30)
+	for _, line := range strings.Split(out, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), 30)
+	}
+	require.Equal(t, squash(key+":v"), squash(out))
+}
+
+// Raw input that isn't JSON wraps, indented, with none of it dropped.
+func TestToolDetailStaticItemWraps(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Repeat("not json ", 30)
+	source := helperToolItem(t, "bash", input, nil, ToolStatusSuccess)
+	sty := styles.TokyoNight()
+	var raw MessageItem
+	for _, item := range BuildToolDetailItems(&sty, source, nil) {
+		if strings.HasPrefix(item.ID(), "tool-detail-param:raw:") {
+			raw = item
+		}
+	}
+	require.NotNil(t, raw)
+
+	lines := strings.Split(ansi.Strip(raw.Render(50)), "\n")
+	require.Greater(t, len(lines), 1)
+	for _, line := range lines {
+		require.True(t, strings.HasPrefix(line, "    not"), "every line is indented: %q", line)
+	}
+	require.Equal(t, squash(input), squash(strings.Join(lines, "\n")))
+}
+
+// Untruncated plain output wraps at the width, keeping its indent and all
+// of its text.
+func TestToolOutputPlainContentWrapsWhenNotTruncated(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	content := strings.Repeat("word ", 30) + strings.Repeat("y", 70)
+	lines := strings.Split(toolOutputPlainContent(&sty, content, 30, true, true), "\n")
+	require.Greater(t, len(lines), 2)
+	for _, line := range lines {
+		require.Equal(t, 30, lipgloss.Width(line))
+		require.True(t, strings.HasPrefix(ansi.Strip(line), " "), "every line keeps the indent: %q", line)
+		require.NotEqual(t, "  ", ansi.Strip(line)[:2], "no line is indented twice: %q", line)
+	}
+	require.Equal(t, squash(content), squash(strings.Join(lines, "\n")))
+}
+
+// Code lines fill the width exactly, line numbers included.
+func TestToolOutputCodeContentFitsWidth(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	content := strings.Repeat("abcdefghij", 10) + "\nshort"
+	for _, noTruncate := range []bool{false, true} {
+		out := toolOutputCodeContent(&sty, "", content, 0, 40, true, noTruncate)
+		for _, line := range strings.Split(out, "\n") {
+			require.Equal(t, 40, lipgloss.Width(line), "noTruncate %v: %q", noTruncate, ansi.Strip(line))
+		}
+	}
+}

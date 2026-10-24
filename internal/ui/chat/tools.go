@@ -908,15 +908,18 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		if i >= maxLines {
 			break
 		}
+		if noTruncate {
+			// Wrapped lines keep the one-column indent of the first.
+			for _, part := range strings.Split(ansi.Wrap(ln, max(1, width-1), ""), "\n") {
+				out = append(out, sty.Tool.ContentLine.Width(width).Render(" "+part))
+			}
+			continue
+		}
 		ln = " " + ln
-		if !noTruncate && lipgloss.Width(ln) > width {
+		if lipgloss.Width(ln) > width {
 			ln = ansi.Truncate(ln, width, "…")
 		}
-		if noTruncate {
-			out = append(out, sty.Tool.ContentLine.Render(ln))
-		} else {
-			out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
-		}
+		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
 	}
 
 	wasTruncated := len(lines) > maxLines
@@ -956,7 +959,8 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	numFmt := fmt.Sprintf("%%%dd", maxDigits)
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	codeWidth := bodyWidth - maxDigits
+	numWidth := lipgloss.Width(sty.Tool.ContentLineNumber.Render(fmt.Sprintf(numFmt, maxLineNumber)))
+	codeWidth := max(1, bodyWidth-numWidth)
 
 	var out []string
 	for i, ln := range highlightedLines {

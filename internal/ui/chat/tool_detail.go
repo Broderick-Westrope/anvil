@@ -109,7 +109,8 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall, file *toolFile) []
 			toolFile:   file,
 			sty:        sty,
 			id:         "tool-detail-param:no-input:" + tc.ID,
-			content:    "  (no input)",
+			content:    "(no input)",
+			indent:     2,
 			styleFunc:  func(s *styles.Styles) lipgloss.Style { return s.Tool.NameNested },
 			toolCallID: tc.ID,
 		}}
@@ -122,7 +123,8 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall, file *toolFile) []
 			toolFile:   file,
 			sty:        sty,
 			id:         "tool-detail-param:raw:" + tc.ID,
-			content:    "  " + tc.Input,
+			content:    tc.Input,
+			indent:     2,
 			styleFunc:  func(s *styles.Styles) lipgloss.Style { return s.Tool.NameNested },
 			toolCallID: tc.ID,
 		}}
@@ -165,6 +167,40 @@ func sectionHeader(sty *styles.Styles, label string, width int) string {
 	return sty.Tool.NameNested.Render(prefix + padding)
 }
 
+// detailPrefix is the focus bar a drill-in item draws on each line.
+func detailPrefix(sty *styles.Styles, focused bool) string {
+	if focused {
+		return sty.Messages.ToolCallFocused.Render()
+	}
+	return sty.Messages.ToolCallBlurred.Render()
+}
+
+// renderDetailPrefixed draws render's lines behind the focus bar. render is
+// given the width left beside the bar, so the bar never pushes a line past
+// width.
+func renderDetailPrefixed(sty *styles.Styles, focused bool, width int, render func(inner int) string) string {
+	prefix := detailPrefix(sty, focused)
+	lines := strings.Split(render(max(1, width-lipgloss.Width(prefix))), "\n")
+	for i, ln := range lines {
+		lines[i] = prefix + ln
+	}
+	return strings.Join(lines, "\n")
+}
+
+// indentLines indents the first line of s by first columns and the rest by
+// rest.
+func indentLines(s string, first, rest int) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		n := rest
+		if i == 0 {
+			n = first
+		}
+		lines[i] = strings.Repeat(" ", n) + ln
+	}
+	return strings.Join(lines, "\n")
+}
+
 // --- toolDetailHeaderItem ---
 
 // toolDetailHeaderItem renders the metadata header: icon + tool display name.
@@ -201,12 +237,7 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 		return h.cachedRender
 	}
 
-	var prefix string
-	if h.focused {
-		prefix = h.sty.Messages.ToolCallFocused.Render()
-	} else {
-		prefix = h.sty.Messages.ToolCallBlurred.Render()
-	}
+	prefix := detailPrefix(h.sty, h.focused)
 	tc := h.source.ToolCall()
 	icon := toolIcon(h.sty, status)
 	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
@@ -218,7 +249,7 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 		hints = hints[:len(hints)-1]
 	}
 	rendered += strings.Join(hints, "")
-	rendered = prefix + rendered
+	rendered = ansi.Truncate(prefix+rendered, width, "…")
 
 	h.cachedRender = rendered
 	h.cachedWidth = width
@@ -288,19 +319,9 @@ func (s *toolDetailSectionItem) Render(width int) string {
 	if s.cachedWidth == width && s.cachedFocus == s.focused {
 		return s.cachedRender
 	}
-	rendered := sectionHeader(s.sty, s.label, width)
-
-	var prefix string
-	if s.focused {
-		prefix = s.sty.Messages.ToolCallFocused.Render()
-	} else {
-		prefix = s.sty.Messages.ToolCallBlurred.Render()
-	}
-	lines := strings.Split(rendered, "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
-	}
-	rendered = strings.Join(lines, "\n")
+	rendered := renderDetailPrefixed(s.sty, s.focused, width, func(inner int) string {
+		return sectionHeader(s.sty, s.label, inner)
+	})
 
 	s.cachedRender = rendered
 	s.cachedWidth = width
@@ -319,13 +340,15 @@ func (s *toolDetailSectionItem) SetFocused(v bool) {
 
 // --- toolDetailStaticItem ---
 
-// toolDetailStaticItem renders a static text line. Not expandable.
+// toolDetailStaticItem renders static text, wrapped to the width and
+// indented by indent columns. Not expandable.
 type toolDetailStaticItem struct {
 	*list.Versioned
 	*toolFile
 	sty          *styles.Styles
 	id           string
 	content      string
+	indent       int
 	styleFunc    func(*styles.Styles) lipgloss.Style
 	toolCallID   string
 	focused      bool
@@ -352,19 +375,10 @@ func (s *toolDetailStaticItem) Render(width int) string {
 	if s.cachedWidth == width && s.cachedFocus == s.focused {
 		return s.cachedRender
 	}
-	rendered := s.styleFunc(s.sty).Render(s.content)
-
-	var prefix string
-	if s.focused {
-		prefix = s.sty.Messages.ToolCallFocused.Render()
-	} else {
-		prefix = s.sty.Messages.ToolCallBlurred.Render()
-	}
-	lines := strings.Split(rendered, "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
-	}
-	rendered = strings.Join(lines, "\n")
+	rendered := renderDetailPrefixed(s.sty, s.focused, width, func(inner int) string {
+		body := lipgloss.NewStyle().Width(max(1, inner-s.indent)).Render(s.styleFunc(s.sty).Render(s.content))
+		return indentLines(body, s.indent, s.indent)
+	})
 
 	s.cachedRender = rendered
 	s.cachedWidth = width
@@ -431,60 +445,57 @@ func (p *toolDetailParamItem) Render(width int) string {
 		return p.cachedRender
 	}
 
-	key := p.sty.Tool.NameNested.Render(p.key + ":")
-	var rendered string
-
-	if val, multi := p.isMultiLine(); multi {
-		lineCount := strings.Count(val, "\n") + 1
-		if p.expanded {
-			// Show key on its own line, then the full code block.
-			block := toolOutputCodeContent(
-				p.sty, p.filePath, val, 0, width, true, true,
-			)
-			rendered = "  " + key + "\n" + block
-		} else {
-			// Collapsed: show key with line count hint.
-			hint := p.sty.Tool.ContentTruncation.Render(
-				fmt.Sprintf(assistantMessageTruncateFormat, lineCount),
-			)
-			rendered = fmt.Sprintf("  %s %s", key, hint)
-		}
-	} else {
-		// Single-line or non-string value: always inline.
-		var valStr string
-		switch val := p.value.(type) {
-		case string:
-			valStr = val
-		default:
-			b, _ := json.Marshal(val)
-			valStr = string(b)
-		}
-
-		keyWidth := lipgloss.Width(key)
-		indent := 2 + keyWidth + 1
-		if indent < width {
-			valStr = lipgloss.NewStyle().Width(width - indent).Render(valStr)
-		}
-		rendered = fmt.Sprintf("  %s %s", key, valStr)
-	}
-
-	var prefix string
-	if p.focused {
-		prefix = p.sty.Messages.ToolCallFocused.Render()
-	} else {
-		prefix = p.sty.Messages.ToolCallBlurred.Render()
-	}
-	lines := strings.Split(rendered, "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
-	}
-	rendered = strings.Join(lines, "\n")
+	rendered := renderDetailPrefixed(p.sty, p.focused, width, p.renderBody)
 
 	p.cachedRender = rendered
 	p.cachedWidth = width
 	p.cachedExpand = p.expanded
 	p.cachedFocus = p.focused
 	return rendered
+}
+
+// minParamValueWidth is the narrowest a value wraps to beside its key;
+// narrower than that, it goes on the lines below the key instead.
+const minParamValueWidth = 20
+
+// renderBody renders the parameter at width, without the focus bar.
+func (p *toolDetailParamItem) renderBody(width int) string {
+	key := p.sty.Tool.NameNested.Render(p.key + ":")
+	keyLine := indentLines(ansi.Wrap(key, max(1, width-2), ""), 2, 2)
+
+	if val, multi := p.isMultiLine(); multi {
+		if p.expanded {
+			// Show key on its own line, then the full code block.
+			return keyLine + "\n" + toolOutputCodeContent(p.sty, p.filePath, val, 0, width, true, true)
+		}
+		hint := p.sty.Tool.ContentTruncation.Render(
+			fmt.Sprintf(assistantMessageTruncateFormat, strings.Count(val, "\n")+1),
+		)
+		return wrapBesideKey(keyLine, hint, width)
+	}
+
+	// Single-line or non-string value: always inline.
+	var valStr string
+	switch val := p.value.(type) {
+	case string:
+		valStr = val
+	default:
+		b, _ := json.Marshal(val)
+		valStr = string(b)
+	}
+	return wrapBesideKey(keyLine, valStr, width)
+}
+
+// wrapBesideKey wraps value to the right of a one-line keyLine, aligning
+// its continuation lines under its first, or below keyLine, indented, when
+// the room beside it is too narrow to read.
+func wrapBesideKey(keyLine, value string, width int) string {
+	if strings.Contains(keyLine, "\n") || width-lipgloss.Width(keyLine)-1 < minParamValueWidth {
+		const indent = 4
+		return keyLine + "\n" + indentLines(lipgloss.NewStyle().Width(max(1, width-indent)).Render(value), indent, indent)
+	}
+	indent := lipgloss.Width(keyLine) + 1
+	return keyLine + indentLines(lipgloss.NewStyle().Width(width-indent).Render(value), 1, indent)
 }
 
 // ToggleExpanded implements Expandable. Only multi-line params toggle.
