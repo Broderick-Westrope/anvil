@@ -81,10 +81,10 @@ func (m agentMCPTools) allowed() []*tools.Tool {
 	return out
 }
 
-// wrap applies the hook (top-level agents only) and error-result wrappers
-// every agent tool gets.
+// wrap applies the hook wrapper (top-level agents only) every agent tool
+// gets.
 func (m agentMCPTools) wrap(agentTools []fantasy.AgentTool) []fantasy.AgentTool {
-	return wrapToolsWithErrorResults(wrapToolsWithHooks(agentTools, m.hookRunner, m.isSubAgent))
+	return wrapToolsWithHooks(agentTools, m.hookRunner, m.isSubAgent)
 }
 
 // listed returns the MCP tools that go in the agent's tool list, unwrapped:

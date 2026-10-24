@@ -1167,7 +1167,7 @@ func (c *coordinator) buildToolsWithState(
 	// hook fires once per call, under the inner name.
 	for _, tool := range mcpTools.catalogueTools() {
 		if tool.Info().Name == tools.CallMCPToolToolName {
-			filteredTools = append(filteredTools, wrapToolsWithErrorResults([]fantasy.AgentTool{tool})...)
+			filteredTools = append(filteredTools, tool)
 		} else {
 			filteredTools = append(filteredTools, mcpTools.wrap([]fantasy.AgentTool{tool})...)
 		}
