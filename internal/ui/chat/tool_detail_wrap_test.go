@@ -161,7 +161,7 @@ func TestToolDetailParamItemWrapsBesideKey(t *testing.T) {
 	require.Equal(t, len("    command: "), col, "the value starts beside its key")
 	for i, line := range lines[1:] {
 		require.Equal(t, strings.Repeat(" ", col), line[:col], "line %d isn't aligned under the value", i+1)
-		require.NotEqual(t, ' ', line[col], "line %d is indented past the value", i+1)
+		require.NotEqual(t, byte(' '), line[col], "line %d is indented past the value", i+1)
 	}
 	require.Equal(t, squash("command:"+value), squash(strings.Join(lines, "\n")))
 }
@@ -236,8 +236,9 @@ func TestToolOutputPlainContentWrapsWhenNotTruncated(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	content := strings.Repeat("word ", 30) + strings.Repeat("y", 70) + "\nsecond line"
+	content := strings.Repeat("y", 70) + " " + strings.Repeat("word ", 30) + "\nsecond line"
 	lines := strings.Split(toolOutputPlainContent(&sty, content, 30, true, true), "\n")
+	require.Equal(t, " "+strings.Repeat("y", 29), ansi.Strip(lines[0]), "a wrapped line fills the width past its indent")
 	require.Greater(t, len(lines), 2)
 	for _, line := range lines {
 		require.Equal(t, 30, lipgloss.Width(line))
@@ -347,6 +348,8 @@ func TestCollapsedHeaderFlattensWhitespace(t *testing.T) {
 		"newline":         "first\nPATSECOND",
 		"crlf":            "first\r\nPATSECOND",
 		"carriage return": "first\rPATSECOND",
+		"vertical tab":    "first\vPATSECOND",
+		"form feed":       "first\fPATSECOND",
 		"tab":             "first\t" + strings.Repeat("x", 60) + "PATSECOND",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -394,7 +397,7 @@ func requireOneLineHeader(t *testing.T, source ToolMessageItem, raw string) {
 	require.LessOrEqual(t, lipgloss.Width(rendered), 80)
 	header := strings.Split(ansi.Strip(rendered), "\n")
 	require.Len(t, header, 1)
-	flat := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "    ").Replace(raw)
+	flat := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\v", " ", "\f", " ", "\t", "    ").Replace(raw)
 	require.Contains(t, header[0], ansi.Truncate(flat, 20, ""))
 }
 
@@ -621,6 +624,7 @@ func TestToolDetailOutputKeepsHookLines(t *testing.T) {
 	col := lipgloss.Width(lines[0][:strings.Index(lines[0], "Denied")])
 	require.Greater(t, col, 0)
 	require.Equal(t, strings.Repeat(" ", col), lines[1][:col], "the reason wraps under where the detail starts: %q", lines[1])
+	require.NotEqual(t, byte(' '), lines[1][col], "the reason wraps no further in than where the detail starts: %q", lines[1])
 
 	header := strings.Split(ansi.Strip(source.Render(60)), "\n")
 	require.True(t, strings.HasPrefix(strings.TrimSpace(header[0]), "Hook "), "the chat still shows the hooks above the header: %q", header[0])
@@ -628,26 +632,28 @@ func TestToolDetailOutputKeepsHookLines(t *testing.T) {
 }
 
 // A hook's detail wraps beside its name while that leaves room to read it,
-// and is cut with an ellipsis once it doesn't.
+// and goes on the lines below, indented, once it doesn't.
 func TestHookLineWrapsOnlyWithRoom(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
 	reason := strings.Repeat("nope ", 20)
-	metadata := mustJSON(t, map[string]any{"hook": map[string]any{
-		"hook_count": 1, "decision": "deny",
-		"hooks": []any{map[string]any{"name": "g", "decision": "deny", "reason": reason}},
-	}})
+	metadata := hookMetadata(t, map[string]any{"name": "g", "decision": "deny", "reason": reason})
 
 	// "Hook g → " puts the detail at column 9.
 	const col = 9
-	wrapped := strings.Split(ansi.Strip(toolOutputHookIndicator(&sty, metadata, col+minParamValueWidth, true)), "\n")
-	require.Greater(t, len(wrapped), 1)
-	require.Equal(t, squash("Hook g →  Denied "+reason), squash(strings.Join(wrapped, "\n")))
+	beside := strings.Split(ansi.Strip(toolOutputHookIndicator(&sty, metadata, col+minParamValueWidth, true)), "\n")
+	require.Greater(t, len(beside), 1)
+	require.True(t, strings.HasPrefix(beside[0], "Hook g → Denied"), "%q", beside[0])
+	require.Equal(t, squash("Hook g → Denied "+reason), squash(strings.Join(beside, "\n")))
 
-	cut := ansi.Strip(toolOutputHookIndicator(&sty, metadata, col+minParamValueWidth-1, true))
-	require.NotContains(t, cut, "\n")
-	require.True(t, strings.HasSuffix(cut, "…"), "%q", cut)
+	below := strings.Split(ansi.Strip(toolOutputHookIndicator(&sty, metadata, col+minParamValueWidth-1, true)), "\n")
+	for _, line := range below {
+		require.LessOrEqual(t, lipgloss.Width(line), col+minParamValueWidth-1)
+	}
+	require.Equal(t, "Hook g →", below[0])
+	require.True(t, strings.HasPrefix(below[1], "    Denied"), "%q", below[1])
+	require.Equal(t, squash("Hook g → Denied "+reason), squash(strings.Join(below, "\n")))
 }
 
 // An expanded header draws a tab as four spaces.
@@ -682,29 +688,53 @@ func TestHookLineRoomForReason(t *testing.T) {
 	chat := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false))
 	require.Contains(t, chat, "Denied "+reason)
 	require.NotContains(t, chat, name)
-	require.LessOrEqual(t, lipgloss.Width(chat), 80)
+	require.Equal(t, 80, lipgloss.Width(chat), "the name takes all the room left: %q", chat)
 
 	drill := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, true))
 	require.Contains(t, drill, name)
 	require.Contains(t, squash(drill), squash(reason))
 }
 
-// A hook's matcher and line breaks in its reason never push the decision
-// and reason out of the line.
+// A long matcher gives way to the decision and reason in the chat, and in
+// the drill-in neither is lost.
 func TestHookLineHoldsMatcherAndReason(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.TokyoNight()
-	const reason = "not\r\nhere"
+	matcher := strings.Repeat("Bash|Edit|", 8)
 	metadata := hookMetadata(t, map[string]any{
-		"name": "g", "matcher": strings.Repeat("Bash|Edit|", 8), "decision": "deny", "reason": reason,
+		"name": "g", "matcher": matcher, "decision": "deny", "reason": "not\r\nhere\vnow",
 	})
 
-	for _, noTruncate := range []bool{false, true} {
-		out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, noTruncate))
-		require.NotContains(t, out, "\n", "noTruncate %v", noTruncate)
-		require.Contains(t, out, "Denied not here", "noTruncate %v", noTruncate)
+	chat := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false))
+	require.NotContains(t, chat, "\n")
+	require.Equal(t, 80, lipgloss.Width(chat))
+	require.True(t, strings.HasSuffix(chat, "… → Denied not here now"), "%q", chat)
+
+	drill := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, true))
+	require.Contains(t, squash(drill), squash("Hook g "+matcher+" → Denied not here now"))
+	for _, line := range strings.Split(drill, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), 80)
 	}
+}
+
+// Hooks line their arrows up, padding a hook without a matcher to the
+// width of one with.
+func TestHookLinesAlignMatchers(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	metadata := mustJSON(t, map[string]any{"hook": map[string]any{
+		"hook_count": 2, "decision": "allow",
+		"hooks": []any{
+			map[string]any{"name": "a", "matcher": "Bash", "decision": "allow"},
+			map[string]any{"name": "b", "decision": "allow"},
+		},
+	}})
+	lines := strings.Split(ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false)), "\n")
+	require.Len(t, lines, 2)
+	require.Equal(t, "Hook a Bash → OK", lines[0])
+	require.Equal(t, "Hook b      → OK", lines[1])
 }
 
 // With no width to fit, a hook line is left whole.
@@ -713,9 +743,10 @@ func TestHookLineWithoutWidth(t *testing.T) {
 
 	sty := styles.TokyoNight()
 	reason := strings.Repeat("long ", 40)
-	metadata := hookMetadata(t, map[string]any{"name": "g", "decision": "deny", "reason": reason})
+	metadata := hookMetadata(t, map[string]any{"name": "guard", "decision": "deny", "reason": reason})
 
-	require.Contains(t, ansi.Strip(toolOutputHookIndicator(&sty, metadata, 0, false)), reason)
+	out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 0, false))
+	require.Contains(t, out, "Hook guard → Denied "+reason)
 }
 
 // A drill-in keeps both the hooks and a tool's output when the output
@@ -808,4 +839,61 @@ func TestHookReasonStaysOnOneLine(t *testing.T) {
 	out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false))
 	require.NotContains(t, out, "\n")
 	require.Contains(t, out, "Denied not here")
+}
+
+// A drill-in lays hooks out at the width its tool's output uses, and ends
+// with them when there's no output.
+func TestToolDetailOutputHookLayout(t *testing.T) {
+	t.Parallel()
+
+	reason := strings.Repeat("blocked ", 40)
+	metadata := hookMetadata(t, map[string]any{"name": "guard", "decision": "deny", "reason": reason})
+	sty := styles.TokyoNight()
+
+	// Fetch caps its width, so on a wide screen its hooks wrap at the cap.
+	fetch := helperToolItem(t, "fetch", `{"url":"https://example.com"}`,
+		&message.ToolResult{ToolCallID: "tc-test", Name: "fetch", Content: "body", Metadata: metadata}, ToolStatusSuccess)
+	items := BuildToolDetailItems(&sty, fetch, nil)
+	for _, line := range strings.Split(items[len(items)-1].Render(300), "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), MessageLeftPaddingTotal+cappedMessageWidth(300))
+	}
+
+	empty := helperToolItem(t, "unknown_tool", `{}`,
+		&message.ToolResult{ToolCallID: "tc-test", Name: "unknown_tool", Metadata: metadata}, ToolStatusSuccess)
+	items = BuildToolDetailItems(&sty, empty, nil)
+	lines := strings.Split(ansi.Strip(items[len(items)-1].Render(80)), "\n")
+	require.NotEmpty(t, strings.TrimSpace(lines[len(lines)-1]), "no blank line after the hooks: %q", lines)
+}
+
+// In the chat a hook's name gives way for its matcher before the matcher
+// gives way for the reason.
+func TestHookLineNameGivesWayForMatcher(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	reason := strings.Repeat("r", 40)
+	metadata := hookMetadata(t, map[string]any{
+		"name": strings.Repeat("n", 30), "matcher": "Bash", "decision": "deny", "reason": reason,
+	})
+	out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false))
+	require.Equal(t, 80, lipgloss.Width(out), "%q", out)
+	require.Contains(t, out, " Bash → Denied "+reason)
+}
+
+// A permission denial is tagged WARN even when its message breaks a line.
+func TestToolErrorContentWarnsOnDenialAcrossLines(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	out := ansi.Strip(toolErrorContent(&sty, &message.ToolResult{Content: "User denied\npermission"}, 60))
+	require.True(t, strings.HasPrefix(strings.TrimSpace(out), "WARN"), "%q", out)
+}
+
+// A hook name's breaks and tabs show as pilcrows and spaces on one line.
+func TestHookNameFlattensWhitespace(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	metadata := hookMetadata(t, map[string]any{"name": "a\r\nb\nc\rd\ve\ff\tg", "decision": "allow"})
+	require.Equal(t, "Hook a¶b¶c¶d¶e¶f    g → OK", ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false)))
 }

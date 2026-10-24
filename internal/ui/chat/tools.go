@@ -369,6 +369,15 @@ func (t *baseToolMessageItem) SetCompact(compact bool) {
 	t.Bump()
 }
 
+// contentWidth is the width the tool lays its content out at in a list of
+// width.
+func (t *baseToolMessageItem) contentWidth(width int) int {
+	if t.hasCappedWidth {
+		return cappedMessageWidth(width)
+	}
+	return width - MessageLeftPaddingTotal
+}
+
 // currentRenderState implements detailRenderConfigurable.
 func (t *baseToolMessageItem) currentRenderState() renderState {
 	return renderState{
@@ -440,10 +449,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 // from the cache unless it is spinning. It returns the content, its
 // height, and the width it was laid out at.
 func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
-	toolItemWidth := width - MessageLeftPaddingTotal
-	if t.hasCappedWidth {
-		toolItemWidth = cappedMessageWidth(width)
-	}
+	toolItemWidth := t.contentWidth(width)
 
 	content, height, ok := t.getCachedRender(toolItemWidth)
 	// if we are spinning or there is no cache rerender
@@ -786,7 +792,7 @@ func toolResultErrorContent(sty *styles.Styles, result *message.ToolResult, widt
 		return ""
 	}
 	tag, msgStyle := sty.Tool.ErrorTag.Render("ERROR"), sty.Tool.ErrorMessage
-	if strings.Contains(result.Content, "User denied permission") {
+	if strings.Contains(oneLineSpace.Replace(result.Content), "User denied permission") {
 		tag, msgStyle = sty.Tool.WarnTag.Render("WARN"), sty.Tool.WarnMessage
 	}
 	tagWidth := lipgloss.Width(tag)
@@ -829,6 +835,9 @@ var (
 	// codeSpace keeps a file's own lines, so its line numbers hold: any
 	// other break becomes a space.
 	codeSpace = strings.NewReplacer("\r", " ", "\v", " ", "\f", " ")
+	// hookNameSpace shows a hook name's line breaks as pilcrows, on one
+	// line.
+	hookNameSpace = strings.NewReplacer("\r\n", "¶", "\n", "¶", "\r", "¶", "\v", "¶", "\f", "¶", "\t", "    ")
 )
 
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
@@ -1098,12 +1107,8 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 
 	// Sanitize names (replace newlines with ¶) and matchers, and compute
 	// max widths for the name, matcher, and detail columns so they align.
-	// The name column is capped at maxHookNameWidth characters and the
-	// matcher column at maxHookMatcherWidth.
-	const (
-		maxHookNameWidth    = 30
-		maxHookMatcherWidth = 20
-	)
+	// The name column is capped at maxHookNameWidth characters.
+	const maxHookNameWidth = 30
 	sanitizedNames := make([]string, len(h.Hooks))
 	matchers := make([]string, len(h.Hooks))
 	details := make([]string, len(h.Hooks))
@@ -1116,7 +1121,7 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 		if w > maxNameWidth {
 			maxNameWidth = w
 		}
-		matchers[i] = ansi.Truncate(oneLineSpace.Replace(hi.Matcher), maxHookMatcherWidth, "…")
+		matchers[i] = oneLineSpace.Replace(hi.Matcher)
 		maxMatcherWidth = max(maxMatcherWidth, lipgloss.Width(sty.Tool.HookMatcher.Render(matchers[i])))
 		details[i] = hookDetail(sty, hi)
 		if dw := lipgloss.Width(details[i]); dw > maxDetailWidth {
@@ -1124,27 +1129,13 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 		}
 	}
 
-	if maxNameWidth > maxHookNameWidth {
-		maxNameWidth = maxHookNameWidth
-	}
-
-	// Cap the name column so the widest line still fits in width. The
-	// per-line layout is:
-	//   "Hook " + name(padded) + [" " + matcher(padded)] + " → " + detail
-	if width > 0 {
-		fixed := lipgloss.Width(sty.Tool.HookLabel.Render("Hook")) + 1
-		if maxMatcherWidth > 0 {
-			fixed += 1 + maxMatcherWidth
-		}
-		fixed += 1 + lipgloss.Width(sty.Tool.HookArrow.Render(styles.ArrowRightIcon)) + 1
-		// A detail that wraps needs only enough room to read; one that's
-		// cut keeps all the room it needs, since it is what says why.
-		if noTruncate {
-			maxDetailWidth = min(maxDetailWidth, minParamValueWidth)
-		}
-		fixed += maxDetailWidth
-		if budget := width - fixed; budget < maxNameWidth {
-			maxNameWidth = max(1, budget)
+	// A line that's cut gives up its name, then its matcher, to keep its
+	// detail, which says why. With noTruncate (the drill-in) nothing is
+	// cut: fitHookLine wraps the line instead.
+	if !noTruncate {
+		maxNameWidth, maxMatcherWidth = fitHookColumns(sty, width, min(maxNameWidth, maxHookNameWidth), maxMatcherWidth, maxDetailWidth)
+		for i := range matchers {
+			matchers[i] = ansi.Truncate(matchers[i], maxMatcherWidth, "…")
 		}
 	}
 
@@ -1157,11 +1148,32 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 	return strings.Join(lines, "\n")
 }
 
-// hookNameSpace shows a hook name's line breaks as pilcrows, on one line.
-var hookNameSpace = strings.NewReplacer("\r\n", "¶", "\n", "¶", "\r", "¶", "\v", "¶", "\f", "¶", "\t", "    ")
+// fitHookColumns narrows the name column, then the matcher column, until a
+// hook line fits width beside a detail of detailWidth. The per-line layout
+// is:
+//
+//	"Hook " + name(padded) + [" " + matcher(padded)] + " → " + detail
+func fitHookColumns(sty *styles.Styles, width, nameWidth, matcherWidth, detailWidth int) (int, int) {
+	if width <= 0 {
+		return nameWidth, matcherWidth
+	}
+	room := width - lipgloss.Width(sty.Tool.HookLabel.Render("Hook")) - 1 -
+		(1 + lipgloss.Width(sty.Tool.HookArrow.Render(styles.ArrowRightIcon)) + 1) - detailWidth
+	matcherRoom := 0
+	if matcherWidth > 0 {
+		matcherRoom = 1 + matcherWidth
+	}
+	nameWidth = max(1, min(nameWidth, room-matcherRoom))
+	if matcherWidth > 0 {
+		matcherWidth = max(1, min(matcherWidth, room-nameWidth-1))
+	}
+	return nameWidth, matcherWidth
+}
 
 // fitHookLine holds a hook line to width: cut with an ellipsis, or with
-// noTruncate, its detail wrapped under where it starts.
+// noTruncate, its detail wrapped under where it starts. When that leaves
+// too little room to read it, the rest of the line wraps and the detail
+// goes on the lines below, indented, so none of it is lost.
 func fitHookLine(line, detail string, width int, noTruncate bool) string {
 	if width <= 0 {
 		return line
@@ -1171,10 +1183,12 @@ func fitHookLine(line, detail string, width int, noTruncate bool) string {
 	}
 	col := lipgloss.Width(line) - lipgloss.Width(detail)
 	if width-col < minParamValueWidth {
-		return ansi.Truncate(line, width, "…")
+		// The head ends with the space before the detail, which goes.
+		const indent = 4
+		below := indentLines(lipgloss.Wrap(detail, max(1, width-indent), ""), indent, indent)
+		return lipgloss.Wrap(ansi.Truncate(line, col-1, ""), width, "") + "\n" + below
 	}
-	wrapped := lipgloss.Wrap(detail, width-col, "")
-	return ansi.Truncate(line, col, "") + indentLines(wrapped, 0, col)
+	return ansi.Truncate(line, col, "") + indentLines(lipgloss.Wrap(detail, width-col, ""), 0, col)
 }
 
 // truncateHookName truncates a hook name to fit within maxWidth cells,

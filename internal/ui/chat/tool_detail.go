@@ -46,6 +46,8 @@ type renderState struct {
 type detailRenderConfigurable interface {
 	currentRenderState() renderState
 	setRenderState(renderState)
+	contentWidth(width int) int
+	Result() *message.ToolResult
 }
 
 // BuildToolDetailItems returns multiple independently expandable list items
@@ -646,13 +648,15 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 	// The source leaves hooks out for a header kept to one line, so they
 	// aren't dropped with it; they go first, wrapped in full.
 	var hooks string
-	if r, ok := o.source.(interface{ Result() *message.ToolResult }); ok && r.Result() != nil {
-		hooks = toolOutputHookIndicator(o.sty, r.Result().Metadata, width-MessageLeftPaddingTotal, true)
+	if res := cfg.Result(); res != nil {
+		hooks = toolOutputHookIndicator(o.sty, res.Metadata, cfg.contentWidth(width), true)
 	}
-	if hooks == "" {
+	switch {
+	case hooks == "":
 		return output
-	}
-	if !strings.HasPrefix(output, "\n") {
+	case output == "":
+		return hooks
+	case !strings.HasPrefix(output, "\n"):
 		output = "\n" + output
 	}
 	return hooks + "\n" + output
