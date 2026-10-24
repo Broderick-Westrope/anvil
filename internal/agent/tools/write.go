@@ -159,7 +159,9 @@ func NewWriteTool(
 
 // writeGate refuses to overwrite a file unless the session has seen its
 // current content. A refusal shows the model that content, so the refused
-// call counts as a read and an immediate retry passes.
+// call counts as a read and an immediate retry passes. An empty file always
+// passes: there is nothing to lose, and agents often create one with
+// mktemp or touch before writing to it.
 type writeGate struct {
 	permissions permission.Service
 	tracker     filetracker.Service
@@ -169,6 +171,10 @@ type writeGate struct {
 // check reports whether the write may go ahead. When it may not, the
 // caller returns the response and error as they are.
 func (g writeGate) check(ctx context.Context, callID, sessionID, filePath string, diskBytes []byte) (fantasy.ToolResponse, bool, error) {
+	if len(diskBytes) == 0 {
+		return fantasy.ToolResponse{}, true, nil
+	}
+
 	diskHash := filetracker.HashContent(diskBytes)
 	if g.tracker.LastContentHash(ctx, sessionID, filePath) == diskHash {
 		return fantasy.ToolResponse{}, true, nil
