@@ -217,6 +217,12 @@ func (b *backend) Bash(ctx context.Context, call workflow.BashCall) (workflow.Ba
 	// wtp runs as a child process so cancelling a workflow kills hooks
 	// it started too; in-process it can't stop them.
 	stdout, stderr, err := sh.Exec(shell.WithExternalWTP(ctx, wtp.Command()), call.Cmd)
+	// An aborted run's command was interrupted, however the shell reports
+	// it: aborted as it starts, a command can stop with an error that isn't
+	// an interrupt, which would read as a command that ran and exited.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return workflow.BashResult{}, ctxErr
+	}
 	if err != nil && shell.IsInterrupt(err) {
 		return workflow.BashResult{}, err
 	}
