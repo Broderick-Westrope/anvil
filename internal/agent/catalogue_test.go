@@ -165,7 +165,8 @@ func TestSubagentConnectsADeferredCatalogueServerOnItsFirstSearch(t *testing.T) 
 	require.NotContains(t, sub, "enable_mcp", "an auto-routed lazy server is no longer enabled")
 	require.Contains(t, requests[2].Body, "- ping: Replies pong.")
 	info, _ := toolsmcp.GetState(name)
-	require.Equal(t, toolsmcp.StateLazy, info.State)
+	require.Equal(t, toolsmcp.StateConnected, info.State, "a lazy server connects like any other")
+	require.False(t, info.ConnectedAt.IsZero())
 }
 
 func TestWorkflowAgentNamingACatalogueToolGetsItDirectly(t *testing.T) {

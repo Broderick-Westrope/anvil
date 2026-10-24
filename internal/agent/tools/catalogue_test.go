@@ -453,7 +453,7 @@ func TestSearchWaitsOutAConnectRetryInsteadOfReportingItsError(t *testing.T) {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		mcp.SetToolsForTest("cat-retry", &mcp.Tool{Name: "search_logs", Description: "Search logs.", InputSchema: logSearchTool.schema})
-		mcp.SetStateForTest("cat-retry", mcp.StateLazy)
+		mcp.SetStateForTest("cat-retry", mcp.StateConnected)
 		mcp.SetConnectingForTest("cat-retry", false)
 	}()
 

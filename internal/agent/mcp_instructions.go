@@ -17,7 +17,7 @@ func mcpInstructions(listing mcpListing) string {
 	var instructions strings.Builder
 	for _, name := range slices.Sorted(maps.Keys(states)) {
 		server := states[name]
-		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
+		if server.State != mcp.StateConnected {
 			continue
 		}
 		if listing.catalogue[name] && !listing.named[name] {

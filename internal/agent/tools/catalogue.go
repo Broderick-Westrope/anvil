@@ -229,7 +229,7 @@ func (c *catalogue) ready(ctx context.Context, server, caller string) (string, e
 	}
 	info, _ = mcp.GetState(server)
 	switch info.State {
-	case mcp.StateConnected, mcp.StateLazy:
+	case mcp.StateConnected:
 		if info.Client == nil {
 			return "", nil
 		}
@@ -368,7 +368,7 @@ func (c *catalogue) searchConnected(ctx context.Context, query []string) string 
 	byServer := map[string][]CatalogueTool{}
 	for _, server := range c.opts.Servers {
 		info, _ := mcp.GetState(server.Name)
-		if info.State != mcp.StateConnected && info.State != mcp.StateLazy {
+		if info.State != mcp.StateConnected {
 			if matchesAny(query, searchTerms(server.Name+" "+server.Description)) {
 				fmt.Fprintf(&out, "%s (%s) isn't connected yet; pass server=%q to search it.\n", server.Name, server.Description, server.Name)
 			}

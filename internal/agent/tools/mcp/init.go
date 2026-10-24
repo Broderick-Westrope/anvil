@@ -170,7 +170,6 @@ const (
 	StateStarting
 	StateConnected
 	StateError
-	StateLazy
 	StateDeferred
 )
 
@@ -184,8 +183,6 @@ func (s State) String() string {
 		return "connected"
 	case StateError:
 		return "error"
-	case StateLazy:
-		return "lazy"
 	case StateDeferred:
 		return "deferred"
 	default:
@@ -228,7 +225,6 @@ type ClientInfo struct {
 	Client      *ClientSession
 	Counts      Counts
 	ConnectedAt time.Time
-	IsLazy      bool `json:"is_lazy"`
 	// NeedsAuth is true when State is StateError and the error indicates
 	// the server's OAuth token must be refreshed by the user.
 	NeedsAuth bool `json:"needs_auth"`
@@ -294,7 +290,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 		}
 
 		// Lazy servers are seeded as deferred and skip the connect loop.
-		// They will be connected on first enable via ConnectDeferred.
+		// They connect on first use via ConnectDeferred.
 		if m.IsLazy() {
 			updateState(name, StateDeferred, nil, nil, Counts{})
 			slog.Debug("Deferring lazy MCP connection", "name", name)
@@ -462,8 +458,8 @@ func ConnectDeferred(ctx context.Context, name string, cfg *config.ConfigStore) 
 	}
 	if isTransientError(retryErr) {
 		// Both attempts failed transiently. Reset to StateDeferred so a
-		// later enable_mcp call re-enters the deferred branch rather
-		// than being permanently locked out in StateError.
+		// later use re-enters the deferred branch rather than being
+		// permanently locked out in StateError.
 		updateState(name, StateDeferred, nil, nil, Counts{})
 	}
 	return retryErr
@@ -525,11 +521,7 @@ func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m con
 	updatePrompts(name, prompts)
 	sessions.Set(name, session)
 
-	state := StateConnected
-	if m.IsLazy() {
-		state = StateLazy
-	}
-	updateState(name, state, nil, session, Counts{
+	updateState(name, StateConnected, nil, session, Counts{
 		Tools:   toolCount,
 		Prompts: len(prompts),
 	})
@@ -640,12 +632,8 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 	}
 	counts.Resources = updateResources(name, resources)
 
-	reconnState := StateConnected
-	if m.IsLazy() {
-		reconnState = StateLazy
-	}
 	sessions.Set(name, newSess)
-	updateState(name, reconnState, nil, newSess, counts)
+	updateState(name, StateConnected, nil, newSess, counts)
 	return newSess, nil
 }
 
@@ -754,7 +742,7 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 
 	// Publish a dedicated auth event so the UI can surface a toast
 	// without parsing the state change. Deduplicated per server so
-	// N failed enable_mcp calls in one turn produce one notification.
+	// N failed catalogue calls in one turn produce one notification.
 	if state == StateError && NeedsAuth(err) {
 		if shouldNotifyAuth(name) {
 			broker.Publish(pubsub.UpdatedEvent, Event{

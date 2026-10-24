@@ -95,9 +95,6 @@ func (i *MCPPaletteItem) stateLabel() string {
 	if i.entry.State == mcp.StateStarting {
 		return "connecting..."
 	}
-	if i.entry.State == mcp.StateLazy {
-		return mcp.StateConnected.String()
-	}
 	return i.entry.State.String()
 }
 
@@ -287,7 +284,7 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 					// A deferred server connects on its first catalogue
 					// search; Enter connects it now.
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
-				case mcp.StateConnected, mcp.StateLazy:
+				case mcp.StateConnected:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
 				case mcp.StateStarting:
 					// Already connecting — ignore.

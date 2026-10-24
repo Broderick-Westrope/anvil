@@ -33,12 +33,11 @@ func TestMCPPaletteLabelsTheRoute(t *testing.T) {
 		entry MCPPaletteEntry
 		want  string
 	}{
-		"catalogue":             {entry: MCPPaletteEntry{State: mcp.StateConnected, Route: "catalogue (auto: lazy)"}, want: "connected · catalogue (auto: lazy)"},
-		"direct":                {entry: MCPPaletteEntry{State: mcp.StateConnected, Route: "direct"}, want: "connected · direct"},
-		"pending":               {entry: MCPPaletteEntry{State: mcp.StateStarting, Route: "route pending"}, want: "connecting... · route pending"},
-		"connected lazy server": {entry: MCPPaletteEntry{State: mcp.StateLazy, Route: "catalogue (lazy)"}, want: "connected · catalogue (lazy)"},
-		"no route info":         {entry: MCPPaletteEntry{State: mcp.StateConnected}, want: "connected"},
-		"deferred":              {entry: MCPPaletteEntry{State: mcp.StateDeferred, Route: "catalogue (lazy)"}, want: "deferred · catalogue (lazy)"},
+		"catalogue":     {entry: MCPPaletteEntry{State: mcp.StateConnected, Route: "catalogue (auto: lazy)"}, want: "connected · catalogue (auto: lazy)"},
+		"direct":        {entry: MCPPaletteEntry{State: mcp.StateConnected, Route: "direct"}, want: "connected · direct"},
+		"pending":       {entry: MCPPaletteEntry{State: mcp.StateStarting, Route: "route pending"}, want: "connecting... · route pending"},
+		"no route info": {entry: MCPPaletteEntry{State: mcp.StateConnected}, want: "connected"},
+		"deferred":      {entry: MCPPaletteEntry{State: mcp.StateDeferred, Route: "catalogue (lazy)"}, want: "deferred · catalogue (lazy)"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

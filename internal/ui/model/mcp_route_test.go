@@ -71,8 +71,8 @@ func TestSidebarShowsAConnectedLazyServerAsConnected(t *testing.T) {
 	}}
 	u.com.Workspace = &routesWorkspace{testWorkspace: &testWorkspace{cfg: cfg}, routes: []agenttools.MCPRouteInfo{{Server: "datadog", Catalogue: true}}}
 	u.mcpStates = map[string]mcp.ClientInfo{
-		"datadog": {Name: "datadog", State: mcp.StateLazy},
-		"slack":   {Name: "slack", State: mcp.StateLazy},
+		"datadog": {Name: "datadog", State: mcp.StateConnected},
+		"slack":   {Name: "slack", State: mcp.StateConnected},
 	}
 
 	lines := strings.Split(ansi.Strip(u.mcpInfo(60, 10, false)), "\n")
@@ -103,7 +103,7 @@ func TestMCPPaletteLabelsEachServerWithItsRoute(t *testing.T) {
 		{Server: "muninn", Short: "10 kB"},
 	}}
 	u.mcpStates = map[string]mcp.ClientInfo{
-		"datadog": {Name: "datadog", State: mcp.StateLazy},
+		"datadog": {Name: "datadog", State: mcp.StateConnected},
 		"muninn":  {Name: "muninn", State: mcp.StateConnected},
 	}
 

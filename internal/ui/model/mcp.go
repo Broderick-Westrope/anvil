@@ -18,9 +18,6 @@ func (m *UI) mcpInfo(width, maxItems int, isSection bool) string {
 	t := m.com.Styles
 	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
 		if state, ok := m.mcpStates[mcpCfg.Name]; ok {
-			if state.State == mcp.StateLazy {
-				state.State = mcp.StateConnected
-			}
 			mcps = append(mcps, state)
 		}
 	}
@@ -90,10 +87,6 @@ func mcpList(t *styles.Styles, mcps []mcp.ClientInfo, width, maxItems int) strin
 		case mcp.StateDisabled:
 			icon = t.Resource.DisabledIcon.String()
 			description = t.Resource.StatusText.Render("disabled")
-		case mcp.StateLazy:
-			icon = t.Resource.LazyIcon.String()
-			extraContent = mcpCounts(t, m.Counts)
-			description = t.Resource.StatusText.Render("lazy")
 		default:
 			icon = t.Resource.OfflineIcon.String()
 		}
