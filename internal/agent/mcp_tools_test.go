@@ -173,3 +173,35 @@ func TestALazyServerMissingFromTheRouteMapIsListedOnceConnected(t *testing.T) {
 	require.NotContains(t, names, "enable_mcp")
 	require.Contains(t, textOf(calls[0].Prompt[0]), "Unrouted says hi.")
 }
+
+// Not parallel: connectMCPServers registers global MCP state.
+func TestTheCatalogueResolvesOnlyTheToolsAllowedMCPNames(t *testing.T) {
+	const server = "test-cat-pertool"
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
+	cfg := connectMCPServers(t, map[string]string{server: ""}, server)
+	c := &coordinator{cfg: cfg}
+	tests := map[string]struct {
+		allowed []string
+		want    []string
+	}{
+		"the tool is named":     {allowed: []string{"ping"}, want: []string{"mcp_" + server + "_ping"}},
+		"another tool is named": {allowed: []string{"other"}},
+		"the whole server":      {allowed: nil, want: []string{"mcp_" + server + "_ping"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			access, err := newToolAccess(config.Agent{ID: "fixer", AllowedMCP: map[string][]string{server: tc.allowed}}, cfg.Config().Options)
+			require.NoError(t, err)
+			mcpTools := c.newAgentMCPTools(access, nil, false)
+			require.True(t, mcpTools.routes.isCatalogue(server), "a lazy server goes through the catalogue")
+
+			var names []string
+			for _, tool := range mcpTools.resolve(server) {
+				names = append(names, tool.MCP.Name())
+			}
+			require.Equal(t, tc.want, names)
+		})
+	}
+}

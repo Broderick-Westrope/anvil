@@ -1214,7 +1214,8 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 			want:       []string{tools.ViewToolName},
 		},
 		// A lazy server goes through the catalogue, which filters its
-		// tools per call with the same allowed() as the eager cases.
+		// tools with the same allowed() as the eager cases (see
+		// TestTheCatalogueResolvesOnlyTheToolsAllowedMCPNames).
 		"lazy server": {
 			allowedMCP: map[string][]string{lazy: {"ping"}},
 			want:       []string{call, describe, search, tools.ViewToolName},

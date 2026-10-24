@@ -163,7 +163,6 @@ func TestSubagentConnectsADeferredCatalogueServerOnItsFirstSearch(t *testing.T) 
 	require.Len(t, requests, 4)
 	sub := toolNames(t, requests[1].Body)
 	require.Contains(t, sub, "search_mcp_tools")
-	require.NotContains(t, sub, "enable_mcp", "an auto-routed lazy server is no longer enabled")
 	require.Contains(t, requests[2].Body, "- ping: Replies pong.")
 	info, _ := toolsmcp.GetState(name)
 	require.Equal(t, toolsmcp.StateConnected, info.State, "a lazy server connects like any other")
@@ -303,13 +302,14 @@ func TestAnEnableMCPCallFromAnOldSessionFailsAndTheTurnCarriesOn(t *testing.T) {
 
 			msgs, err := f.Messages.List(f.Context, session)
 			require.NoError(t, err)
-			var results []bool
+			var results []message.ToolResult
 			for _, msg := range msgs {
-				for _, result := range msg.ToolResults() {
-					results = append(results, result.IsError)
-				}
+				results = append(results, msg.ToolResults()...)
 			}
-			require.Equal(t, []bool{false, true}, results, "the new call ends as an error result")
+			require.Len(t, results, 2)
+			require.False(t, results[0].IsError, "the stored result is untouched")
+			require.True(t, results[1].IsError, "the new call ends as an error result")
+			require.Contains(t, results[1].Content, "tool not found: enable_mcp")
 			requests := f.Provider.Requests()
 			require.Len(t, requests, 2, "the turn continues after the error")
 			require.Contains(t, requests[0].Body, "Enabled catoldenable MCP", "the stored call is replayed")
