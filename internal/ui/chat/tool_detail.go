@@ -180,7 +180,12 @@ func detailPrefix(sty *styles.Styles, focused bool) string {
 // width.
 func renderDetailPrefixed(sty *styles.Styles, focused bool, width int, render func(inner int) string) string {
 	prefix := detailPrefix(sty, focused)
-	lines := strings.Split(render(max(1, width-lipgloss.Width(prefix))), "\n")
+	return prefixDetailLines(prefix, render(max(1, width-lipgloss.Width(prefix))))
+}
+
+// prefixDetailLines puts prefix before each line of rendered.
+func prefixDetailLines(prefix, rendered string) string {
+	lines := strings.Split(rendered, "\n")
 	for i, ln := range lines {
 		lines[i] = prefix + ln
 	}
@@ -581,19 +586,8 @@ func (o *toolDetailOutputItem) Render(width int) string {
 		return o.cachedRender
 	}
 
-	rendered := o.renderOutput(width)
-
-	var prefix string
-	if o.focused {
-		prefix = o.sty.Messages.ToolCallFocused.Render()
-	} else {
-		prefix = o.sty.Messages.ToolCallBlurred.Render()
-	}
-	lines := strings.Split(rendered, "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
-	}
-	rendered = strings.Join(lines, "\n")
+	// The source lays its output out beside the focus bar itself.
+	rendered := prefixDetailLines(detailPrefix(o.sty, o.focused), o.renderOutput(width))
 
 	o.cachedRender = rendered
 	o.cachedWidth = width
