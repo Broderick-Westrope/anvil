@@ -798,13 +798,18 @@ func TestSearchDescriptionPanicsWhenItsTemplateFails(t *testing.T) {
 		func() { searchDescription(nil) })
 }
 
+// Not parallel: FailConnectsForTest swaps a package-level function.
 func TestSearchReportsAFirstConnectThatFails(t *testing.T) {
 	tests := map[string]struct {
 		err  error
-		want string
+		want []string
 	}{
-		"needs auth": {err: fmt.Errorf("connect: %w", mcp.ErrNeedsAuth), want: "only a human can renew it"},
-		"other":      {err: errors.New("bad handshake"), want: "Failed to connect MCP 'cat-first-fail': bad handshake"},
+		"needs auth": {err: fmt.Errorf("connect: %w", mcp.ErrNeedsAuth), want: []string{
+			"MCP 'cat-first-fail' cannot be used: its authentication has expired and only a human can renew it.",
+			"Do not retry search_mcp_tools for 'cat-first-fail' this turn",
+			"`anvil mcp auth cat-first-fail`",
+		}},
+		"other": {err: errors.New("bad handshake"), want: []string{"Failed to connect MCP 'cat-first-fail': bad handshake"}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -814,7 +819,9 @@ func TestSearchReportsAFirstConnectThatFails(t *testing.T) {
 			resp := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-first-fail", "query": "logs"})
 
 			require.False(t, resp.IsError, "search reports an unusable server as a result, like the other states")
-			require.Contains(t, resp.Content, tc.want)
+			for _, want := range tc.want {
+				require.Contains(t, resp.Content, want)
+			}
 		})
 	}
 }

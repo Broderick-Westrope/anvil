@@ -58,7 +58,8 @@ func SetConnectingForTest(name string, busy bool) {
 }
 
 // FailConnectsForTest makes every new client session fail with err, and
-// returns a function that restores real connects. Pair with t.Cleanup.
+// returns a function that restores real connects. Pair with t.Cleanup. It
+// swaps a package-level function, so callers must not run in parallel.
 func FailConnectsForTest(err error) (restore func()) {
 	orig := newSession
 	newSession = func(context.Context, string, config.MCPConfig, config.VariableResolver, db.Querier) (*ClientSession, error) {
