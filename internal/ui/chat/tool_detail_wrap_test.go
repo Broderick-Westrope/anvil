@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Every line of every drill-in item fits the width it was rendered at, and
-// none of the text is lost, whatever the tool, so nothing is clipped at the
+// Every line of every drill-in item fits the width it was rendered at,
+// whatever the tool, its state and its input, so nothing is clipped at the
 // screen's edge.
 func TestToolDetailItemsFitWidth(t *testing.T) {
 	t.Parallel()
@@ -35,31 +35,46 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 		"raw":    long + word,
 		"params": mustJSON(t, map[string]any{"command": long + word, "file_path": "/tmp/" + word, "content": multi, "count": 3, "nested": map[string]any{"key": long}}),
 	}
+	statuses := map[string]ToolStatus{
+		"success":             ToolStatusSuccess,
+		"awaiting permission": ToolStatusAwaitingPermission,
+	}
 
 	for _, name := range tools {
 		for inputName, input := range inputs {
-			for _, width := range []int{1, 5, 8, 40, 80, 121} {
+			for statusName, status := range statuses {
 				for _, expanded := range []bool{false, true} {
-					result := &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output}
-					source := helperToolItem(t, name, input, result, ToolStatusSuccess)
-					sty := styles.TokyoNight()
-					for _, item := range BuildToolDetailItems(&sty, source, nil) {
-						if expanded {
-							if e, ok := item.(Expandable); ok {
-								e.ToggleExpanded()
-							}
+					t.Run(fmt.Sprintf("%s/%s/%s/expanded=%v", name, inputName, statusName, expanded), func(t *testing.T) {
+						t.Parallel()
+						var result *message.ToolResult
+						if status == ToolStatusSuccess {
+							result = &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output}
 						}
-						for _, focused := range []bool{false, true} {
-							if f, ok := item.(interface{ SetFocused(bool) }); ok {
-								f.SetFocused(focused)
-							}
-							for i, line := range strings.Split(item.Render(width), "\n") {
-								require.LessOrEqual(t, lipgloss.Width(line), width,
-									"tool %s, input %s, width %d, expanded %v: line %d of %s overflows: %q",
-									name, inputName, width, expanded, i, item.ID(), line)
-							}
-						}
-					}
+						requireDetailItemsFit(t, helperToolItem(t, name, input, result, status), expanded)
+					})
+				}
+			}
+		}
+	}
+}
+
+// requireDetailItemsFit renders each of source's drill-in items, focused
+// and not, at a range of widths, and fails on any line wider than one.
+func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded bool) {
+	t.Helper()
+	sty := styles.TokyoNight()
+	for _, item := range BuildToolDetailItems(&sty, source, nil) {
+		if e, ok := item.(Expandable); ok && expanded {
+			e.ToggleExpanded()
+		}
+		for _, focused := range []bool{false, true} {
+			if f, ok := item.(interface{ SetFocused(bool) }); ok {
+				f.SetFocused(focused)
+			}
+			for _, width := range []int{1, 5, 8, 40, 80, 121} {
+				for i, line := range strings.Split(item.Render(width), "\n") {
+					require.LessOrEqual(t, lipgloss.Width(line), width,
+						"width %d, focused %v: line %d of %s overflows: %q", width, focused, i, item.ID(), line)
 				}
 			}
 		}
