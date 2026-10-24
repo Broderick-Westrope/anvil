@@ -84,12 +84,12 @@ func routeFor(server toolsmcp.ServerSnapshot) mcpRoute {
 	route := mcpRoute{auto: true}
 	if server.SentBytes < catalogueThresholdBytes {
 		route.reason = fmt.Sprintf("auto: %s bytes, under %s", size, limit)
-		route.short = "under " + humanize.Bytes(catalogueThresholdBytes)
+		route.short = "<" + humanize.Bytes(catalogueThresholdBytes)
 		return route
 	}
 	route.catalogue = true
 	route.reason = fmt.Sprintf("auto: %s bytes, not under %s", size, limit)
-	route.short = humanize.Bytes(catalogueThresholdBytes) + " or more"
+	route.short = "≥" + humanize.Bytes(catalogueThresholdBytes)
 	return route
 }
 
