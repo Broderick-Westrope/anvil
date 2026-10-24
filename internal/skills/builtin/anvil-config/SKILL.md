@@ -213,7 +213,7 @@ Note: because the daemon is shared, a gopls crash affects all connected sessions
 - `command`, `args`, `env`, `headers`, and `url` are shell-expanded (see [Shell Expansion](#shell-expansion)).
 - Additional fields: `env`, `disabled`, `disabled_tools`, `enabled_tools`, `timeout`, `lazy_description`, `route`.
 - `route` (`auto`, `catalogue` or `direct`, default `auto`) says how the server's tools reach the model. Under `auto`, a server that's connected at startup with tools under 12,000 bytes is listed directly; every other server, including any with `lazy_description`, is reached through the `search_mcp_tools`, `describe_mcp_tool` and `call_mcp_tool` catalogue, so its schemas never enter the tool list. `anvil_info` shows each server's route and why. Prefer this to narrowing a large server with `enabled_tools`.
-- `lazy_description` defers the server's connection until first use and introduces it to the model. A lazy server always goes through the catalogue; Anvil refuses to load a config that also sets `"route": "direct"` on it.
+- `lazy_description` defers the server's connection until first use and introduces it to the model. A lazy server configured at startup goes through the catalogue (one that only appears later, such as after a reload, is listed directly once connected), and Anvil refuses to load a config that also sets `"route": "direct"` on it.
 
 ## Options
 

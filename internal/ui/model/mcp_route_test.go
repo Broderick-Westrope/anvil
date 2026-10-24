@@ -62,32 +62,33 @@ type routesWorkspace struct {
 
 func (w *routesWorkspace) MCPRoutes() ([]agenttools.MCPRouteInfo, bool) { return w.routes, true }
 
-func TestSidebarShowsAConnectedLazyServerAsConnected(t *testing.T) {
+func TestSidebarShowsADeferredLazyServerOfflineUntilItConnects(t *testing.T) {
 	t.Parallel()
 	u := newTestUI()
-	cfg := &config.Config{MCP: config.MCPs{
+	u.com.Workspace = &testWorkspace{cfg: &config.Config{MCP: config.MCPs{
 		"datadog": {Type: config.MCPHttp, LazyDescription: "Logs."},
 		"slack":   {Type: config.MCPHttp, LazyDescription: "Chat."},
-	}}
-	u.com.Workspace = &routesWorkspace{testWorkspace: &testWorkspace{cfg: cfg}, routes: []agenttools.MCPRouteInfo{{Server: "datadog", Catalogue: true}}}
+	}}}
 	u.mcpStates = map[string]mcp.ClientInfo{
-		"datadog": {Name: "datadog", State: mcp.StateConnected},
-		"slack":   {Name: "slack", State: mcp.StateConnected},
+		"datadog": {Name: "datadog", State: mcp.StateDeferred},
+		"slack":   {Name: "slack", State: mcp.StateConnected, Counts: mcp.Counts{Tools: 3}},
 	}
 
-	lines := strings.Split(ansi.Strip(u.mcpInfo(60, 10, false)), "\n")
-
 	var datadog, slack string
-	for _, line := range lines {
-		switch {
-		case strings.Contains(line, "datadog"):
+	for _, line := range strings.Split(u.mcpInfo(60, 10, false), "\n") {
+		switch plain := ansi.Strip(line); {
+		case strings.Contains(plain, "datadog"):
 			datadog = line
-		case strings.Contains(line, "slack"):
+		case strings.Contains(plain, "slack"):
 			slack = line
 		}
 	}
-	require.NotContains(t, datadog, "lazy")
-	require.NotContains(t, slack, "lazy", "an unrouted lazy server is listed once connected")
+	icons := u.com.Styles.Resource
+	require.NotEqual(t, icons.OfflineIcon.String(), icons.OnlineIcon.String(), "the icons must differ for this test to mean anything")
+	require.Contains(t, datadog, icons.OfflineIcon.String())
+	require.NotContains(t, ansi.Strip(datadog), "tools")
+	require.Contains(t, slack, icons.OnlineIcon.String())
+	require.Contains(t, ansi.Strip(slack), "3 tools")
 }
 
 func TestMCPPaletteLabelsEachServerWithItsRoute(t *testing.T) {
