@@ -8,6 +8,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/ui/dialog"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -87,4 +88,30 @@ func TestSidebarShowsAConnectedCatalogueServerAsConnected(t *testing.T) {
 	}
 	require.NotContains(t, datadog, "lazy")
 	require.Contains(t, slack, "lazy", "a lazy server routed direct still needs enabling")
+}
+
+func TestMCPPaletteLabelsEachServerWithItsRoute(t *testing.T) {
+	t.Parallel()
+	u := newTestUI()
+	u.dialog = dialog.NewOverlay()
+	cfg := &config.Config{MCP: config.MCPs{
+		"datadog": {Type: config.MCPHttp, LazyDescription: "Logs."},
+		"muninn":  {Type: config.MCPHttp},
+	}}
+	u.com.Workspace = &routesWorkspace{testWorkspace: &testWorkspace{cfg: cfg}, routes: []agenttools.MCPRouteInfo{
+		{Server: "datadog", Catalogue: true, Short: "lazy"},
+		{Server: "muninn", Short: "10 kB"},
+	}}
+	u.mcpStates = map[string]mcp.ClientInfo{
+		"datadog": {Name: "datadog", State: mcp.StateLazy},
+		"muninn":  {Name: "muninn", State: mcp.StateConnected},
+	}
+
+	require.Nil(t, u.openMCPPaletteDialog())
+	scr := uv.NewScreenBuffer(120, 40)
+	u.dialog.Draw(scr, scr.Bounds())
+	out := ansi.Strip(scr.Render())
+
+	require.Contains(t, out, "connected · catalogue (lazy)")
+	require.Contains(t, out, "connected · direct (10 kB)")
 }

@@ -63,3 +63,43 @@ func TestALiveCallMCPToolMatchesExpandedPatternsOnceItsInputArrives(t *testing.T
 
 	require.False(t, compactable.IsCompact())
 }
+
+func TestCallMCPToolWithoutAServerAndToolIsInvalid(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"no server": `{"tool":"search_logs","arguments":{}}`,
+		"no tool":   `{"server":"datadog","arguments":{}}`,
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			item := helperToolItem(t, "call_mcp_tool", input, &message.ToolResult{Content: "3 events"}, ToolStatusSuccess)
+
+			require.Contains(t, ansi.Strip(item.Render(80)), "Invalid parameters")
+		})
+	}
+}
+
+func TestAnMCPToolNameWithoutServerAndToolIsInvalid(t *testing.T) {
+	t.Parallel()
+	item := helperToolItem(t, "mcp_datadog", `{}`, &message.ToolResult{Content: "3 events"}, ToolStatusSuccess)
+
+	require.Contains(t, ansi.Strip(item.Render(80)), "Invalid tool name")
+}
+
+func TestUpdatingACallMCPToolKeepsTheUsersExpandChoice(t *testing.T) {
+	t.Parallel()
+	sty := styles.TokyoNight()
+	call := message.ToolCall{ID: "tc", Name: "call_mcp_tool", Input: `{"server":"datadog","tool":"search_logs","arguments":{}}`}
+	item := NewToolMessageItem(&sty, "msg", call, nil, false, ToolItemOptions{ExpandedPatterns: []string{"mcp_slack_*"}})
+	compactable := item.(interface {
+		IsCompact() bool
+		SetCompact(bool)
+	})
+	compactable.SetCompact(false)
+
+	call.Finished = true
+	item.SetToolCall(call)
+
+	require.False(t, compactable.IsCompact())
+}
