@@ -1,5 +1,12 @@
 package mcp
 
+import (
+	"context"
+
+	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/db"
+)
+
 // This file contains test-only helpers exported for cross-package tests.
 // They MUST NOT be used in production code. The ForTest suffix signals
 // this intent; the helpers are kept in a non-_test.go file because
@@ -48,4 +55,16 @@ func SetConnectingForTest(name string, busy bool) {
 		return
 	}
 	clearConnecting(name)
+}
+
+// FailConnectsForTest makes every connect fail with err, leaving the
+// server in error as a real failed connect does, and returns a function
+// that restores real connects. Pair with t.Cleanup.
+func FailConnectsForTest(err error) (restore func()) {
+	orig := newSession
+	newSession = func(_ context.Context, name string, _ config.MCPConfig, _ config.VariableResolver, _ db.Querier) (*ClientSession, error) {
+		updateState(name, StateError, err, nil, Counts{})
+		return nil, err
+	}
+	return func() { newSession = orig }
 }

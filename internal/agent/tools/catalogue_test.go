@@ -797,3 +797,24 @@ func TestSearchDescriptionPanicsWhenItsTemplateFails(t *testing.T) {
 		`failed to execute tool description template: template: broken:1:3: executing "broken" at <.Missing>: can't evaluate field Missing in type struct { Servers []tools.CatalogueServer }`,
 		func() { searchDescription(nil) })
 }
+
+func TestSearchReportsAFirstConnectThatFails(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want string
+	}{
+		"needs auth": {err: fmt.Errorf("connect: %w", mcp.ErrNeedsAuth), want: "only a human can renew it"},
+		"other":      {err: errors.New("bad handshake"), want: "Failed to connect MCP 'cat-first-fail': bad handshake"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogueFixture(t, "cat-first-fail", "", true, logSearchTool)
+			t.Cleanup(mcp.FailConnectsForTest(tc.err))
+
+			resp := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-first-fail", "query": "logs"})
+
+			require.False(t, resp.IsError, "search reports an unusable server as a result, like the other states")
+			require.Contains(t, resp.Content, tc.want)
+		})
+	}
+}
