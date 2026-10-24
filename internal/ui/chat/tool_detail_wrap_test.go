@@ -114,7 +114,6 @@ func TestToolDetailParamItemStacksWhenNarrow(t *testing.T) {
 	beside := strings.Split(ansi.Strip(item.Render(2+2+21+1+minParamValueWidth)), "\n")
 	require.Contains(t, beside[0], "abc")
 
-	item.cachedRender = ""
 	stacked := strings.Split(ansi.Strip(item.Render(2+2+21+minParamValueWidth)), "\n")
 	require.NotContains(t, stacked[0], "abc")
 	require.True(t, strings.HasPrefix(stacked[1], "      abc"), "the value is indented under the key: %q", stacked[1])
