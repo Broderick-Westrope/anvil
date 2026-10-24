@@ -57,13 +57,11 @@ func SetConnectingForTest(name string, busy bool) {
 	clearConnecting(name)
 }
 
-// FailConnectsForTest makes every connect fail with err, leaving the
-// server in error as a real failed connect does, and returns a function
-// that restores real connects. Pair with t.Cleanup.
+// FailConnectsForTest makes every new client session fail with err, and
+// returns a function that restores real connects. Pair with t.Cleanup.
 func FailConnectsForTest(err error) (restore func()) {
 	orig := newSession
-	newSession = func(_ context.Context, name string, _ config.MCPConfig, _ config.VariableResolver, _ db.Querier) (*ClientSession, error) {
-		updateState(name, StateError, err, nil, Counts{})
+	newSession = func(context.Context, string, config.MCPConfig, config.VariableResolver, db.Querier) (*ClientSession, error) {
 		return nil, err
 	}
 	return func() { newSession = orig }

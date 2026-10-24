@@ -338,7 +338,8 @@ func seedOldEnableMCPSession(t *testing.T, f *branchfixture.Fixture, server stri
 		message.TextContent{Text: "enabled"},
 		message.Finish{Reason: message.FinishReasonEndTurn},
 	}})
-	create(message.CreateMessageParams{Role: message.System, ParentMessageID: reply, MessageType: message.MessageTypeMCPToggle, Parts: []message.ContentPart{
+	// The palette wrote toggles without a role.
+	create(message.CreateMessageParams{ParentMessageID: reply, MessageType: message.MessageTypeMCPToggle, Parts: []message.ContentPart{
 		message.MCPToggleContent{ServerName: server, Enabled: true},
 	}})
 	return session

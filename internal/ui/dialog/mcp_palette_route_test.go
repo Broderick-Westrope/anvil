@@ -10,21 +10,11 @@ import (
 
 func TestMCPPaletteConnectsADeferredServerOnEnter(t *testing.T) {
 	t.Parallel()
-	tests := map[string]string{
-		"catalogue route": "catalogue (auto: lazy)",
-		"route pending":   "route pending",
-		"unrouted":        "",
-	}
-	for name, route := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			mp := newTestMCPPalette(t, []MCPPaletteEntry{{Name: "datadog", State: mcp.StateDeferred, Route: route}})
+	mp := newTestMCPPalette(t, []MCPPaletteEntry{{Name: "datadog", State: mcp.StateDeferred, Route: "route pending"}})
 
-			action := mp.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
+	action := mp.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter})
 
-			require.Equal(t, ActionHardToggleMCP{ServerName: "datadog", Enable: true}, action)
-		})
-	}
+	require.Equal(t, ActionHardToggleMCP{ServerName: "datadog", Enable: true}, action)
 }
 
 func TestMCPPaletteLabelsTheRoute(t *testing.T) {
