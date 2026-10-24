@@ -1055,7 +1055,7 @@ func toolOutputImageContent(sty *styles.Styles, data, mediaType string) string {
 		"%s %s %s %s",
 		sty.Tool.ResourceLoadedText.Render("Loaded Image"),
 		sty.Tool.ResourceLoadedIndicator.Render(styles.ArrowRightIcon),
-		sty.Tool.MediaType.Render(mediaType),
+		sty.Tool.MediaType.Render(oneLineSpace.Replace(mediaType)),
 		sty.Tool.ResourceSize.Render(sizeStr),
 	))
 }
@@ -1066,8 +1066,8 @@ func toolOutputSkillContent(sty *styles.Styles, name, description string) string
 		"%s %s %s %s",
 		sty.Tool.ResourceLoadedText.Render("Loaded Skill"),
 		sty.Tool.ResourceLoadedIndicator.Render(styles.ArrowRightIcon),
-		sty.Tool.ResourceName.Render(name),
-		sty.Tool.ResourceSize.Render(description),
+		sty.Tool.ResourceName.Render(oneLineSpace.Replace(name)),
+		sty.Tool.ResourceSize.Render(oneLineSpace.Replace(description)),
 	))
 }
 

@@ -29,9 +29,9 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	metadata := map[string]string{
 		"plain": "",
 		"diff": mustJSON(t, map[string]any{
-			"old_content": multi,
-			"new_content": multi + "\nadded " + long,
-			"diff":        "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-" + long + "\n+" + word,
+			"old_content": multi + "\r\nold\rline\tend",
+			"new_content": multi + "\nadded " + long + "\r\nnew\rline\tend",
+			"diff":        "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-" + long + "\r\n+" + word + "\tx\ry",
 		}),
 		"hook": mustJSON(t, map[string]any{"hook": map[string]any{
 			"hook_count": 1, "decision": "deny",
@@ -511,6 +511,8 @@ func TestOtherHeaderTextFlattensWhitespace(t *testing.T) {
 		"tool name":         mcp.Render(120),
 		"tool breadcrumb":   mcp.(ToolDrillInHandler).ToolDrillInLabel(),
 		"pending tool name": pending.Render(120),
+		"image type":        toolOutputImageContent(&sty, "AAAA", text),
+		"skill":             toolOutputSkillContent(&sty, text, text),
 		"job unknown event": renderJobNotice(&sty, "- "+line, 120, false),
 		"job watch":         renderJobNotice(&sty, "- Job 002 printed a line matching your watch ("+line+"): x", 120, false),
 		"job description":   renderJobNotice(&sty, "- Job 002 ended, killed (15s): "+line+".", 120, false),
@@ -632,4 +634,15 @@ func TestHookLineWrapsOnlyWithRoom(t *testing.T) {
 	cut := ansi.Strip(toolOutputHookIndicator(&sty, metadata, col+minParamValueWidth-1, true))
 	require.NotContains(t, cut, "\n")
 	require.True(t, strings.HasSuffix(cut, "…"), "%q", cut)
+}
+
+// An expanded header draws a tab as four spaces.
+func TestExpandedHeaderWidensTabs(t *testing.T) {
+	t.Parallel()
+
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "out"}
+	source := helperToolItem(t, "grep", mustJSON(t, map[string]any{"pattern": "first\nP\t\tQ"}), result, ToolStatusSuccess)
+	source.(Expandable).ToggleExpanded()
+
+	require.Contains(t, ansi.Strip(source.Render(80)), "P        Q")
 }
