@@ -56,17 +56,36 @@ func TestMCPInstructions(t *testing.T) {
 	// Names sort so every skipped server comes before an included one; a
 	// loop that stopped at the first skipped server would drop the rest.
 	connectMCPServers(t, map[string]string{
-		"test-instr-c-lazy":  "Use lazy.",
-		"test-instr-d-quiet": "",
-		"test-instr-e-plain": "Use plain.",
-		"test-instr-f-other": "Use other.",
-	}, "test-instr-c-lazy")
+		"test-instr-c-catalogue": "Use catalogue.",
+		"test-instr-d-quiet":     "",
+		"test-instr-e-plain":     "Use plain.",
+		"test-instr-f-other":     "Use other.",
+	})
 	mcp.SetStateWithErrorForTest("test-instr-a-broken", mcp.StateError, context.DeadlineExceeded)
 	t.Cleanup(func() { mcp.DeleteStateForTest("test-instr-a-broken") })
 	mcp.SetStateForTest("test-instr-b-deferred", mcp.StateDeferred)
 	t.Cleanup(func() { mcp.DeleteStateForTest("test-instr-b-deferred") })
 
-	require.Equal(t, "Use lazy.\n\nUse plain.\n\nUse other.\n\n", mcpInstructions(mcpListing{}))
+	catalogue := map[string]bool{"test-instr-c-catalogue": true}
+	tests := map[string]struct {
+		listing mcpListing
+		want    string
+	}{
+		"every connected server": {want: "Use catalogue.\n\nUse plain.\n\nUse other.\n\n"},
+		"a catalogue server": {
+			listing: mcpListing{catalogue: catalogue},
+			want:    "Use plain.\n\nUse other.\n\n",
+		},
+		"a catalogue server a workflow named": {
+			listing: mcpListing{catalogue: catalogue, named: catalogue},
+			want:    "Use catalogue.\n\nUse plain.\n\nUse other.\n\n",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, mcpInstructions(tc.listing))
+		})
+	}
 }
 
 func TestRunAppendsMCPInstructionsToSystemPrompt(t *testing.T) {
