@@ -26,15 +26,15 @@ import (
 // leaf it writes to, the assistant message of the current step, and the
 // usage capture. Its methods are the fantasy stream callbacks.
 type turn struct {
-	a              *sessionAgent
-	call           SessionAgentCall
-	largeModel     Model
-	providerCfg    config.ProviderConfig
-	promptPrefix   string
-	lazyMCPToolMap map[string]string
-	lazyState      *tools.LazyMCPState
-	injected       *injectedMessages
-	runID          string
+	a            *sessionAgent
+	call         SessionAgentCall
+	largeModel   Model
+	providerCfg  config.ProviderConfig
+	promptPrefix string
+	mcpListing   mcpListing
+	lazyState    *tools.LazyMCPState
+	injected     *injectedMessages
+	runID        string
 	// parentSessionID is set for child sessions.
 	parentSessionID string
 
@@ -89,8 +89,8 @@ func (t *turn) sessionTitle() string {
 // newAgent builds the model agent for this turn. Lazy MCP tools that
 // aren't enabled are left out, along with their server instructions.
 func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fantasy.Agent {
-	agentTools = filterLazyMCPTools(agentTools, t.lazyMCPToolMap, t.lazyState)
-	if s := mcpInstructions(t.lazyMCPToolMap, t.lazyState); s != "" {
+	agentTools = filterLazyMCPTools(agentTools, t.mcpListing.lazyTools, t.lazyState)
+	if s := mcpInstructions(t.mcpListing, t.lazyState); s != "" {
 		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
 	}
 	return fantasy.NewAgent(
@@ -229,6 +229,9 @@ func (t *turn) streamCall(history []fantasy.Message, files []fantasy.FilePart) f
 		TopK:             call.TopK,
 		FrequencyPenalty: call.FrequencyPenalty,
 		PrepareStep:      t.prepareStep,
+		// Set on the call: fantasy's Stream doesn't apply an agent-level
+		// repair function.
+		RepairToolCall: repairToolCall(t.mcpListing),
 		OnReasoningStart: func(_ string, reasoning fantasy.ReasoningContent) error {
 			t.assistant.AppendReasoningContent(reasoning.Text)
 			return t.a.messages.Update(t.genCtx, *t.assistant)
@@ -271,7 +274,7 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 	// Use latest tools (updated by SetTools when MCP tools change),
 	// filtering out lazy MCP tools that haven't been enabled.
 	prepared.Tools = withCachedLastTool(
-		t.timed(filterLazyMCPTools(a.tools.Copy(), t.lazyMCPToolMap, t.lazyState)),
+		t.timed(filterLazyMCPTools(a.tools.Copy(), t.mcpListing.lazyTools, t.lazyState)),
 		a.getCacheControlOptions(),
 	)
 

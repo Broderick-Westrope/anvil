@@ -159,7 +159,7 @@ func TestBuildToolsReportsToolErrorsToTheModel(t *testing.T) {
 	c := &coordinator{cfg: cfg}
 
 	for _, depth := range []int{1, 3} {
-		builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, depth, nil, nil, nil, nil, nil)
+		builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, depth, nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 		require.NotEmpty(t, builtTools)
 		for _, tool := range builtTools {

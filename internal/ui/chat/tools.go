@@ -186,6 +186,10 @@ type baseToolMessageItem struct {
 	hasCappedWidth bool
 	// isCompact indicates this tool should render in compact mode.
 	isCompact bool
+	// expandPatterns are the expanded_tools patterns, kept for a
+	// call_mcp_tool item: its inner name, which they match, is only known
+	// once its input has streamed in.
+	expandPatterns []string
 	// spinningFunc allows tools to override the default spinning logic.
 	// If nil, uses the default: !toolCall.Finished && !canceled.
 	spinningFunc SpinningFunc
@@ -322,6 +326,8 @@ func NewToolMessageItem(
 		item = NewReferencesToolMessageItem(sty, toolCall, result, canceled)
 	case tools.LSPRestartToolName:
 		item = NewLSPRestartToolMessageItem(sty, toolCall, result, canceled)
+	case tools.CallMCPToolToolName:
+		item = NewCatalogueCallMessageItem(sty, toolCall, result, canceled, opts.ExpandedPatterns)
 	default:
 		if IsDockerMCPTool(toolCall.Name) {
 			item = NewDockerMCPToolMessageItem(sty, toolCall, result, canceled)
@@ -337,7 +343,7 @@ func NewToolMessageItem(
 	case tools.TodosToolName, agent.TaskToolName, tools.AgenticFetchToolName:
 		// Keep current (expanded) behavior.
 	default:
-		compact := !config.IsToolExpanded(opts.ExpandedPatterns, toolCall.Name)
+		compact := !config.IsToolExpanded(opts.ExpandedPatterns, expandName(toolCall))
 		if compactable, ok := item.(Compactable); ok {
 			compactable.SetCompact(compact)
 		}
@@ -501,7 +507,11 @@ func (t *baseToolMessageItem) ToolCall() message.ToolCall {
 
 // SetToolCall sets the tool call associated with this message item.
 func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
+	before := expandName(t.toolCall)
 	t.toolCall = tc
+	if after := expandName(tc); t.expandPatterns != nil && after != before {
+		t.isCompact = !config.IsToolExpanded(t.expandPatterns, after)
+	}
 	t.clearCache()
 	t.Bump()
 }

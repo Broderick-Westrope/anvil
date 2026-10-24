@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/app"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
@@ -321,4 +322,24 @@ func TestAgentBranchSummary_PassesThrough(t *testing.T) {
 	require.NoError(t, ws.AgentDiscardBranchSummary(t.Context(), "s", "summary"))
 	require.Equal(t, []string{"summary"}, coord.discarded)
 	require.Equal(t, []string{"branch-summarizer"}, ws.AgentBranchSummarizers())
+}
+
+// routesCoordinator reports one fixed MCP route.
+type routesCoordinator struct {
+	agent.Coordinator
+}
+
+func (routesCoordinator) MCPRoutes() ([]agenttools.MCPRouteInfo, bool) {
+	return []agenttools.MCPRouteInfo{{Server: "datadog", Catalogue: true}}, true
+}
+
+func TestMCPRoutes(t *testing.T) {
+	t.Parallel()
+	routes, ready := NewAppWorkspace(&app.App{}, nil).MCPRoutes()
+	require.False(t, ready, "pending without a coordinator")
+	require.Nil(t, routes)
+
+	routes, ready = NewAppWorkspace(&app.App{AgentCoordinator: routesCoordinator{}}, nil).MCPRoutes()
+	require.True(t, ready)
+	require.Equal(t, []agenttools.MCPRouteInfo{{Server: "datadog", Catalogue: true}}, routes)
 }

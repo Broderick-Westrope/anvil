@@ -105,7 +105,7 @@ type SessionAgent interface {
 	SetModels(large Model, small Model)
 	SetProviderConfig(cfg config.ProviderConfig)
 	SetTools(tools []fantasy.AgentTool)
-	SetLazyMCPToolMap(m map[string]string)
+	SetMCPListing(listing mcpListing)
 	SetConnectFn(fn tools.ConnectFn)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
@@ -143,7 +143,7 @@ type sessionAgent struct {
 	systemPromptPrefix *csync.Value[string]
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
-	lazyMCPToolMap     *csync.Map[string, string]
+	mcpListing         *csync.Value[mcpListing]
 	connectFn          *csync.Value[tools.ConnectFn]
 	// runningSteps holds the assistant message IDs of steps in flight.
 	// The coordinator shares one set between all its agents.
@@ -257,7 +257,7 @@ func NewSessionAgent(
 		messages:             opts.Messages,
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                csync.NewSliceFrom(opts.Tools),
-		lazyMCPToolMap:       csync.NewMap[string, string](),
+		mcpListing:           csync.NewValue(mcpListing{}),
 		connectFn:            csync.NewValue[tools.ConnectFn](nil),
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
@@ -308,15 +308,15 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
 	agentTools := a.tools.Copy()
 	t := &turn{
-		a:              a,
-		call:           call,
-		largeModel:     a.largeModel.Get(),
-		providerCfg:    a.providerConfig.Get(),
-		promptPrefix:   a.systemPromptPrefix.Get(),
-		lazyMCPToolMap: a.lazyMCPToolMap.Copy(),
-		injected:       newInjectedMessages(),
-		runID:          uuid.NewString(),
-		sanitized:      make(map[string]bool),
+		a:            a,
+		call:         call,
+		largeModel:   a.largeModel.Get(),
+		providerCfg:  a.providerConfig.Get(),
+		promptPrefix: a.systemPromptPrefix.Get(),
+		mcpListing:   a.mcpListing.Get(),
+		injected:     newInjectedMessages(),
+		runID:        uuid.NewString(),
+		sanitized:    make(map[string]bool),
 	}
 
 	currentSession, err := a.sessions.Get(ctx, call.SessionID)
@@ -338,6 +338,11 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// Derive the lazy MCP state from conversation history and inject
 	// into the context so tool handlers can query it.
 	initialEnabled := deriveLazyMCPState(raw)
+	// A catalogue server enabled before it was routed through the
+	// catalogue stays off: its tools are never listed.
+	for server := range t.mcpListing.catalogue {
+		delete(initialEnabled, server)
+	}
 	t.lazyState = tools.NewLazyMCPState(initialEnabled)
 	ctx = tools.WithLazyMCPState(ctx, t.lazyState)
 
@@ -1241,8 +1246,8 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 	a.tools.SetSlice(tools)
 }
 
-func (a *sessionAgent) SetLazyMCPToolMap(m map[string]string) {
-	a.lazyMCPToolMap.Reset(m)
+func (a *sessionAgent) SetMCPListing(listing mcpListing) {
+	a.mcpListing.Set(listing)
 }
 
 func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
@@ -1251,9 +1256,9 @@ func (a *sessionAgent) SetConnectFn(fn tools.ConnectFn) {
 
 func (a *sessionAgent) RequestOverhead() int {
 	off := tools.NewLazyMCPState(nil)
-	lazy := a.lazyMCPToolMap.Copy()
-	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(lazy, off))
-	for _, tool := range filterLazyMCPTools(a.tools.Copy(), lazy, off) {
+	listing := a.mcpListing.Get()
+	size := len(a.systemPromptPrefix.Get()) + len(a.systemPrompt.Get()) + len(mcpInstructions(listing, off))
+	for _, tool := range filterLazyMCPTools(a.tools.Copy(), listing.lazyTools, off) {
 		info := tool.Info()
 		schema, err := json.Marshal(struct {
 			Name        string   `json:"name"`

@@ -54,7 +54,7 @@ func (m *mockSessionAgent) SetModels(large, small Model) {
 }
 func (m *mockSessionAgent) SetProviderConfig(_ config.ProviderConfig) {}
 func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)        {}
-func (m *mockSessionAgent) SetLazyMCPToolMap(_ map[string]string)     {}
+func (m *mockSessionAgent) SetMCPListing(mcpListing)                  {}
 func (m *mockSessionAgent) SetConnectFn(_ tools.ConnectFn)            {}
 func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)       {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
@@ -989,7 +989,7 @@ func TestSkillsUsageParity(t *testing.T) {
 				for _, allowedSkills := range [][]string{nil, {}} {
 					agentCfg := config.Agent{ID: agentName, AllowedTools: tt.allowed, AllowedSkills: allowedSkills}
 					active := []*skills.Skill{{Name: "example", Description: "Example skill", SkillFilePath: "/private/example/SKILL.md"}}
-					builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, active, active, nil, nil, nil)
+					builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, active, active, nil, nil, nil, nil)
 					require.NoError(t, err)
 					hasView := false
 					for _, tool := range builtTools {
@@ -1034,7 +1034,7 @@ func TestJobToolNamesCoversRegisteredJobTools(t *testing.T) {
 	require.NoError(t, err)
 	cfg.Config().MCP = nil
 	c := &coordinator{cfg: cfg}
-	builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil)
+	builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	var registered []string
@@ -1085,7 +1085,7 @@ func TestBuildToolsAutoGrantsJobTools(t *testing.T) {
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
 			agentCfg := config.Agent{ID: "fixer", AllowedTools: tt.allowed}
-			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
@@ -1123,7 +1123,7 @@ func TestBuildToolsWarnsOnInvalidAllowedTools(t *testing.T) {
 			require.NoError(t, err)
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
-			builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "fixer", AllowedTools: tt.allowed}, 1, nil, nil, nil, nil, nil)
+			builtTools, _, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "fixer", AllowedTools: tt.allowed}, 1, nil, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantWarn, strings.Contains(logs.String(), warning), logs.String())
 			hasBash := slices.ContainsFunc(builtTools, func(tool fantasy.AgentTool) bool { return tool.Info().Name == tools.BashToolName })
@@ -1158,7 +1158,7 @@ func TestBuildToolsTaskToolFollowsDelegates(t *testing.T) {
 			cfg.Config().MCP = nil
 			c := &coordinator{cfg: cfg}
 			agentCfg := config.Agent{ID: tt.agentID, AllowedTools: []string{TaskToolName, tools.ViewToolName}}
-			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, tt.depth, nil, nil, nil, tt.agentMDs, nil)
+			builtTools, _, err := c.buildToolsWithState(t.Context(), agentCfg, tt.depth, nil, nil, nil, tt.agentMDs, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
@@ -1237,7 +1237,7 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			agentCfg := config.Agent{ID: "fixer", AllowedTools: []string{tools.ViewToolName}, AllowedMCP: tt.allowedMCP}
-			builtTools, lazyMap, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil)
+			builtTools, lazyMap, err := c.buildToolsWithState(t.Context(), agentCfg, 1, nil, nil, nil, nil, nil, nil)
 			require.NoError(t, err)
 			var names []string
 			for _, tool := range builtTools {
@@ -1248,7 +1248,7 @@ func TestBuildToolsAppliesAllowedMCP(t *testing.T) {
 				}
 			}
 			require.Equal(t, tt.want, names)
-			require.Equal(t, tt.wantLazy, lazyMap)
+			require.Equal(t, tt.wantLazy, lazyMap.lazyTools)
 		})
 	}
 }
@@ -1616,7 +1616,24 @@ func TestConnectDeferredMCP(t *testing.T) {
 	t.Cleanup(func() { toolsmcp.DeleteStateForTest(connected) })
 	_, err = c.connectDeferredMCP(t.Context(), connected)
 	require.ErrorIs(t, err, errOrchestratorAgentNotConfigured, "a connected server goes on to refresh the tools")
+
+	toolsmcp.SetToolsForTest(connected, &toolsmcp.Tool{Name: "ping"})
+	t.Cleanup(func() { toolsmcp.DeleteToolsForTest(connected) })
+	orch := &toolRecordingSessionAgent{}
+	c.agentConfigs[config.AgentOrchestrator] = config.Agent{ID: config.AgentOrchestrator}
+	c.orchestrator = orch
+	count, err := c.connectDeferredMCP(t.Context(), connected)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	require.NotEmpty(t, orch.tools, "the rebuilt tools reach the orchestrator")
 }
+
+type toolRecordingSessionAgent struct {
+	mockSessionAgent
+	tools []fantasy.AgentTool
+}
+
+func (a *toolRecordingSessionAgent) SetTools(tools []fantasy.AgentTool) { a.tools = tools }
 
 func TestGetProviderOptionsTopKExtraBody(t *testing.T) {
 	// "ollama" has a registered discover.Enricher, so it is treated as a

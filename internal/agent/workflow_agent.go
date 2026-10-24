@@ -155,7 +155,7 @@ func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgent
 	if err := toolsmcp.WaitForInit(ctx); err != nil {
 		return nil, nil, fmt.Errorf("wait for MCP initialization: %w", err)
 	}
-	available, lazy, err := c.buildTools(ctx, agentCfg, workflowAgentDepth)
+	available, listing, err := c.buildTools(ctx, agentCfg, workflowAgentDepth, call.Tools...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -167,7 +167,7 @@ func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgent
 				return nil, nil, fmt.Errorf("connect MCP server %q: %w", server, err)
 			}
 		}
-		if available, lazy, err = c.buildTools(ctx, agentCfg, workflowAgentDepth); err != nil {
+		if available, listing, err = c.buildTools(ctx, agentCfg, workflowAgentDepth, call.Tools...); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -208,9 +208,9 @@ func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgent
 	// Lazy MCP tools stay hidden until enabled, as for any agent, except
 	// ones the workflow asked for by name.
 	for _, name := range call.Tools {
-		delete(lazy, name)
+		delete(listing.lazyTools, name)
 	}
-	sub.SetLazyMCPToolMap(lazy)
+	sub.SetMCPListing(listing)
 	return sub, submit, nil
 }
 

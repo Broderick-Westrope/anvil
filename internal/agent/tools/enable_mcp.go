@@ -95,7 +95,7 @@ func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.A
 					return enableDeferred(ctx, params.ServerName, state, connectFn)
 				case mcp.StateError:
 					if info.NeedsAuth {
-						return authRequiredResponse(params.ServerName), nil
+						return authRequiredResponse(params.ServerName, EnableMCPToolName), nil
 					}
 					errMsg := "unknown error"
 					if info.Error != nil {
@@ -121,13 +121,7 @@ func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.A
 			}
 
 			// Count tools for this server.
-			toolCount := 0
-			for mcpName, tools := range mcp.Tools() {
-				if mcpName == params.ServerName {
-					toolCount = len(tools)
-					break
-				}
-			}
+			toolCount := len(mcp.ServerTools(params.ServerName))
 
 			return fantasy.NewTextResponse(
 				fmt.Sprintf("Enabled %s MCP (%d tools available)", params.ServerName, toolCount),
@@ -141,18 +135,19 @@ func NewEnableMCPTool(lazyMCPs map[string]string, connectFn ConnectFn) fantasy.A
 // success response rather than an error: the call did not fail
 // because of a malformed request, and framing it as an error pushes
 // models toward retry loops. The wording tells the model not to
-// retry within the turn and not to attempt a shell command.
-func authRequiredResponse(name string) fantasy.ToolResponse {
+// retry within the turn and not to attempt a shell command. The tool
+// argument names the tool the model shouldn't retry.
+func authRequiredResponse(name, tool string) fantasy.ToolResponse {
 	msg := fmt.Sprintf(
-		"MCP '%s' cannot be enabled: its authentication has expired "+
+		"MCP '%s' cannot be used: its authentication has expired "+
 			"and only a human can renew it. The user has been notified "+
-			"in the UI. Do not retry enable_mcp for '%s' this turn and "+
+			"in the UI. Do not retry %s for '%s' this turn and "+
 			"do not attempt to authenticate yourself. Tell the user "+
 			"that '%s' needs re-authentication, then continue with "+
 			"whatever part of the task does not need it."+
 			" (If this is a non-interactive session, the user must run "+
 			"`anvil mcp auth %s`.)",
-		name, name, name, name)
+		name, tool, name, name, name)
 	return fantasy.NewTextResponse(msg)
 }
 
@@ -170,7 +165,7 @@ func enableDeferred(ctx context.Context, name string, state *LazyMCPState, conne
 	toolCount, err := connectFn(ctx, name)
 	if err != nil {
 		if mcp.NeedsAuth(err) {
-			return authRequiredResponse(name), nil
+			return authRequiredResponse(name, EnableMCPToolName), nil
 		}
 		return fantasy.NewTextErrorResponse(
 			fmt.Sprintf("Failed to connect MCP '%s': %s", name, err),

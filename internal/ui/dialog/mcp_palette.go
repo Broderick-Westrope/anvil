@@ -23,6 +23,12 @@ type MCPPaletteEntry struct {
 	NeedsAuth   bool      // Whether the server needs re-authentication.
 	State       mcp.State // Current connection state.
 	Counts      mcp.Counts
+	// Route says how the server's tools reach the model and why, such
+	// as "catalogue (auto: lazy)". Empty when unknown.
+	Route string
+	// Catalogue is set for a server reached through the tool catalogue.
+	// It is never lazy-toggled, since its tools are never listed.
+	Catalogue bool
 }
 
 // MCPPaletteItem wraps an MCP entry to implement the ListItem interface for
@@ -74,8 +80,17 @@ func (i *MCPPaletteItem) SetMatch(m fuzzy.Match) {
 	i.Bump()
 }
 
-// infoLabel returns a human-readable label for the item's right-side info.
+// infoLabel returns a human-readable label for the item's right-side info,
+// followed by its route when known.
 func (i *MCPPaletteItem) infoLabel() string {
+	label := i.stateLabel()
+	if i.entry.Route == "" {
+		return label
+	}
+	return label + " · " + i.entry.Route
+}
+
+func (i *MCPPaletteItem) stateLabel() string {
 	if i.entry.NeedsAuth {
 		return "needs auth"
 	}
@@ -96,6 +111,10 @@ func (i *MCPPaletteItem) infoLabel() string {
 	}
 	if i.entry.IsLazy && i.entry.Enabled {
 		return "✓ enabled"
+	}
+	if i.entry.Catalogue && i.entry.State == mcp.StateLazy {
+		// Connected; a catalogue server needs no enabling.
+		return mcp.StateConnected.String()
 	}
 	if i.entry.IsLazy {
 		return "lazy"
@@ -304,6 +323,11 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 					// Non-auth errors: retry the connection.
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateDeferred:
+					if item.entry.Catalogue {
+						// A catalogue server connects on first
+						// search; Enter connects it now.
+						return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
+					}
 					// Deferred servers route through the lazy toggle path
 					// so the enable is persisted as MCPToggleContent and
 					// Run-start reconnect handles the actual connection.

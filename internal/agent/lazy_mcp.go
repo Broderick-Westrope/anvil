@@ -129,11 +129,11 @@ func reconnectDeferredServers(
 }
 
 // mcpInstructions joins the instructions of connected MCP servers in name
-// order, leaving out lazy servers that aren't enabled. The order is fixed so
-// the system prompt is identical across runs and its prompt cache stays
-// valid.
-func mcpInstructions(lazyMCPToolMap map[string]string, lazyState *tools.LazyMCPState) string {
-	lazyServers := lazyServerNames(lazyMCPToolMap)
+// order, leaving out lazy servers that aren't enabled and catalogue
+// servers (search results carry theirs). The order is fixed so the system
+// prompt is identical across runs and its prompt cache stays valid.
+func mcpInstructions(listing mcpListing, lazyState *tools.LazyMCPState) string {
+	lazyServers := lazyServerNames(listing.lazyTools)
 	states := mcp.GetStates()
 	var instructions strings.Builder
 	for _, name := range slices.Sorted(maps.Keys(states)) {
@@ -141,7 +141,7 @@ func mcpInstructions(lazyMCPToolMap map[string]string, lazyState *tools.LazyMCPS
 		if server.State != mcp.StateConnected && server.State != mcp.StateLazy {
 			continue
 		}
-		if lazyServers[name] && !lazyState.IsEnabled(name) {
+		if listing.catalogue[name] && !listing.named[name] || lazyServers[name] && !lazyState.IsEnabled(name) {
 			continue
 		}
 		if s := server.Client.InitializeResult().Instructions; s != "" {

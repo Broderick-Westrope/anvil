@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/agent"
+	agenttools "github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	mcptools "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/app/workflowhost"
 	"github.com/Broderick-Westrope/anvil/internal/commands"
@@ -252,6 +253,9 @@ type Workspace interface {
 	MCPRefreshPrompts(ctx context.Context, name string)
 	MCPRefreshResources(ctx context.Context, name string)
 	RefreshMCPTools(ctx context.Context, name string)
+	// MCPRoutes returns how each MCP server's tools reach the model, in
+	// name order, and false until MCP initialisation has finished.
+	MCPRoutes() ([]agenttools.MCPRouteInfo, bool)
 	ReadMCPResource(ctx context.Context, name, uri string) ([]MCPResourceContents, error)
 	GetMCPPrompt(clientID, promptID string, args map[string]string) (string, error)
 	EnableDockerMCP(ctx context.Context) error

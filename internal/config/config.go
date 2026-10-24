@@ -292,6 +292,20 @@ const (
 	MCPAuthOAuth MCPAuthType = "oauth"
 )
 
+// MCPRoute says how an MCP server's tools reach the model.
+type MCPRoute string
+
+const (
+	// MCPRouteAuto lets Anvil choose: small, connected servers are
+	// listed directly and everything else goes through the catalogue.
+	MCPRouteAuto MCPRoute = "auto"
+	// MCPRouteCatalogue reaches the server's tools only through
+	// search_mcp_tools, describe_mcp_tool and call_mcp_tool.
+	MCPRouteCatalogue MCPRoute = "catalogue"
+	// MCPRouteDirect lists the server's tools in the tool list.
+	MCPRouteDirect MCPRoute = "direct"
+)
+
 type MCPConfig struct {
 	Command       string            `json:"command,omitempty" jsonschema:"description=Command to execute for stdio MCP servers,example=npx"`
 	Env           map[string]string `json:"env,omitempty" jsonschema:"description=Environment variables to set for the MCP server"`
@@ -330,6 +344,10 @@ type MCPConfig struct {
 	// enabled by the agent or human. The value is surfaced to the LLM
 	// so it can decide when to enable the server.
 	LazyDescription string `json:"lazy_description,omitempty" jsonschema:"description=Short description shown to the LLM; when set the server's tools are hidden until explicitly enabled"`
+
+	// Route chooses whether the server's tools are listed directly or
+	// reached through the MCP tool catalogue. Empty means auto.
+	Route MCPRoute `json:"route,omitempty" jsonschema:"description=How the server's tools reach the model: auto lists small connected servers directly and routes the rest through the catalogue,enum=auto,enum=catalogue,enum=direct,default=auto"`
 }
 
 // IsLazy reports whether the MCP server's tools are lazy-loaded.
