@@ -687,7 +687,7 @@ func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
 
 // ToolDrillInLabel returns the tool display name for the breadcrumb.
 func (t *baseToolMessageItem) ToolDrillInLabel() string {
-	return prettifyToolName(t.toolCall.Name)
+	return oneLineSpace.Replace(prettifyToolName(t.toolCall.Name))
 }
 
 // Finished implements list.Item. A tool call is freezable once the

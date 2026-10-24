@@ -267,7 +267,7 @@ func (h *toolDetailHeaderItem) Render(width int) string {
 	prefix := detailPrefix(h.sty, h.focused)
 	tc := h.source.ToolCall()
 	icon := toolIcon(h.sty, status)
-	name := h.sty.Tool.NameNormal.Render(prettifyToolName(tc.Name))
+	name := h.sty.Tool.NameNormal.Render(oneLineSpace.Replace(prettifyToolName(tc.Name)))
 	rendered := fmt.Sprintf("%s %s", icon, name)
 	// Hints go from the right until the rest fit; the help bar still has
 	// the keys.
@@ -487,7 +487,7 @@ const minParamValueWidth = 20
 
 // renderBody renders the parameter at width, without the focus bar.
 func (p *toolDetailParamItem) renderBody(width int) string {
-	key := p.sty.Tool.NameNested.Render(p.key + ":")
+	key := p.sty.Tool.NameNested.Render(oneLineSpace.Replace(p.key) + ":")
 	keyLine := indentLines(lipgloss.Wrap(key, max(1, width-2), ""), 2, 2)
 
 	if val, multi := p.isMultiLine(); multi {

@@ -40,12 +40,12 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 		"bash", "view", "edit", "multiedit", "write", "grep", "glob", "ls",
 		"fetch", "download", "sourcegraph", "lsp_diagnostics",
 		"lsp_references", "job_output", "job_list", "mcp_server_tool",
-		"unknown_tool",
+		"unknown_tool", "mcp_server_odd\r\nname\rwith\ttab",
 	}
 	inputs := map[string]string{
 		"raw":              long + word,
 		"raw with returns": "first\rsecond\r\nthird\t" + long,
-		"returns":          mustJSON(t, map[string]any{"command": "first\rsecond\t" + long, "content": "a\r\nb\rc"}),
+		"returns":          mustJSON(t, map[string]any{"command": "first\rsecond\t" + long, "content": "a\r\nb\rc", "odd\r\nkey\rwith\ttab": "v"}),
 		"params":           mustJSON(t, map[string]any{"command": long + word, "file_path": "/tmp/" + word, "content": multi, "count": 3, "nested": map[string]any{"key": long}}),
 	}
 	statuses := map[string]ToolStatus{
@@ -508,6 +508,7 @@ func TestOtherHeaderTextFlattensWhitespace(t *testing.T) {
 		"agent breadcrumb":  agent.(AgentDrillInHandler).AgentDrillInLabel(),
 		"fetch breadcrumb":  fetch.(AgentDrillInHandler).AgentDrillInLabel(),
 		"tool name":         mcp.Render(120),
+		"tool breadcrumb":   mcp.(ToolDrillInHandler).ToolDrillInLabel(),
 		"pending tool name": pending.Render(120),
 		"job unknown event": renderJobNotice(&sty, "- "+line, 120, false),
 		"job description":   renderJobNotice(&sty, "- Job 002 ended, killed (15s): "+line+".", 120, false),
