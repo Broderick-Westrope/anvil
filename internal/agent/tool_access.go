@@ -9,7 +9,7 @@ import (
 
 // toolAccess decides which tools an agent may use. Built-in tools follow
 // the agent's AllowedTools filter and the global DisabledTools list; MCP
-// tools and lazy MCPs follow the agent's AllowedMCP map.
+// tools and the MCP catalogue follow the agent's AllowedMCP map.
 type toolAccess struct {
 	allowedTools  []string
 	disabledTools []string
@@ -65,8 +65,8 @@ func (a toolAccess) allowsMCPTool(server, tool string) bool {
 	return ok && (len(serverTools) == 0 || slices.Contains(serverTools, tool))
 }
 
-// allowsMCPServer reports whether the agent may enable the lazy MCP
-// server: AllowedMCP is nil or lists the server.
+// allowsMCPServer reports whether the agent may use the MCP server at
+// all: AllowedMCP is nil or lists the server.
 func (a toolAccess) allowsMCPServer(server string) bool {
 	if a.allowedMCP == nil {
 		return true

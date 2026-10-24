@@ -205,11 +205,6 @@ func (c *coordinator) buildWorkflowAgent(ctx context.Context, call WorkflowAgent
 		return nil, nil, err
 	}
 	sub.SetTools(agentTools)
-	// Lazy MCP tools stay hidden until enabled, as for any agent, except
-	// ones the workflow asked for by name.
-	for _, name := range call.Tools {
-		delete(listing.lazyTools, name)
-	}
 	sub.SetMCPListing(listing)
 	return sub, submit, nil
 }

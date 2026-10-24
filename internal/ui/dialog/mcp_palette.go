@@ -17,18 +17,13 @@ import (
 // MCPPaletteEntry holds data for each row in the MCP palette.
 type MCPPaletteEntry struct {
 	Name        string
-	Description string // Lazy description from config.
-	IsLazy      bool
-	Enabled     bool      // Whether currently enabled on this branch.
+	Description string    // Lazy description from config.
 	NeedsAuth   bool      // Whether the server needs re-authentication.
 	State       mcp.State // Current connection state.
 	Counts      mcp.Counts
 	// Route says how the server's tools reach the model and why, such
 	// as "catalogue (auto: lazy)". Empty when unknown.
 	Route string
-	// Catalogue is set for a server reached through the tool catalogue.
-	// It is never lazy-toggled, since its tools are never listed.
-	Catalogue bool
 }
 
 // MCPPaletteItem wraps an MCP entry to implement the ListItem interface for
@@ -97,27 +92,11 @@ func (i *MCPPaletteItem) stateLabel() string {
 	if i.entry.State == mcp.StateDisabled {
 		return "disabled"
 	}
-	if i.entry.State == mcp.StateDeferred {
-		// An enabled-but-deferred server has a persisted toggle awaiting
-		// its Run-start connection; reflect that so toggling gives
-		// feedback instead of a static "deferred" label.
-		if i.entry.IsLazy && i.entry.Enabled {
-			return "✓ deferred (pending)"
-		}
-		return "deferred"
-	}
 	if i.entry.State == mcp.StateStarting {
 		return "connecting..."
 	}
-	if i.entry.IsLazy && i.entry.Enabled {
-		return "✓ enabled"
-	}
-	if i.entry.Catalogue && i.entry.State == mcp.StateLazy {
-		// Connected; a catalogue server needs no enabling.
+	if i.entry.State == mcp.StateLazy {
 		return mcp.StateConnected.String()
-	}
-	if i.entry.IsLazy {
-		return "lazy"
 	}
 	return i.entry.State.String()
 }
@@ -142,7 +121,6 @@ type MCPPalette struct {
 	com    *common.Common
 	keyMap struct {
 		Select,
-		LazyToggle,
 		UpDown,
 		Next,
 		Previous,
@@ -180,10 +158,6 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 	mp.keyMap.Select = key.NewBinding(
 		key.WithKeys("enter", " "),
 		key.WithHelp("enter/space", "toggle"),
-	)
-	mp.keyMap.LazyToggle = key.NewBinding(
-		key.WithKeys("l"),
-		key.WithHelp("l", "toggle lazy"),
 	)
 	mp.keyMap.UpDown = key.NewBinding(
 		key.WithKeys("up", "down"),
@@ -224,19 +198,6 @@ func NewMCPPalette(com *common.Common, entries []MCPPaletteEntry) *MCPPalette {
 // ID implements Dialog.
 func (mp *MCPPalette) ID() string {
 	return MCPPaletteID
-}
-
-// SetEntryEnabled updates the enabled state of a named entry in the list
-// and bumps its version so the render cache is invalidated.
-func (mp *MCPPalette) SetEntryEnabled(name string, enabled bool) {
-	for _, item := range mp.list.Items() {
-		if pi, ok := item.(*MCPPaletteItem); ok && pi.entry.Name == name {
-			pi.entry.Enabled = enabled
-			pi.cache = nil
-			pi.Bump()
-			return
-		}
-	}
 }
 
 // SetEntryState updates the connection state of a named entry.
@@ -322,38 +283,14 @@ func (mp *MCPPalette) handleNavKey(msg tea.KeyPressMsg) Action {
 					}
 					// Non-auth errors: retry the connection.
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
-				case mcp.StateDeferred:
-					if item.entry.Catalogue {
-						// A catalogue server connects on first
-						// search; Enter connects it now.
-						return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
-					}
-					// Deferred servers route through the lazy toggle path
-					// so the enable is persisted as MCPToggleContent and
-					// Run-start reconnect handles the actual connection.
-					// Toggle (not just enable) so Enter can also revert a
-					// pending enable.
-					return ActionToggleLazyMCP{
-						ServerName: item.entry.Name,
-						Enabled:    !item.entry.Enabled,
-					}
-				case mcp.StateDisabled:
+				case mcp.StateDeferred, mcp.StateDisabled:
+					// A deferred server connects on its first catalogue
+					// search; Enter connects it now.
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: true}
 				case mcp.StateConnected, mcp.StateLazy:
 					return ActionHardToggleMCP{ServerName: item.entry.Name, Enable: false}
 				case mcp.StateStarting:
 					// Already connecting — ignore.
-				}
-			}
-		}
-	case key.Matches(msg, mp.keyMap.LazyToggle):
-		if selected := mp.list.SelectedItem(); selected != nil {
-			if item, ok := selected.(*MCPPaletteItem); ok && item != nil && item.entry.IsLazy {
-				if item.entry.State != mcp.StateDisabled && item.entry.State != mcp.StateStarting {
-					return ActionToggleLazyMCP{
-						ServerName: item.entry.Name,
-						Enabled:    !item.entry.Enabled,
-					}
 				}
 			}
 		}
@@ -442,7 +379,6 @@ func (mp *MCPPalette) ShortHelp() []key.Binding {
 	return []key.Binding{
 		mp.keyMap.UpDown,
 		mp.keyMap.Select,
-		mp.keyMap.LazyToggle,
 		mp.keyMap.OpenFilter,
 		mp.keyMap.Close,
 	}
@@ -452,7 +388,7 @@ func (mp *MCPPalette) ShortHelp() []key.Binding {
 // FullHelp implements help.KeyMap.
 func (mp *MCPPalette) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{mp.keyMap.Select, mp.keyMap.LazyToggle, mp.keyMap.OpenFilter, mp.keyMap.Next, mp.keyMap.Previous},
+		{mp.keyMap.Select, mp.keyMap.OpenFilter, mp.keyMap.Next, mp.keyMap.Previous},
 		{mp.keyMap.Close},
 	}
 }

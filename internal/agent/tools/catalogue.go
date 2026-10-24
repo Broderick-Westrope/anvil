@@ -207,11 +207,10 @@ func (c *catalogue) serverTools(ctx context.Context, server, caller string) (str
 	return instructions, tools, nil
 }
 
-// ready brings server to a usable state, following enable_mcp's handling
-// of each connection state, and returns its instructions. It waits at
-// most once for another caller's connect and connects at most once
-// itself: a waiter whose connect failed reports it rather than trying
-// again.
+// ready brings server to a usable state and returns its instructions.
+// It waits at most once for another caller's connect and connects at
+// most once itself: a waiter whose connect failed reports it rather than
+// trying again.
 func (c *catalogue) ready(ctx context.Context, server, caller string) (string, error) {
 	info, ok := mcp.GetState(server)
 	if !ok {
@@ -246,9 +245,25 @@ func (c *catalogue) ready(ctx context.Context, server, caller string) (string, e
 	}
 }
 
+// authRequiredMessage tells the model that server's OAuth token must be
+// renewed by a human. The wording tells it not to retry tool within the
+// turn and not to attempt authenticating through a shell command.
+func authRequiredMessage(server, tool string) string {
+	return fmt.Sprintf(
+		"MCP '%s' cannot be used: its authentication has expired "+
+			"and only a human can renew it. The user has been notified "+
+			"in the UI. Do not retry %s for '%s' this turn and "+
+			"do not attempt to authenticate yourself. Tell the user "+
+			"that '%s' needs re-authentication, then continue with "+
+			"whatever part of the task does not need it."+
+			" (If this is a non-interactive session, the user must run "+
+			"`anvil mcp auth %s`.)",
+		server, tool, server, server, server)
+}
+
 func stateErrorProblem(server string, info mcp.ClientInfo, caller string) error {
 	if info.NeedsAuth {
-		return errUnusable{authRequiredResponse(server, caller).Content}
+		return errUnusable{authRequiredMessage(server, caller)}
 	}
 	reason := "unknown error"
 	if info.Error != nil {
@@ -268,7 +283,7 @@ func (c *catalogue) connect(ctx context.Context, server, caller string) error {
 	case errors.Is(err, mcp.ErrAlreadyConnecting):
 		return c.settle(ctx, server)
 	case mcp.NeedsAuth(err):
-		return errUnusable{authRequiredResponse(server, caller).Content}
+		return errUnusable{authRequiredMessage(server, caller)}
 	default:
 		return errUnusable{fmt.Sprintf("Failed to connect MCP '%s': %s", server, err)}
 	}

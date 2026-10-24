@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -315,12 +314,6 @@ type UI struct {
 	mcpStates         map[string]mcp.ClientInfo
 	mcpAuthFlows      map[string]*mcpAuthFlow
 	nextMCPAuthFlowID uint64
-	enabledLazyMCPs   map[string]bool
-	// pendingEnableMCPs tracks in-flight enable_mcp ToolCalls by
-	// ToolCallID → server name. The result has not yet arrived, so
-	// we defer the enabled/disabled decision until the correlated
-	// ToolResult is processed.
-	pendingEnableMCPs map[string]string
 
 	// skills
 	skillStates []*skills.SkillState
@@ -471,8 +464,6 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 		lspStates:           make(map[string]app.LSPClientInfo),
 		mcpStates:           make(map[string]mcp.ClientInfo),
 		mcpAuthFlows:        make(map[string]*mcpAuthFlow),
-		enabledLazyMCPs:     make(map[string]bool),
-		pendingEnableMCPs:   make(map[string]string),
 		skillStates:         skills.GetLatestStates(),
 		notifyBackend:       notification.NoopBackend{},
 		notifyWindowFocused: true,
@@ -815,7 +806,6 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs := msg.messages
 		m.setSessionMessages(msgs)
-		m.deriveEnabledLazyMCPs(msgs)
 		// The snapshot was read off the event loop; replay what arrived for
 		// this session since, or it would be lost under the snapshot.
 		for _, event := range m.takeSessionLoadEvents(m.session.ID) {
@@ -1859,11 +1849,9 @@ func (m *UI) applySessionMessageEvent(event pubsub.Event[message.Message]) tea.C
 	switch event.Type {
 	case pubsub.CreatedEvent:
 		cmds = append(cmds, m.appendSessionMessage(event.Payload))
-		m.applyLazyMCPMessageParts(event.Payload)
 		cmds = append(cmds, m.startElapsedTickForBackgroundResult(event.Payload))
 	case pubsub.UpdatedEvent:
 		cmds = append(cmds, m.updateSessionMessage(event.Payload))
-		m.applyLazyMCPMessageParts(event.Payload)
 		cmds = append(cmds, m.startElapsedTickForBackgroundResult(event.Payload))
 		cmds = append(cmds, m.startElapsedTickForToolStart(event.Payload))
 	case pubsub.DeletedEvent:
@@ -2708,26 +2696,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			Instructions: msg.Instructions,
 			Source:       msg.Source,
 		})
-	case dialog.ActionToggleLazyMCP:
-		// The toggle is stored under the leaf, so it is a move of the leaf.
-		if cmd := m.features.blockNavigation(); cmd != nil {
-			cmds = append(cmds, cmd)
-			break
-		}
-		m.enabledLazyMCPs[msg.ServerName] = msg.Enabled
-		// Update the open dialog's item state so the label refreshes.
-		if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
-			if palette, ok := dia.(*dialog.MCPPalette); ok {
-				palette.SetEntryEnabled(msg.ServerName, msg.Enabled)
-			}
-		}
-		if cmd := m.writeMetadataEntry(message.MessageTypeMCPToggle,
-			message.MCPToggleContent{ServerName: msg.ServerName, Enabled: msg.Enabled}); cmd != nil {
-			cmds = append(cmds, cmd)
-		} else {
-			slog.Debug("MCP toggle not persisted: no active session or leaf message",
-				"server", msg.ServerName, "enabled", msg.Enabled)
-		}
 	case dialog.ActionHardToggleMCP:
 		ws := m.com.Workspace
 		name := msg.ServerName
@@ -5250,8 +5218,6 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 		entry := dialog.MCPPaletteEntry{
 			Name:        mcpCfg.Name,
 			Description: mcpCfg.MCP.LazyDescription,
-			IsLazy:      mcpCfg.MCP.IsLazy(),
-			Enabled:     m.enabledLazyMCPs[mcpCfg.Name],
 			NeedsAuth:   state.NeedsAuth,
 			State:       state.State,
 			Counts:      state.Counts,
@@ -5265,8 +5231,7 @@ func (m *UI) openMCPPaletteDialog() tea.Cmd {
 	return nil
 }
 
-// applyMCPRoute labels entry with its server's route. A catalogue server
-// isn't lazy-toggled: its tools are never listed, whatever the toggle.
+// applyMCPRoute labels entry with its server's route.
 func applyMCPRoute(entry *dialog.MCPPaletteEntry, routes []agenttools.MCPRouteInfo, ready bool) {
 	if !ready {
 		entry.Route = "route pending"
@@ -5276,125 +5241,8 @@ func applyMCPRoute(entry *dialog.MCPPaletteEntry, routes []agenttools.MCPRouteIn
 		if route.Server != entry.Name {
 			continue
 		}
-		if route.Catalogue {
-			entry.Catalogue = true
-			entry.IsLazy = false
-			entry.Enabled = false
-		}
 		entry.Route = route.ShortString()
 		return
-	}
-}
-
-// deriveEnabledLazyMCPs scans branch-path messages for lazy MCP state
-// changes and rebuilds the enabledLazyMCPs map. Only successful
-// enable_mcp calls (ToolResult with IsError == false, correlated by
-// ToolCallID) are counted. MCPToggleContent entries are always honoured.
-// Last event per server wins. This mirrors the agent-side derivation in
-// internal/agent/lazy_mcp.go.
-func (m *UI) deriveEnabledLazyMCPs(msgs []message.Message) {
-	m.enabledLazyMCPs = make(map[string]bool)
-	m.pendingEnableMCPs = make(map[string]string)
-
-	type event struct {
-		serverName string
-		callID     string
-		enabled    bool
-		isToggle   bool
-	}
-	var events []event
-	resultOK := make(map[string]bool)
-
-	for _, msg := range msgs {
-		for _, part := range msg.Parts {
-			switch p := part.(type) {
-			case message.ToolCall:
-				if p.Name != agenttools.EnableMCPToolName || !p.Finished {
-					continue
-				}
-				var params agenttools.EnableMCPParams
-				if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
-					continue
-				}
-				if p.ID != "" {
-					events = append(events, event{serverName: params.ServerName, callID: p.ID})
-				}
-			case message.ToolResult:
-				if p.ToolCallID != "" {
-					resultOK[p.ToolCallID] = !p.IsError
-				}
-			case message.MCPToggleContent:
-				events = append(events, event{
-					serverName: p.ServerName,
-					enabled:    p.Enabled,
-					isToggle:   true,
-				})
-			}
-		}
-	}
-
-	for _, e := range events {
-		if e.isToggle {
-			m.enabledLazyMCPs[e.serverName] = e.enabled
-		} else {
-			ok, found := resultOK[e.callID]
-			if found && ok {
-				m.enabledLazyMCPs[e.serverName] = true
-			}
-		}
-	}
-}
-
-// applyLazyMCPMessageParts scans a message's parts for lazy MCP state
-// changes (enable_mcp tool calls, their results, and MCPToggleContent
-// entries) and applies them to the enabledLazyMCPs map and any open
-// MCP palette.
-//
-// ToolCalls are recorded as pending; the enabled flag is only set when
-// the correlated ToolResult arrives with IsError == false. This prevents
-// a failed connect from briefly showing "✓ enabled" in the palette.
-func (m *UI) applyLazyMCPMessageParts(msg message.Message) {
-	for _, part := range msg.Parts {
-		switch p := part.(type) {
-		case message.ToolCall:
-			if p.Name != agenttools.EnableMCPToolName || !p.Finished {
-				continue
-			}
-			var params agenttools.EnableMCPParams
-			if err := json.Unmarshal([]byte(p.Input), &params); err != nil || params.ServerName == "" {
-				continue
-			}
-			if p.ID != "" {
-				m.pendingEnableMCPs[p.ID] = params.ServerName
-			}
-		case message.ToolResult:
-			serverName, ok := m.pendingEnableMCPs[p.ToolCallID]
-			if !ok {
-				continue
-			}
-			delete(m.pendingEnableMCPs, p.ToolCallID)
-			if p.IsError {
-				continue
-			}
-			m.enabledLazyMCPs[serverName] = true
-			m.updateMCPPaletteEntry(serverName, true)
-		case message.MCPToggleContent:
-			m.enabledLazyMCPs[p.ServerName] = p.Enabled
-			m.updateMCPPaletteEntry(p.ServerName, p.Enabled)
-		}
-	}
-}
-
-// updateMCPPaletteEntry updates the enabled state of a named entry in
-// any open MCP palette dialog.
-func (m *UI) updateMCPPaletteEntry(name string, enabled bool) {
-	if m.dialog == nil {
-		return
-	}
-	if dia := m.dialog.Dialog(dialog.MCPPaletteID); dia != nil {
-		if palette, ok := dia.(*dialog.MCPPalette); ok {
-			palette.SetEntryEnabled(name, enabled)
-		}
 	}
 }
 

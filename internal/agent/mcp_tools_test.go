@@ -3,6 +3,7 @@ package agent
 import (
 	"testing"
 
+	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	toolsmcp "github.com/Broderick-Westrope/anvil/internal/agent/tools/mcp"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -67,12 +68,12 @@ func TestCatalogueToolsFollowAllowedMCPNotTheBuiltInFilter(t *testing.T) {
 }
 
 func TestAllDirectRoutesBuildTheSameToolListAsUnroutedServers(t *testing.T) {
-	const lazy, eager = "test-alldirect-lazy", "test-alldirect-eager"
+	const first, second = "test-alldirect-a", "test-alldirect-b"
 	renamed := toolsmcp.OAuthRenameEnabled()
 	toolsmcp.SetOAuthRename(false)
 	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
-	cfg := connectMCPServers(t, map[string]string{lazy: "Lazy says hi.", eager: "Eager says hi."}, lazy)
-	for _, name := range []string{lazy, eager} {
+	cfg := connectMCPServers(t, map[string]string{first: "First says hi.", second: "Second says hi."})
+	for _, name := range []string{first, second} {
 		m := cfg.Config().MCP[name]
 		m.Route = config.MCPRouteDirect
 		cfg.Config().MCP[name] = m
@@ -86,7 +87,7 @@ func TestAllDirectRoutesBuildTheSameToolListAsUnroutedServers(t *testing.T) {
 			info := tool.Info()
 			out += info.Name + "|" + info.Description + "\n"
 		}
-		return out, mcpInstructions(listing, tools.NewLazyMCPState(map[string]bool{lazy: true}))
+		return out, mcpInstructions(listing)
 	}
 
 	routedTools, routedPrompt := describe(&coordinator{cfg: cfg})
@@ -96,7 +97,7 @@ func TestAllDirectRoutesBuildTheSameToolListAsUnroutedServers(t *testing.T) {
 
 	require.Equal(t, unroutedTools, routedTools)
 	require.Equal(t, unroutedPrompt, routedPrompt)
-	require.Contains(t, routedPrompt, "Lazy says hi.")
+	require.Contains(t, routedPrompt, "First says hi.")
 }
 
 func TestNamingOneCatalogueToolKeepsTheServerRoutedThroughTheCatalogue(t *testing.T) {
@@ -114,7 +115,7 @@ func TestNamingOneCatalogueToolKeepsTheServerRoutedThroughTheCatalogue(t *testin
 
 	require.NoError(t, err)
 	require.True(t, listing.catalogue[server], "other tools on it still forward through call_mcp_tool")
-	require.Contains(t, mcpInstructions(listing, nil), "Named says hi.", "it never searches, so it gets the instructions")
+	require.Contains(t, mcpInstructions(listing), "Named says hi.", "it never searches, so it gets the instructions")
 }
 
 func TestACatalogueServerDoesNotHideTheDirectServersAfterIt(t *testing.T) {
@@ -137,4 +138,38 @@ func TestACatalogueServerDoesNotHideTheDirectServersAfterIt(t *testing.T) {
 	}
 	require.NotContains(t, names, "mcp_"+catalogue+"_ping")
 	require.Contains(t, names, "mcp_"+direct+"_ping")
+}
+
+// Not parallel: connectMCPServers registers global MCP state.
+func TestALazyServerMissingFromTheRouteMapIsListedOnceConnected(t *testing.T) {
+	const lazy = "test-unrouted-lazy"
+	renamed := toolsmcp.OAuthRenameEnabled()
+	toolsmcp.SetOAuthRename(false)
+	t.Cleanup(func() { toolsmcp.SetOAuthRename(renamed) })
+	cfg := connectMCPServers(t, map[string]string{lazy: "Unrouted says hi."}, lazy)
+	// An empty route map is how a server that appeared after startup,
+	// such as one added by a reload, is handled.
+	c := &coordinator{cfg: cfg, routes: mcpRoutes{}}
+	built, listing, err := c.buildToolsWithState(t.Context(), config.Agent{ID: "all"}, 1, nil, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	env := testEnv(t)
+	sess := newTestSession(t, env)
+	model := &recordingModel{respond: func(int) ([]fantasy.StreamPart, error) {
+		return textReply("done", fantasy.FinishReasonStop, fantasy.Usage{InputTokens: 1}), nil
+	}}
+	a := turnAgent(env, model, "system", 200_000, built...)
+	a.SetMCPListing(listing)
+	_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "go", NonInteractive: true})
+	require.NoError(t, err)
+
+	calls := model.recorded()
+	require.Len(t, calls, 1)
+	var names []string
+	for _, tool := range calls[0].Tools {
+		names = append(names, tool.GetName())
+	}
+	require.Contains(t, names, "mcp_"+lazy+"_ping")
+	require.NotContains(t, names, "enable_mcp")
+	require.Contains(t, textOf(calls[0].Prompt[0]), "Unrouted says hi.")
 }

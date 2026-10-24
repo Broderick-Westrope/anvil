@@ -275,3 +275,30 @@ func TestTheFirstPromptUsesTheRouteMapNotThePreSnapshotBuild(t *testing.T) {
 	require.Contains(t, names, "search_mcp_tools")
 	require.NotContains(t, names, "mcp_catarmed_ping")
 }
+
+func TestAnEnableMCPCallFromAnOldSessionFailsAndTheTurnCarriesOn(t *testing.T) {
+	const name = "catoldenable"
+	var calls atomic.Int32
+	f := newRoutedFixture(t, config.MCPs{name: {Type: config.MCPHttp, URL: countingServer(t, &calls), LazyDescription: "Pings things."}})
+	session := newParent(t, f)
+	f.Provider.Enqueue(
+		branchfixture.Response{ToolName: "enable_mcp", ToolInput: `{"server_name":"catoldenable"}`},
+		branchfixture.Response{Text: "done"},
+	)
+
+	_, err := f.Coordinator.Run(f.Context, session, "enable it like last time")
+	require.NoError(t, err)
+
+	msgs, err := f.Messages.List(f.Context, session)
+	require.NoError(t, err)
+	var results []bool
+	for _, msg := range msgs {
+		for _, result := range msg.ToolResults() {
+			results = append(results, result.IsError)
+		}
+	}
+	require.Equal(t, []bool{true}, results, "the call ends as an error result")
+	require.Len(t, f.Provider.Requests(), 2, "the turn continues after the error")
+	require.NotContains(t, toolNames(t, f.Provider.Requests()[1].Body), "enable_mcp")
+	require.Zero(t, calls.Load())
+}

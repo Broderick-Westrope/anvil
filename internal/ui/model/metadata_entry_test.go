@@ -67,7 +67,6 @@ func newMetadataTestUI(sess *session.Session) (*UI, *metadataWorkspace) {
 	u := newTestUI()
 	u.com.Workspace = ws
 	u.dialog = dialog.NewOverlay()
-	u.enabledLazyMCPs = make(map[string]bool)
 	u.session = sess
 	return u, ws
 }
@@ -195,36 +194,6 @@ func TestSelectReasoningEffort_RecordsChanges(t *testing.T) {
 				ParentMessageID: "leaf",
 				MessageType:     message.MessageTypeThinkingLevelChange,
 				Parts:           []message.ContentPart{message.ThinkingLevelChangeContent{ThinkingLevel: tc.effort}},
-			}}}, ws.entries)
-		})
-	}
-}
-
-func TestToggleLazyMCP_RecordsToggle(t *testing.T) {
-	t.Parallel()
-	tests := map[string]struct {
-		session *session.Session
-		want    bool
-	}{
-		"in a session":         {session: &session.Session{ID: "s1", LeafMessageID: "leaf"}, want: true},
-		"no session to record": {},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			u, ws := newMetadataTestUI(tc.session)
-
-			dispatch(u, dialog.ActionToggleLazyMCP{ServerName: "linear", Enabled: true})
-
-			require.True(t, u.enabledLazyMCPs["linear"])
-			if !tc.want {
-				require.Empty(t, ws.entries)
-				return
-			}
-			require.Equal(t, []metadataEntry{{"s1", message.CreateMessageParams{
-				ParentMessageID: "leaf",
-				MessageType:     message.MessageTypeMCPToggle,
-				Parts:           []message.ContentPart{message.MCPToggleContent{ServerName: "linear", Enabled: true}},
 			}}}, ws.entries)
 		})
 	}

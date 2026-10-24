@@ -24,10 +24,10 @@ func TestApplyMCPRoute(t *testing.T) {
 		ready bool
 		want  dialog.MCPPaletteEntry
 	}{
-		"catalogue server stops being lazy": {
-			entry: dialog.MCPPaletteEntry{Name: "datadog", IsLazy: true, Enabled: true},
+		"catalogue server": {
+			entry: dialog.MCPPaletteEntry{Name: "datadog"},
 			ready: true,
-			want:  dialog.MCPPaletteEntry{Name: "datadog", Route: "catalogue (lazy)", Catalogue: true},
+			want:  dialog.MCPPaletteEntry{Name: "datadog", Route: "catalogue (lazy)"},
 		},
 		"direct server": {
 			entry: dialog.MCPPaletteEntry{Name: "muninn"},
@@ -35,13 +35,13 @@ func TestApplyMCPRoute(t *testing.T) {
 			want:  dialog.MCPPaletteEntry{Name: "muninn", Route: "direct (10 kB)"},
 		},
 		"unrouted server": {
-			entry: dialog.MCPPaletteEntry{Name: "docker", IsLazy: true},
+			entry: dialog.MCPPaletteEntry{Name: "docker"},
 			ready: true,
-			want:  dialog.MCPPaletteEntry{Name: "docker", IsLazy: true},
+			want:  dialog.MCPPaletteEntry{Name: "docker"},
 		},
 		"pending": {
-			entry: dialog.MCPPaletteEntry{Name: "datadog", IsLazy: true},
-			want:  dialog.MCPPaletteEntry{Name: "datadog", IsLazy: true, Route: "route pending"},
+			entry: dialog.MCPPaletteEntry{Name: "datadog"},
+			want:  dialog.MCPPaletteEntry{Name: "datadog", Route: "route pending"},
 		},
 	}
 	for name, tc := range tests {
@@ -62,7 +62,7 @@ type routesWorkspace struct {
 
 func (w *routesWorkspace) MCPRoutes() ([]agenttools.MCPRouteInfo, bool) { return w.routes, true }
 
-func TestSidebarShowsAConnectedCatalogueServerAsConnected(t *testing.T) {
+func TestSidebarShowsAConnectedLazyServerAsConnected(t *testing.T) {
 	t.Parallel()
 	u := newTestUI()
 	cfg := &config.Config{MCP: config.MCPs{
@@ -87,7 +87,7 @@ func TestSidebarShowsAConnectedCatalogueServerAsConnected(t *testing.T) {
 		}
 	}
 	require.NotContains(t, datadog, "lazy")
-	require.Contains(t, slack, "lazy", "a lazy server routed direct still needs enabling")
+	require.NotContains(t, slack, "lazy", "an unrouted lazy server is listed once connected")
 }
 
 func TestMCPPaletteLabelsEachServerWithItsRoute(t *testing.T) {
