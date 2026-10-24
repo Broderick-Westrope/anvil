@@ -45,7 +45,7 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 	inputs := map[string]string{
 		"raw":              long + word,
 		"raw with returns": "first\rsecond\r\nthird\t" + long,
-		"returns":          mustJSON(t, map[string]any{"command": "first\rsecond\t" + long, "content": "a\r\nb\rc", "odd\r\nkey\rwith\ttab": "v"}),
+		"returns":          mustJSON(t, map[string]any{"command": "first\rsecond\t" + long, "content": "a\r\nb\rc", "odd\r\nkey\rwith\ttab": "v", "shell_id": "AB\r\nSECOND\rTHIRD\tX" + word}),
 		"params":           mustJSON(t, map[string]any{"command": long + word, "file_path": "/tmp/" + word, "content": multi, "count": 3, "nested": map[string]any{"key": long}}),
 	}
 	statuses := map[string]ToolStatus{
@@ -559,5 +559,16 @@ func TestToolErrorContentCutsToOneLine(t *testing.T) {
 		require.NotContains(t, out, "\n")
 		require.Equal(t, 58, lipgloss.Width(out), "%q", ansi.Strip(out))
 		require.True(t, strings.HasSuffix(strings.TrimRight(ansi.Strip(out), " "), "…"))
+	}
+}
+
+// A job header with a long ID stays within the chat's width.
+func TestJobHeaderFitsWidth(t *testing.T) {
+	t.Parallel()
+
+	result := &message.ToolResult{ToolCallID: "tc-test", Name: "job_kill", Content: "killed"}
+	source := helperToolItem(t, "job_kill", mustJSON(t, map[string]any{"shell_id": strings.Repeat("A", 200)}), result, ToolStatusSuccess)
+	for _, line := range strings.Split(source.Render(80), "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), 80)
 	}
 }
