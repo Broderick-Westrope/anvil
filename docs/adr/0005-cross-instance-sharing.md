@@ -16,7 +16,7 @@ Measured on that machine (macOS, physical footprint unless noted):
 | --- | --- | --- |
 | gopls | not measured | shared by gopls's own daemon (`-remote=auto`) |
 | `muninn mcp` (stdio MCP server) | 55–60 MB, plus memory-mapped index pages the OS already shares | 17 copies, about 1 GB not shared |
-| Mermaid engines (ADR 0008) | peak 95 MB at load, about 30 MB while loaded, held 20 s after the last render | per instance |
+| Mermaid engines (ADR 0004) | peak 95 MB at load, about 30 MB while loaded, held 20 s after the last render | per instance |
 
 Since #122, wazero's on-disk compilation cache lets resvg load in
 11 ms instead of 300 ms and lowers the warm-cache peak to 48 MB (101 MB on
