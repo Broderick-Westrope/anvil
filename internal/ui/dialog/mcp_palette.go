@@ -89,9 +89,6 @@ func (i *MCPPaletteItem) stateLabel() string {
 	if i.entry.NeedsAuth {
 		return "needs auth"
 	}
-	if i.entry.State == mcp.StateDisabled {
-		return "disabled"
-	}
 	if i.entry.State == mcp.StateStarting {
 		return "connecting..."
 	}
