@@ -318,21 +318,36 @@ func TestToolDetailParamItemStacksUnderWrappedKey(t *testing.T) {
 	require.Equal(t, "      value", strings.TrimRight(lines[2], " "))
 }
 
-// A parameter holding a newline keeps a collapsed header on one line, so
-// none of it spills into the drill-in's Output.
-func TestCollapsedHeaderFlattensNewlines(t *testing.T) {
+// A parameter holding a line break or tab keeps a collapsed header on one
+// line within its width, so none of it spills into the drill-in's Output,
+// and no carriage return reaches the terminal.
+func TestCollapsedHeaderFlattensWhitespace(t *testing.T) {
 	t.Parallel()
 
-	result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "out"}
-	source := helperToolItem(t, "grep", `{"pattern":"first\nPATSECOND","path":"/tmp"}`, result, ToolStatusSuccess)
+	for name, pattern := range map[string]string{
+		"newline":         `first\nPATSECOND`,
+		"crlf":            `first\r\nPATSECOND`,
+		"carriage return": `first\rPATSECOND`,
+		"tab":             `first\t` + strings.Repeat("x", 60) + `PATSECOND`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	header := strings.Split(ansi.Strip(source.Render(80)), "\n")
-	require.Len(t, header, 1)
-	require.Contains(t, header[0], "first PATSECOND")
+			result := &message.ToolResult{ToolCallID: "tc-test", Name: "grep", Content: "out"}
+			source := helperToolItem(t, "grep", `{"pattern":"`+pattern+`","path":"/tmp"}`, result, ToolStatusSuccess)
 
-	sty := styles.TokyoNight()
-	items := BuildToolDetailItems(&sty, source, nil)
-	require.NotContains(t, ansi.Strip(items[len(items)-1].Render(80)), "PATSECOND")
+			rendered := source.Render(80)
+			require.NotContains(t, rendered, "\r")
+			header := strings.Split(ansi.Strip(rendered), "\n")
+			require.Len(t, header, 1)
+			require.LessOrEqual(t, lipgloss.Width(rendered), 80)
+			require.Contains(t, header[0], "first ")
+
+			sty := styles.TokyoNight()
+			items := BuildToolDetailItems(&sty, source, nil)
+			require.NotContains(t, ansi.Strip(items[len(items)-1].Render(80)), "PATSECOND")
+		})
+	}
 }
 
 // Rendering a drill-in leaves its source as it was, so the item in the

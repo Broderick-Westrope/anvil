@@ -806,6 +806,12 @@ func toolIcon(sty *styles.Styles, status ToolStatus) string {
 	}
 }
 
+// collapsedHeaderSpace puts a collapsed header's parameters on one line.
+// Tabs become spaces before the header is measured, since Lip Gloss would
+// widen them after, and a lone carriage return would send the cursor back
+// over the header.
+var collapsedHeaderSpace = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "    ")
+
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
 // When opts.ExpandedContent is true, the output wraps instead of truncating,
 // unless opts.OneLineHeader holds it to one line.
@@ -840,9 +846,13 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 		}
 	}
 
-	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
+	if opts == nil || !opts.ExpandedContent {
 		// A collapsed header is one line, whatever its parameters hold.
-		return sty.Tool.ParamMain.Render(ansi.Truncate(strings.ReplaceAll(output, "\n", " "), width, "…"))
+		output = collapsedHeaderSpace.Replace(output)
+	}
+
+	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
+		return sty.Tool.ParamMain.Render(ansi.Truncate(output, width, "…"))
 	}
 	if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
 		// Let Lip Gloss do the wrapping rather than wrapping and styling in
