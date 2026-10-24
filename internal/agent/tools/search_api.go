@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,6 +21,10 @@ var (
 	braveEndpoint  = "https://api.search.brave.com/res/v1/web/search"
 	tavilyEndpoint = "https://api.tavily.com/search"
 )
+
+// searchResponseLimit caps how much of a search API's response is read.
+// Brave's carries news, videos and other extras alongside the results.
+const searchResponseLimit = 5 << 20
 
 // searchBrave queries the Brave Search API's web search.
 func searchBrave(ctx context.Context, client *http.Client, apiKey, query string, maxResults int) ([]SearchResult, error) {
@@ -96,7 +101,7 @@ func doSearchAPI(client *http.Client, req *http.Request, name string, out any) e
 	if resp.StatusCode != http.StatusOK {
 		return errors.New(name + " search failed with " + statusFailure(resp))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, searchResponseLimit)).Decode(out); err != nil {
 		return fmt.Errorf("decode %s search response: %w", name, err)
 	}
 	return nil

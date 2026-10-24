@@ -15,6 +15,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/Broderick-Westrope/anvil/internal/env"
+	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/lock"
 	"github.com/Broderick-Westrope/anvil/internal/oauth"
 	anthropicoauth "github.com/Broderick-Westrope/anvil/internal/oauth/anthropic"
@@ -400,7 +401,7 @@ func (s *ConfigStore) atomicWrite(scope Scope, fn func(current []byte) ([]byte, 
 		return fmt.Errorf("failed to create config directory %q: %w", path, err)
 	}
 
-	return AtomicWriteFile(path, newData, 0o600)
+	return fsext.AtomicWriteFile(path, newData, 0o600)
 }
 
 // HasConfigField checks whether a key exists in the config file for the given

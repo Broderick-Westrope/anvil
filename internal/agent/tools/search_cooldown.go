@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Broderick-Westrope/anvil/internal/config"
+	"github.com/Broderick-Westrope/anvil/internal/fsext"
 )
 
 // ddgCooldown is how long every Anvil process on the machine skips
@@ -37,7 +37,7 @@ func searchDuckDuckGoShared(ctx context.Context, client *http.Client, query stri
 	if until := searchPausedUntil(); time.Now().Before(until) {
 		return nil, searchPausedError(until)
 	}
-	maybeDelaySearch()
+	spaceSearches(ddgSearchGap())
 	results, err := searchDuckDuckGo(ctx, client, query, maxResults)
 	if !errors.Is(err, errSearchRateLimited) {
 		return results, err
@@ -48,15 +48,26 @@ func searchDuckDuckGoShared(ctx context.Context, client *http.Client, query stri
 }
 
 func searchPausedError(until time.Time) error {
-	return fmt.Errorf("%w, so web_search is paused until %s. "+
+	wait := time.Until(until).Round(time.Second)
+	return fmt.Errorf("%w, so web_search is paused for %s (until %s). "+
 		"Don't retry, rephrase or scrape another search engine; fetch URLs you already know instead. "+
 		"Setting tools.web_search in anvil.json to a search API avoids this",
-		errSearchRateLimited, until.Local().Format(time.TimeOnly))
+		errSearchRateLimited, wait, until.Local().Format(time.TimeOnly))
 }
 
 // searchPausedUntil returns when DuckDuckGo searches may resume, or the
-// zero time when they aren't paused.
+// zero time when they aren't paused. A time further ahead than one
+// cooldown, from a skewed clock or a copied file, is cut back to one, so
+// a bad file can't stop searching for long.
 func searchPausedUntil() time.Time {
+	until := readSearchPause()
+	if latest := time.Now().Add(ddgCooldown); until.After(latest) {
+		return latest
+	}
+	return until
+}
+
+func readSearchPause() time.Time {
 	if searchCooldownFile == "" {
 		return time.Time{}
 	}
@@ -79,7 +90,7 @@ func pauseSearches(until time.Time) {
 	}
 	err := os.MkdirAll(filepath.Dir(searchCooldownFile), 0o755)
 	if err == nil {
-		err = config.AtomicWriteFile(searchCooldownFile, []byte(until.Format(time.RFC3339Nano)), 0o644)
+		err = fsext.AtomicWriteFile(searchCooldownFile, []byte(until.Format(time.RFC3339Nano)), 0o644)
 	}
 	if err != nil {
 		slog.Warn("Failed to record the web search cooldown", "path", searchCooldownFile, "error", err)

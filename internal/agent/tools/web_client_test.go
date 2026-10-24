@@ -47,6 +47,7 @@ func TestGitHubAuthTransport_SendsTokenOnlyToGitHubContentHosts(t *testing.T) {
 		"api host":                {url: "https://api.github.com/repos/a/b", token: "tok", want: "Bearer tok"},
 		"raw host":                {url: "https://raw.githubusercontent.com/a/b/main/x", token: "tok", want: "Bearer tok"},
 		"api host with port":      {url: "https://api.github.com:443/repos/a/b", token: "tok", want: "Bearer tok"},
+		"upper-case host":         {url: "https://API.GitHub.com/repos/a/b", token: "tok", want: "Bearer tok"},
 		"plain http":              {url: "http://api.github.com/repos/a/b", token: "tok", want: ""},
 		"github.com pages":        {url: "https://github.com/a/b", token: "tok", want: ""},
 		"other host":              {url: "https://example.com/", token: "tok", want: ""},
@@ -171,6 +172,11 @@ func TestStatusFailure(t *testing.T) {
 			body:   long,
 			want:   "status code: 400: " + long[:errorBodyLimit-1] + "…",
 		},
+		"body past the read limit cut mid-rune": {
+			status: http.StatusBadRequest,
+			body:   "a" + strings.Repeat("é", errorBodyRead),
+			want:   "status code: 400: " + long[:errorBodyLimit-1] + "…",
+		},
 		"body exactly at the limit": {
 			status: http.StatusBadRequest,
 			body:   strings.Repeat("a", errorBodyLimit),
@@ -199,4 +205,29 @@ func TestFetchURLAndConvert_ReportsErrorBody(t *testing.T) {
 	_, err := FetchURLAndConvert(context.Background(), server.Client(), server.URL)
 
 	require.EqualError(t, err, "request failed with status code: 422 (Retry-After: 5): missing field: q")
+}
+
+func TestTrimPartialRune(t *testing.T) {
+	t.Parallel()
+	const euro = "€"  // Three bytes.
+	const emoji = "😀" // Four bytes.
+	tests := map[string]struct{ body, want string }{
+		"ascii":                    {body: "abc", want: "abc"},
+		"complete two-byte rune":   {body: "aé", want: "aé"},
+		"two-byte rune cut":        {body: "a" + "é"[:1], want: "a"},
+		"three-byte rune cut at 1": {body: "a" + euro[:1], want: "a"},
+		"three-byte rune cut at 2": {body: "a" + euro[:2], want: "a"},
+		"complete three-byte rune": {body: "a" + euro, want: "a" + euro},
+		"four-byte rune cut at 3":  {body: "a" + emoji[:3], want: "a"},
+		"complete four-byte rune":  {body: "a" + emoji, want: "a" + emoji},
+		"only a cut rune":          {body: euro[:2], want: ""},
+		"no rune start in reach":   {body: "\x80\x80\x80", want: "\x80\x80\x80"},
+		"empty":                    {body: "", want: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, string(trimPartialRune([]byte(tc.body))))
+		})
+	}
 }

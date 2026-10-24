@@ -253,14 +253,18 @@ Terms with a specific meaning in this codebase are defined in
   `tools.fetch.github_token` to HTTPS requests for `api.github.com` and
   `raw.githubusercontent.com` only, checking each request so the token
   never follows a redirect elsewhere. Config secrets for these tools are
-  expanded on first use, once per tool set (`resolveOnce`). A non-200 fetch
+  expanded on first use and kept per tool set; a failed expansion is tried
+  again on the next request (`resolveOnce`). A non-200 fetch
   reports its `Retry-After` and the start of the body as text
   (`statusFailure`). `web_search` queries the provider in
   `tools.web_search`: Brave and Tavily through their APIs
   (`internal/agent/tools/search_api.go`), otherwise DuckDuckGo Lite. A
-  DuckDuckGo block writes a resume time to `web-search-paused-until` in the
-  user cache dir (`search_cooldown.go`), which every Anvil process reads
-  before searching, since they share one IP.
+  DuckDuckGo block (a 202, 403 or 429, or its bot-check page) writes a
+  resume time to `web-search-paused-until` in the user cache dir
+  (`search_cooldown.go`), which every Anvil process reads before
+  searching, since they share one IP. A time more than a cooldown ahead is
+  cut back to one. The search APIs have no shared pause; Brave's searches
+  are spaced a second apart within a process for its free plan.
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
   JavaScript script (see `plans/completed/design-2026-10-10-workflows.md`).
   `internal/workflow` is the engine: it parses `requires()` without running

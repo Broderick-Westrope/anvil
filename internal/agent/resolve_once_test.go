@@ -42,17 +42,21 @@ func TestResolveOnce(t *testing.T) {
 		require.Equal(t, 1, resolver.calls)
 	})
 
-	t.Run("a failure is reported every time without running again", func(t *testing.T) {
+	t.Run("a failure is retried on the next use", func(t *testing.T) {
 		t.Parallel()
 		resolveErr := errors.New("keychain locked")
 		resolver := &countingResolver{err: resolveErr}
-		get := resolveOnce(resolver, "$(false)")
+		get := resolveOnce(resolver, "$(security find-generic-password -w -s brave)")
 
-		_, first := get()
-		_, second := get()
+		_, err := get()
+		require.ErrorIs(t, err, resolveErr)
 
-		require.ErrorIs(t, first, resolveErr)
-		require.ErrorIs(t, second, resolveErr)
-		require.Equal(t, 1, resolver.calls)
+		resolver.err = nil
+		value, err := get()
+		require.NoError(t, err)
+		require.Equal(t, "resolved:$(security find-generic-password -w -s brave)", value)
+		_, err = get()
+		require.NoError(t, err)
+		require.Equal(t, 2, resolver.calls, "once it succeeds the value is kept")
 	})
 }

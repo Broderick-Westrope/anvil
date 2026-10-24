@@ -87,11 +87,13 @@ func searchDuckDuckGo(ctx context.Context, client *http.Client, query string, ma
 	// A 202 from DuckDuckGo is the anomaly-challenge interstitial, not a
 	// result page; report throttling rather than parsing it into an
 	// empty result set.
-	if resp.StatusCode == http.StatusAccepted {
+	// 403 and 429 are how other bot blocks arrive.
+	switch resp.StatusCode {
+	case http.StatusAccepted, http.StatusForbidden, http.StatusTooManyRequests:
 		return nil, errSearchRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("search failed with status code: %d", resp.StatusCode)
+		return nil, errors.New("search failed with " + statusFailure(resp))
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -234,12 +236,19 @@ var (
 	lastSearchTime time.Time
 )
 
-// maybeDelaySearch adds a random delay if the last search was recent.
-func maybeDelaySearch() {
+// ddgSearchGap is a random gap between DuckDuckGo searches, so they look
+// less like a bot.
+func ddgSearchGap() time.Duration {
+	return time.Duration(500+rand.IntN(1500)) * time.Millisecond
+}
+
+// spaceSearches waits until minGap has passed since this process's last
+// search. It holds the lock while it waits, so parallel searches go out
+// one at a time.
+func spaceSearches(minGap time.Duration) {
 	lastSearchMu.Lock()
 	defer lastSearchMu.Unlock()
 
-	minGap := time.Duration(500+rand.IntN(1500)) * time.Millisecond
 	elapsed := time.Since(lastSearchTime)
 	if elapsed < minGap {
 		time.Sleep(minGap - elapsed)

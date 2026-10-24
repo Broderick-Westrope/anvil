@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/stretchr/testify/require"
@@ -17,6 +19,7 @@ import (
 // request it gets and answers with status, header and body.
 func serveSearchAPI(t *testing.T, endpoint *string, status int, header http.Header, body string) <-chan *http.Request {
 	t.Helper()
+	forgetLastSearch()
 	requests := make(chan *http.Request, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
@@ -137,6 +140,10 @@ func TestWebSearch_APIKeyProblems(t *testing.T) {
 			backend: WebSearchBackend{Provider: config.WebSearchBrave},
 			want:    "Failed to search: tools.web_search.api_key is required for brave",
 		},
+		"key expands to nothing": {
+			backend: WebSearchBackend{Provider: config.WebSearchBrave, APIKey: staticToken("")},
+			want:    "Failed to search: tools.web_search.api_key expanded to nothing; check the variable or command it names",
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -156,6 +163,7 @@ func TestWebSearch_NetworkFailureNamesTheAPI(t *testing.T) {
 	orig := braveEndpoint
 	braveEndpoint = srv.URL
 	t.Cleanup(func() { braveEndpoint = orig })
+	forgetLastSearch()
 
 	resp := runWebSearchWith(t, NewWebSearchTool(http.DefaultClient, apiBackend(config.WebSearchBrave)), WebSearchParams{Query: "q"})
 
@@ -178,4 +186,32 @@ func TestPlainText(t *testing.T) {
 			require.Equal(t, tc.want, plainText(tc.input))
 		})
 	}
+}
+
+// Not parallel: mutates braveEndpoint.
+func TestWebSearch_BraveSpacesParallelSearches(t *testing.T) {
+	var mu sync.Mutex
+	var arrivals []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		arrivals = append(arrivals, time.Now())
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"web":{"results":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	orig := braveEndpoint
+	braveEndpoint = srv.URL
+	t.Cleanup(func() { braveEndpoint = orig })
+	forgetLastSearch()
+	tool := NewWebSearchTool(http.DefaultClient, apiBackend(config.WebSearchBrave))
+
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() { runWebSearchWith(t, tool, WebSearchParams{Query: "q"}) })
+	}
+	wg.Wait()
+
+	require.Len(t, arrivals, 2)
+	gap := arrivals[1].Sub(arrivals[0])
+	require.GreaterOrEqual(t, gap, 900*time.Millisecond, "Brave allows one query a second on its free plan")
 }

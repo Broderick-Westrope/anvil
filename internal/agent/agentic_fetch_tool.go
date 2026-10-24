@@ -184,15 +184,31 @@ func agenticFetchPrompt(ctx context.Context, client *http.Client, dir string, pa
 	return fmt.Sprintf("%s\n\nThe web page from %s has been saved to: %s\n\nUse the view and grep tools to analyze this file and extract the requested information.", params.Prompt, params.URL, tempFile.Name()), fantasy.ToolResponse{}
 }
 
-// resolveOnce returns a function that expands a secret from the config the
-// first time a tool needs it, so a $(command) runs at most once per tool
-// set rather than on every request. An empty value has nothing to
-// resolve, so it returns nil.
+// resolveOnce returns a function that expands a secret from the config
+// when a tool first needs it and keeps the result, so a $(command) runs
+// once per tool set rather than on every request. A failure isn't kept:
+// the next request tries again, so a locked keychain doesn't stick. An
+// empty value has nothing to resolve, so it returns nil.
 func resolveOnce(resolver config.VariableResolver, value string) func() (string, error) {
 	if value == "" {
 		return nil
 	}
-	return sync.OnceValues(func() (string, error) {
-		return resolver.ResolveValue(value)
-	})
+	var (
+		mu       sync.Mutex
+		resolved string
+		done     bool
+	)
+	return func() (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if done {
+			return resolved, nil
+		}
+		v, err := resolver.ResolveValue(value)
+		if err != nil {
+			return "", err
+		}
+		resolved, done = v, true
+		return resolved, nil
+	}
 }

@@ -3,10 +3,12 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/config"
@@ -28,11 +30,19 @@ type WebSearchBackend struct {
 	APIKey func() (string, error)
 }
 
-// searchAPIs query the search engines that have an API, keyed by the
-// provider named in tools.web_search.
-var searchAPIs = map[config.WebSearchProvider]func(ctx context.Context, client *http.Client, apiKey, query string, maxResults int) ([]SearchResult, error){
-	config.WebSearchBrave:  searchBrave,
-	config.WebSearchTavily: searchTavily,
+// searchAPI is a search engine queried through its API.
+type searchAPI struct {
+	search func(ctx context.Context, client *http.Client, apiKey, query string, maxResults int) ([]SearchResult, error)
+	// minGap spaces this process's searches, for APIs whose rate limit
+	// parallel searches would trip at once.
+	minGap time.Duration
+}
+
+// searchAPIs are the search engines with an API, keyed by the provider
+// named in tools.web_search. Brave's free plan allows one query a second.
+var searchAPIs = map[config.WebSearchProvider]searchAPI{
+	config.WebSearchBrave:  {search: searchBrave, minGap: time.Second},
+	config.WebSearchTavily: {search: searchTavily},
 }
 
 func (b WebSearchBackend) search(ctx context.Context, client *http.Client, query string, maxResults int) ([]SearchResult, error) {
@@ -47,7 +57,11 @@ func (b WebSearchBackend) search(ctx context.Context, client *http.Client, query
 	if err != nil {
 		return nil, fmt.Errorf("resolve tools.web_search.api_key: %w", err)
 	}
-	return api(ctx, client, apiKey, query, maxResults)
+	if apiKey == "" {
+		return nil, errors.New("tools.web_search.api_key expanded to nothing; check the variable or command it names")
+	}
+	spaceSearches(api.minGap)
+	return api.search(ctx, client, apiKey, query, maxResults)
 }
 
 // NewWebSearchTool creates a web search tool for sub-agents (no permissions needed).

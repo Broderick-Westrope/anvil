@@ -42,7 +42,7 @@ type githubAuthTransport struct {
 }
 
 func (t githubAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Scheme != "https" || !githubHosts[req.URL.Hostname()] || req.Header.Get("Authorization") != "" {
+	if req.URL.Scheme != "https" || !githubHosts[strings.ToLower(req.URL.Hostname())] || req.Header.Get("Authorization") != "" {
 		return t.base.RoundTrip(req)
 	}
 	token, err := t.token()
@@ -84,7 +84,13 @@ func statusFailure(resp *http.Response) string {
 // text, or "" when there's nothing readable.
 func errorDetail(resp *http.Response) string {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, errorBodyRead))
-	if err != nil || !utf8.Valid(body) {
+	if err != nil {
+		return ""
+	}
+	if len(body) == errorBodyRead {
+		body = trimPartialRune(body)
+	}
+	if !utf8.Valid(body) {
 		return ""
 	}
 	text := string(body)
@@ -102,4 +108,18 @@ func errorDetail(resp *http.Response) string {
 		cut--
 	}
 	return text[:cut] + "…"
+}
+
+// trimPartialRune drops a rune the read limit cut in two from the end of
+// body, so a long valid body isn't mistaken for an invalid one.
+func trimPartialRune(body []byte) []byte {
+	for cut := 1; cut < utf8.UTFMax && cut <= len(body); cut++ {
+		if utf8.RuneStart(body[len(body)-cut]) {
+			if !utf8.FullRune(body[len(body)-cut:]) {
+				return body[:len(body)-cut]
+			}
+			return body
+		}
+	}
+	return body
 }
