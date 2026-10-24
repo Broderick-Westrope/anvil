@@ -2,10 +2,14 @@ package tools
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -199,4 +203,63 @@ func TestPauseSearches_UnwritableLocationIsIgnored(t *testing.T) {
 	pauseSearches(time.Now().Add(time.Minute))
 
 	require.True(t, searchPausedUntil().IsZero())
+}
+
+func TestDDGSearchGap_StaysBetweenHalfASecondAndTwoSeconds(t *testing.T) {
+	t.Parallel()
+	for range 500 {
+		gap := ddgSearchGap()
+		require.GreaterOrEqual(t, gap, 500*time.Millisecond)
+		require.Less(t, gap, 2*time.Second)
+	}
+}
+
+// Not parallel: reads searchCooldownFile, which other tests replace.
+func TestSearchCooldownFile_LivesInTheUserCacheDir(t *testing.T) {
+	dir, err := os.UserCacheDir()
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, "anvil", "web-search-paused-until"), searchCooldownFile)
+}
+
+// captureWarnings records the messages logged through slog's default
+// logger for the rest of the test.
+// Not parallel: replaces slog's default logger.
+func captureWarnings(t *testing.T) *strings.Builder {
+	t.Helper()
+	var buf strings.Builder
+	var mu sync.Mutex
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(lockedWriter{w: &buf, mu: &mu}, nil)))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	return &buf
+}
+
+type lockedWriter struct {
+	w  io.Writer
+	mu *sync.Mutex
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// Not parallel: mutates searchCooldownFile and slog's default logger.
+func TestPauseSearches_WarnsOnlyWhenItCantRecord(t *testing.T) {
+	logs := captureWarnings(t)
+	useCooldownFile(t, filepath.Join(t.TempDir(), "anvil", "paused-until"))
+
+	pauseSearches(time.Now().Add(time.Minute))
+
+	require.False(t, searchPausedUntil().IsZero())
+	require.NotContains(t, logs.String(), "Failed to record the web search cooldown")
+
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o644))
+	useCooldownFile(t, filepath.Join(blocker, "anvil", "paused-until"))
+
+	pauseSearches(time.Now().Add(time.Minute))
+
+	require.Contains(t, logs.String(), "Failed to record the web search cooldown")
 }

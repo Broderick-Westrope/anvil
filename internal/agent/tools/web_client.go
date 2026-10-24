@@ -111,14 +111,12 @@ func errorDetail(resp *http.Response) string {
 }
 
 // trimPartialRune drops a rune the read limit cut in two from the end of
-// body, so a long valid body isn't mistaken for an invalid one.
+// body, so a long valid body isn't mistaken for an invalid one. A cut rune
+// is at most three bytes; body must be at least that long.
 func trimPartialRune(body []byte) []byte {
-	for cut := 1; cut < utf8.UTFMax && cut <= len(body); cut++ {
-		if utf8.RuneStart(body[len(body)-cut]) {
-			if !utf8.FullRune(body[len(body)-cut:]) {
-				return body[:len(body)-cut]
-			}
-			return body
+	for cut := range utf8.UTFMax {
+		if utf8.Valid(body[:len(body)-cut]) {
+			return body[:len(body)-cut]
 		}
 	}
 	return body

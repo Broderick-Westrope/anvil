@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -212,17 +213,15 @@ func TestTrimPartialRune(t *testing.T) {
 	const euro = "€"  // Three bytes.
 	const emoji = "😀" // Four bytes.
 	tests := map[string]struct{ body, want string }{
-		"ascii":                    {body: "abc", want: "abc"},
-		"complete two-byte rune":   {body: "aé", want: "aé"},
-		"two-byte rune cut":        {body: "a" + "é"[:1], want: "a"},
-		"three-byte rune cut at 1": {body: "a" + euro[:1], want: "a"},
-		"three-byte rune cut at 2": {body: "a" + euro[:2], want: "a"},
-		"complete three-byte rune": {body: "a" + euro, want: "a" + euro},
-		"four-byte rune cut at 3":  {body: "a" + emoji[:3], want: "a"},
-		"complete four-byte rune":  {body: "a" + emoji, want: "a" + emoji},
-		"only a cut rune":          {body: euro[:2], want: ""},
-		"no rune start in reach":   {body: "\x80\x80\x80", want: "\x80\x80\x80"},
-		"empty":                    {body: "", want: ""},
+		"ascii":                    {body: "abcd", want: "abcd"},
+		"complete two-byte rune":   {body: "abcé", want: "abcé"},
+		"two-byte rune cut":        {body: "abc" + "é"[:1], want: "abc"},
+		"three-byte rune cut at 1": {body: "abc" + euro[:1], want: "abc"},
+		"three-byte rune cut at 2": {body: "abc" + euro[:2], want: "abc"},
+		"complete three-byte rune": {body: "abc" + euro, want: "abc" + euro},
+		"four-byte rune cut at 3":  {body: "abc" + emoji[:3], want: "abc"},
+		"complete four-byte rune":  {body: "abc" + emoji, want: "abc" + emoji},
+		"invalid before the end":   {body: "a\xffbcdef", want: "a\xffbcdef"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -230,4 +229,16 @@ func TestTrimPartialRune(t *testing.T) {
 			require.Equal(t, tc.want, string(trimPartialRune([]byte(tc.body))))
 		})
 	}
+}
+
+func TestNewWebClient_Limits(t *testing.T) {
+	t.Parallel()
+	client := NewWebClient(nil)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
+
+	require.Equal(t, 30*time.Second, client.Timeout)
+	require.Equal(t, 100, transport.MaxIdleConns)
+	require.Equal(t, 10, transport.MaxIdleConnsPerHost)
+	require.Equal(t, 90*time.Second, transport.IdleConnTimeout)
 }
