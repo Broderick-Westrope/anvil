@@ -73,6 +73,20 @@ sample, but completed files survive force-quitting the terminal. The recorder
 needs a writable state directory; failures are reported in `anvil.log`.
 
 
+## Sessions won't load after going back to an older Anvil
+
+Every Anvil process shares one database (`anvil.db`, see
+[Configuration](./configuration.md)), and a newer build upgrades it when it
+starts. An older build doesn't know about what the newer one stored, so a
+session it can't read fails to load. Since subagents became resumable and
+steerable, this means any session where a subagent was steered, resumed or
+retried. Older builds also write session cost in a way that can undo cost
+a newer build added.
+
+So before upgrading, quit every running Anvil and copy `anvil.db`
+somewhere safe. To go back, quit every Anvil again and restore that copy.
+Anything you did on the newer build is lost, but nothing else is.
+
 ## Why is clipboard copy and paste not working?
 
 Installing an extra tool might be needed on Unix-like environments.

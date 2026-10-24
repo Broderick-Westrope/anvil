@@ -61,6 +61,13 @@ type featureHost interface {
 	ShowChatItem(item chat.MessageItem) tea.Cmd
 	// RemoveChatItem removes the root chat's item with id, if it has one.
 	RemoveChatItem(id string)
+	// ViewedChildSessionID is the subagent session being viewed: the topmost
+	// drill-in with a session, which a tool or thinking view on top still
+	// belongs to. It's "" when the root chat is viewed.
+	ViewedChildSessionID() string
+	// RestoreToComposer puts text back in the main editor, after any text
+	// already there, so the human can send or edit it.
+	RestoreToComposer(text string)
 }
 
 // uiHost is UI as a featureHost.
@@ -149,3 +156,15 @@ func (h uiHost) ShowChatItem(item chat.MessageItem) tea.Cmd {
 }
 
 func (h uiHost) RemoveChatItem(id string) { h.m.chat.RemoveMessage(id) }
+
+func (h uiHost) ViewedChildSessionID() string {
+	entry, _ := h.m.viewedSessionEntry()
+	return entry.sessionID
+}
+
+func (h uiHost) RestoreToComposer(text string) {
+	if current := h.m.textarea.Value(); current != "" {
+		text = current + "\n\n" + text
+	}
+	h.m.textarea.SetValue(text)
+}

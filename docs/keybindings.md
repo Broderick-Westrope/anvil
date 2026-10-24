@@ -9,7 +9,7 @@
 | `ctrl+s` | Switch session |
 | `ctrl+n` | New session |
 | `tab` | Move focus between the prompt and the chat |
-| `esc` | Cancel the running turn (press twice). With prompts queued, the first press clears the queue. |
+| `esc` | Cancel the running turn (press twice). With prompts queued, the first press clears the queue. Drilled into a subagent, it cancels only that subagent (see below). |
 | `ctrl+c` | Close a popup, clear the prompt, cancel the agent, or quit, in that order |
 | `ctrl+y` | Cycle yolo mode: off, standard, full |
 | `ctrl+q` | Cycle the bouncer: off, shadow, enforce |
@@ -57,6 +57,25 @@ Press `tab` to focus the chat first.
 | `g` / `G` | Top, bottom |
 | `L` / `H` | Focus the sidebar, back to the chat |
 | `esc` | Clear the selection |
+
+## Drilled into a subagent
+
+While a subagent runs, its drill-in has a message line under the chat. A
+message reaches the subagent at its next step, so it doesn't lose what
+it's in the middle of; interrupting cuts off the current step and starts
+again with your message.
+
+| Keys | Action |
+| --- | --- |
+| `tab` | Focus the message line, or go back to the chat |
+| `enter` | Send the message |
+| `alt+i` (`ctrl+enter` where supported) | Interrupt the subagent and send the message |
+| `esc` | Leave the message line, keeping what you typed; pressed again, cancel this subagent |
+
+`esc` here never cancels the main turn. Back out with `h` first for that.
+A subagent always reads your message before it finishes. If it's cancelled
+or fails first, the message comes back to the main prompt so you can pass
+it to the orchestrator instead.
 
 ## Permission prompts
 

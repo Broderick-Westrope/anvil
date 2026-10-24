@@ -129,6 +129,23 @@ type Workspace interface {
 	AgentQueuedPrompts(sessionID string) int
 	AgentQueuedPromptsList(sessionID string) []string
 	AgentClearQueue(sessionID string)
+	// AgentSteerSubagent sends a human message to the subagent running in
+	// childSessionID; with interrupt it also cuts off its current attempt.
+	AgentSteerSubagent(childSessionID, text string, interrupt bool) error
+	// AgentCancelSubagent cancels the task call running in childSessionID.
+	AgentCancelSubagent(childSessionID string) bool
+	// AgentSubagentRunning reports whether a task call is running in
+	// childSessionID.
+	AgentSubagentRunning(childSessionID string) bool
+	// GetSubagentCall returns the stored link of the task call callID. It
+	// fails with sql.ErrNoRows for calls made before links were stored.
+	GetSubagentCall(ctx context.Context, callID string) (session.SubagentCall, error)
+	// AgentTakeReturnedSteers returns, and forgets, steers that task calls
+	// working for rootSessionID ended without delivering.
+	AgentTakeReturnedSteers(rootSessionID string) []agent.SubagentSteersReturned
+	// AgentSubagentPendingSteers lists steers sent to childSessionID's
+	// subagent that it hasn't read yet.
+	AgentSubagentPendingSteers(childSessionID string) []string
 	AgentSummarize(ctx context.Context, sessionID string) error
 	// AgentStartBranchSummary starts summarizing the branch the user
 	// rewound from, in the background, and returns the run's ID. Its

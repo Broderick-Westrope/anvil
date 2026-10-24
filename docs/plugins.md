@@ -123,6 +123,33 @@ and `disabled_agents` to drop agents you don't want:
 }
 ```
 
+## How a delegated agent runs
+
+Each time the orchestrator delegates, the agent runs as a subagent in its
+own child session, and its last message becomes the orchestrator's tool
+result.
+
+- **Transient failures retry on their own.** If a run ends on an
+  overloaded provider, a rate limit, a lost connection or an expired
+  login, Anvil waits (5s, then 30s, or longer if the provider asks, up to
+  2 minutes) and continues the same session up to twice. The result says
+  when that happened. Bad requests, tool errors and anything else that
+  would fail the same way again are reported straight away.
+- **Every result ends with a `subagent_id`**, such as `explorer-3f2a`. The
+  orchestrator can pass it to `task` as `resume` with a follow-up prompt,
+  and the subagent carries on with its whole history, on the same agent
+  and model. It can resume a subagent that finished, failed or was
+  cancelled, but not one that's still running.
+- **Messages can arrive mid-run.** A person steering from the drill-in
+  view, the orchestrator resuming, and Anvil continuing after a failure
+  all reach the agent as a user turn wrapped in
+  `<injected_message source="human">`, `source="orchestrator"` or
+  `source="harness"`. Anvil escapes the tag inside injected text and task
+  prompts, but not in tool output, so only trust it in a user turn: a
+  fetched web page can contain the same text. If your agent's prompt says
+  how to treat new instructions mid-task, name these. The orchestrator's
+  result lists what a person sent, word for word.
+
 ## Building your own
 
 A plugin can start as a single file. This walks through one agent, one

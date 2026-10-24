@@ -37,6 +37,9 @@ type fakeHost struct {
 	composer    bool
 	reloading   bool
 	keyMap      KeyMap
+	// viewedChild is the drilled-in subagent session on screen.
+	viewedChild string
+	restored    []string
 	// chatItems are the items shown in the root chat, in order.
 	chatItems []chat.MessageItem
 }
@@ -86,10 +89,14 @@ func (h *fakeHost) Notify(n notification.Notification) tea.Cmd {
 	return nil
 }
 
-func (h *fakeHost) Relayout()                { h.relayouts++ }
-func (h *fakeHost) ComposerHasContent() bool { return h.composer }
-func (h *fakeHost) Reloading() bool          { return h.reloading }
-func (h *fakeHost) KeyMap() KeyMap           { return h.keyMap }
+func (h *fakeHost) Relayout()                    { h.relayouts++ }
+func (h *fakeHost) ComposerHasContent() bool     { return h.composer }
+func (h *fakeHost) Reloading() bool              { return h.reloading }
+func (h *fakeHost) KeyMap() KeyMap               { return h.keyMap }
+func (h *fakeHost) ViewedChildSessionID() string { return h.viewedChild }
+func (h *fakeHost) RestoreToComposer(text string) {
+	h.restored = append(h.restored, text)
+}
 
 func (h *fakeHost) ShowChatItem(item chat.MessageItem) tea.Cmd {
 	h.chatItems = append(h.chatItems, item)

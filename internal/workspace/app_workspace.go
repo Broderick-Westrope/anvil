@@ -213,6 +213,45 @@ func (w *AppWorkspace) AgentQueuedPromptsList(sessionID string) []string {
 	return w.app.AgentCoordinator.QueuedPromptsList(sessionID)
 }
 
+func (w *AppWorkspace) AgentSteerSubagent(childSessionID, text string, interrupt bool) error {
+	if w.app.AgentCoordinator == nil {
+		return errors.New("agent coordinator not initialized")
+	}
+	return w.app.AgentCoordinator.SteerSubagent(childSessionID, text, interrupt)
+}
+
+func (w *AppWorkspace) AgentCancelSubagent(childSessionID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.CancelSubagent(childSessionID)
+}
+
+func (w *AppWorkspace) AgentSubagentRunning(childSessionID string) bool {
+	if w.app.AgentCoordinator == nil {
+		return false
+	}
+	return w.app.AgentCoordinator.SubagentRunning(childSessionID)
+}
+
+func (w *AppWorkspace) AgentSubagentPendingSteers(childSessionID string) []string {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.SubagentPendingSteers(childSessionID)
+}
+
+func (w *AppWorkspace) GetSubagentCall(ctx context.Context, callID string) (session.SubagentCall, error) {
+	return w.app.Sessions.GetSubagentCall(ctx, callID)
+}
+
+func (w *AppWorkspace) AgentTakeReturnedSteers(rootSessionID string) []agent.SubagentSteersReturned {
+	if w.app.AgentCoordinator == nil {
+		return nil
+	}
+	return w.app.AgentCoordinator.TakeReturnedSteers(rootSessionID)
+}
+
 func (w *AppWorkspace) AgentClearQueue(sessionID string) {
 	if w.app.AgentCoordinator != nil {
 		w.app.AgentCoordinator.ClearQueue(sessionID)

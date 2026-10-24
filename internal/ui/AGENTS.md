@@ -145,6 +145,21 @@ Optional surfaces, found by type assertion when the feature registers:
   session's leaf: a rewind (`handleNavigateTree`), a return to the
   pre-branch conversation (`beginBranchReturn`), and the model and
   reasoning metadata writes (`canWriteLeafMetadata`).
+- `preemptInputFeature.PreemptInput` is offered key presses and pastes
+  once no dialog is open, before upstream's Esc, focus and paste
+  handling. Use it only for an input surface that must own keys the chat
+  or editor would take; the subagent steer input is the one user.
+- `drillInFooterFeature.DrillInFooter` returns a `panelView` drawn under a
+  drilled-in chat, or nil. It's called while rendering and laying out, so
+  it must only read state.
+
+The subagent steer feature (`model/subagent_steer.go`) adds two host
+methods: `ViewedChildSessionID`, the topmost drilled-in session (read
+only), and `RestoreToComposer`, which appends text to the main editor.
+The task call tracker (`model/subagent_calls.go`) is a feature that only
+observes; `UI` asks it, through `features.calls`, which task call owns a
+child session's activity, so a resumed call's item gets its events and
+stats.
 
 A feature never holds `*UI`. It asks `UI` for things through `featureHost`,
 and for workspace calls it declares the narrow interface it needs. Add a

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -97,7 +98,13 @@ type Service interface {
 	GetLast(ctx context.Context, workingDir string) (Session, error)
 	GetLastGlobal(ctx context.Context) (Session, error)
 	List(ctx context.Context, workingDir string) ([]Session, error)
+	// Save writes the session's title, token counters and todos. It never
+	// writes Cost: cost only grows, through AddCost, UpdateTitleAndUsage
+	// and RollUpChildCost, so a stale copy can't undo cost another writer
+	// added.
 	Save(ctx context.Context, session Session) (Session, error)
+	// AddCost adds delta to the session's cost.
+	AddCost(ctx context.Context, id string, delta float64) error
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, titleIsCustom bool, promptTokens, completionTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string, titleIsCustom bool) error
 	SetPin(ctx context.Context, id string, pinned bool, note string) error
@@ -112,6 +119,14 @@ type Service interface {
 	CreateAgentToolSessionID(messageID, toolCallID string) string
 	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool)
 	IsAgentToolSession(sessionID string) bool
+
+	// Subagent identity and task call links.
+	CreateSubagent(ctx context.Context, sub Subagent) (Subagent, error)
+	GetSubagentByHandle(ctx context.Context, parentID, handle string) (Subagent, error)
+	CreateSubagentCall(ctx context.Context, call SubagentCall) error
+	GetSubagentCall(ctx context.Context, id string) (SubagentCall, error)
+	FinishSubagentCall(ctx context.Context, id string) error
+	RollUpChildCost(ctx context.Context, childID, callID string) error
 }
 
 type service struct {
@@ -251,7 +266,6 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 		TitleIsCustom:    boolToInt64(session.TitleIsCustom),
 		PromptTokens:     session.PromptTokens,
 		CompletionTokens: session.CompletionTokens,
-		Cost:             session.Cost,
 		Todos: sql.NullString{
 			String: todosJSON,
 			Valid:  todosJSON != "",
@@ -268,9 +282,44 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 	return session, nil
 }
 
+// validCostDelta rejects a delta that would shrink cost or leave it
+// unrepairable, since cost only grows.
+func validCostDelta(delta float64) error {
+	if delta < 0 || math.IsNaN(delta) || math.IsInf(delta, 0) {
+		return fmt.Errorf("cost can't change by %v", delta)
+	}
+	return nil
+}
+
+// AddCost adds delta to the session's cost and publishes the update.
+func (s *service) AddCost(ctx context.Context, id string, delta float64) error {
+	if err := validCostDelta(delta); err != nil {
+		return fmt.Errorf("add cost to session %s: %w", id, err)
+	}
+	if delta == 0 {
+		return nil
+	}
+	n, err := s.q.AddSessionCost(ctx, db.AddSessionCostParams{Delta: delta, ID: id})
+	if err != nil {
+		return fmt.Errorf("add cost to session %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("add cost to session %s: %w", id, sql.ErrNoRows)
+	}
+	session, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.Publish(pubsub.UpdatedEvent, session)
+	return nil
+}
+
 // UpdateTitleAndUsage updates only the title and usage fields atomically.
 // This is safer than fetching, modifying, and saving the entire session.
 func (s *service) UpdateTitleAndUsage(ctx context.Context, sessionID, title string, titleIsCustom bool, promptTokens, completionTokens int64, cost float64) error {
+	if err := validCostDelta(cost); err != nil {
+		return fmt.Errorf("update title and usage of session %s: %w", sessionID, err)
+	}
 	err := s.q.UpdateSessionTitleAndUsage(ctx, db.UpdateSessionTitleAndUsageParams{
 		ID:               sessionID,
 		Title:            title,

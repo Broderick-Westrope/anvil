@@ -92,6 +92,14 @@ type SessionAgentCall struct {
 	// instead of a user prompt.
 	wake bool
 
+	// Injections, when set, start the run instead of a user prompt: they
+	// are persisted as one subagent_injection message, and Prompt becomes
+	// their rendered text.
+	Injections []message.InjectionContent
+	// steering, when set, supplies human steers to deliver at each step
+	// boundary of a subagent run.
+	steering *subagentLease
+
 	// OnAuthRefresh, when non-nil, is called by fantasy when a stream
 	// fails with an authentication error (HTTP 401). The callback should
 	// refresh credentials and return nil on success, in which case
@@ -274,6 +282,9 @@ func NewSessionAgent(
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+	if len(call.Injections) > 0 {
+		call.Prompt = message.RenderInjections(call.Injections)
+	}
 	if call.Prompt == "" && !message.ContainsTextAttachment(call.Attachments) {
 		return nil, ErrEmptyPrompt
 	}
@@ -381,12 +392,19 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	// leaves the last step looking in flight and its calls timing forever.
 	defer t.endStep()
 	result, err := agent.Stream(ctx, t.streamCall(history, files))
+	if err == nil {
+		// Fantasy ignores OnStepFinish's error, so a failed step save
+		// surfaces here.
+		err = t.persistFailure()
+	}
 	if err != nil {
 		if t.assistant == nil {
 			return result, err
 		}
-		if recordErr := t.recordFailure(err); recordErr != nil {
-			return nil, recordErr
+		recordErr := t.recordFailure(err)
+		t.chargeUnfinishedStep()
+		if recordErr != nil {
+			return nil, localPersistence(t.persistCtx, recordErr)
 		}
 		return nil, err
 	}
@@ -446,6 +464,9 @@ func (a *sessionAgent) summarizeAndResume(ctx context.Context, call SessionAgent
 	if !interrupted {
 		return nil
 	}
+	// The injections were persisted by the interrupted turn; the
+	// continuation starts from its own prompt.
+	call.Injections = nil
 	if call.wake {
 		call.wake = false
 		call.Prompt = "The previous session was interrupted because it got too long while handling background job updates. Continue from the summary."
@@ -555,8 +576,30 @@ func (a *sessionAgent) abortSetup(ctx context.Context, err error) (*fantasy.Agen
 	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok && owner != nil {
 		owner.handoffOnError = true
 	}
-	return nil, err
+	return nil, localPersistence(ctx, err)
 }
+
+// localPersistence marks err from a database write or read made with ctx
+// as a failure of local persistence, so a task call doesn't retry it. A
+// failure that only happened because ctx was cancelled, such as by an
+// interrupt, isn't one.
+func localPersistence(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return err
+	}
+	return persistenceError{err}
+}
+
+// persistenceError marks err as a failure of local persistence, without
+// changing its message.
+type persistenceError struct{ err error }
+
+func (e persistenceError) Error() string        { return e.err.Error() }
+func (e persistenceError) Unwrap() error        { return e.err }
+func (e persistenceError) Is(target error) bool { return target == errLocalPersistence }
 
 func (a *sessionAgent) reportIdleWhenDone(ctx context.Context, sessionID string) {
 	if a.onIdle == nil {
@@ -581,14 +624,14 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	}
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
+		return localPersistence(ctx, fmt.Errorf("failed to get session: %w", err))
 	}
 	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
 	call := a.newSideCall(usageKindSummary, sessionID, currentSession.ParentSessionID, largeModel)
 	msgs, rawPath, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return err
+		return localPersistence(ctx, err)
 	}
 	if len(msgs) == 0 {
 		// Nothing to summarize.
@@ -631,7 +674,7 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 		MessageType:     message.MessageTypeCompaction,
 	})
 	if err != nil {
-		return err
+		return localPersistence(ctx, err)
 	}
 
 	call.messageID = compactionMsg.ID
@@ -667,10 +710,8 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	// silently losing all compacted history.
 	err = a.messages.Update(persistCtx, compactionMsg)
 	if err != nil {
-		return err
+		return localPersistence(persistCtx, err)
 	}
-
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
 
 	// Update session usage. The leaf already points to the compaction
 	// message (advanced atomically by Create() above).
@@ -678,9 +719,16 @@ func (a *sessionAgent) summarizeOwned(ctx context.Context, sessionID string, opt
 	currentSession.CompletionTokens = summaryCompletionTokens(usage, compactionMsg)
 	currentSession.PromptTokens = 0
 	currentSession.EstimatedUsage = usageIsZero(usage)
-	_, err = a.sessions.Save(genCtx, currentSession)
+	// The summary is finished and billed, so it's recorded even if the
+	// user cancels now.
+	_, err = a.sessions.Save(persistCtx, currentSession)
 	if err != nil {
-		return err
+		return localPersistence(persistCtx, err)
+	}
+	cost := usageCost(largeModel, resp.TotalUsage, a.openrouterRunCost(resp.Steps), false)
+	err = a.sessions.AddCost(persistCtx, sessionID, cost)
+	if err != nil {
+		return localPersistence(persistCtx, err)
 	}
 
 	a.reportIdleWhenDone(ctx, sessionID)
@@ -731,6 +779,18 @@ func sessionHeaders(sessionID string) map[string]string {
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall, parentMessageID string) (message.Message, error) {
+	if len(call.Injections) > 0 {
+		msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
+			Role:            message.User,
+			MessageType:     message.MessageTypeSubagentInjection,
+			Parts:           message.InjectionParts(call.Injections),
+			ParentMessageID: parentMessageID,
+		})
+		if err != nil {
+			return message.Message{}, fmt.Errorf("failed to create injection message: %w", err)
+		}
+		return msg, nil
+	}
 	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
@@ -1140,13 +1200,26 @@ func usageCost(model Model, usage fantasy.Usage, overrideCost *float64, estimate
 		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
 }
 
-func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
+// updateSessionUsage applies usage to session in memory and returns the
+// cost it added.
+func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) float64 {
 	if !usageIsZero(usage) {
 		session.EstimatedUsage = estimated
 	}
-
-	session.Cost += usageCost(model, usage, overrideCost, estimated)
+	cost := usageCost(model, usage, overrideCost, estimated)
+	session.Cost += cost
 	updateSessionTokenCounters(session, usage)
+	return cost
+}
+
+// saveSessionUsage applies usage to sess and saves it. Cost is added
+// separately, because Save never writes it.
+func (a *sessionAgent) saveSessionUsage(ctx context.Context, model Model, sess *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) error {
+	cost := a.updateSessionUsage(model, sess, usage, overrideCost, estimated)
+	if _, err := a.sessions.Save(ctx, *sess); err != nil {
+		return err
+	}
+	return a.sessions.AddCost(ctx, sess.ID, cost)
 }
 
 // contextTokens returns the size of the prompt the provider processed for

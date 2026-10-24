@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -84,8 +85,17 @@ func (m *UserMessageItem) RawRender(width int) string {
 	return m.renderHighlighted(content, cappedWidth, height)
 }
 
-// displayContent returns the markdown source shown for the message.
+// displayContent returns the markdown source shown for the message. An
+// injected message shows each injection under a label naming its source,
+// instead of the tagged text the model sees.
 func (m *UserMessageItem) displayContent() string {
+	if injections := m.message.Injections(); injections != nil {
+		var blocks []string
+		for _, inj := range injections {
+			blocks = append(blocks, injectionBlock(inj))
+		}
+		return strings.Join(blocks, "\n\n")
+	}
 	msgContent := skills.CollapseContentXML(strings.TrimSpace(m.message.Content().Text))
 	return commands.CollapseExpansionXML(msgContent)
 }
@@ -158,4 +168,31 @@ func (m *UserMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 		return true, common.CopyToClipboard(text, "Message copied to clipboard")
 	}
 	return false, nil
+}
+
+// injectionBlock renders one injection as a bold source label, followed by
+// its text unless the harness wrote it.
+func injectionBlock(inj message.InjectionContent) string {
+	switch inj.Kind {
+	case message.InjectionKindRetry:
+		return fmt.Sprintf("**Harness · retry %d/%d after %s**", inj.Attempt, inj.MaxAttempts, inj.Reason)
+	case message.InjectionKindContinue:
+		return "**Harness · continue after interrupt**"
+	case message.InjectionKindResume:
+		return "**Orchestrator · resume**\n\n" + inj.Text
+	case message.InjectionKindInterruptSteer:
+		return "**You · interrupt**\n\n" + inj.Text
+	case message.InjectionKindSteer:
+		return "**You · steer**\n\n" + inj.Text
+	default:
+		// An unknown kind is labelled by its source, so nothing passes as
+		// the user's own message.
+		return fmt.Sprintf("**%s**\n\n%s", injectionSourceLabels[inj.Source], inj.Text)
+	}
+}
+
+var injectionSourceLabels = map[message.InjectionSource]string{
+	message.InjectionSourceHuman:        "You",
+	message.InjectionSourceOrchestrator: "Orchestrator",
+	message.InjectionSourceHarness:      "Harness",
 }

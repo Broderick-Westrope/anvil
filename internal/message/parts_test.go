@@ -38,6 +38,7 @@ func TestStoredParts_RoundTripEveryPartType(t *testing.T) {
 		message.ModelChangeContent{Provider: "anthropic", ModelID: "model"},
 		message.ThinkingLevelChangeContent{ThinkingLevel: "high"},
 		message.MCPToggleContent{ServerName: "server", Enabled: true},
+		message.InjectionContent{Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: "go on", CallID: "call", Attempt: 1, MaxAttempts: 2},
 		message.Finish{Reason: message.FinishReasonEndTurn, Time: 5, Message: "msg", Details: "details"},
 	}
 

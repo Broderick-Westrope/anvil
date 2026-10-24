@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -24,6 +25,7 @@ func TestMigrations_RoundTrip(t *testing.T) {
 	// Apply all migrations, roll back every recently added one (newest
 	// first), then re-apply. Extend this list when adding migrations.
 	recent := []int64{
+		20261018000000, // add_subagents
 		20261014000000, // add_messages_session_role_index
 		20261010000000, // add_workflows
 		20261009000000, // add_step_usage
@@ -90,4 +92,66 @@ func TestMigrations_RenameDecisionSourceToBouncer(t *testing.T) {
 
 	require.NoError(t, goose.DownTo(conn, "migrations", before))
 	require.Equal(t, map[string]string{"a": "assessor", "h": "human", "r": "rule"}, sources())
+}
+
+func TestMigrations_SubagentsRoundTripKeepsSessionsAndCost(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, initGoose())
+
+	conn, err := openDB(filepath.Join(t.TempDir(), "anvil.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	conn.SetMaxOpenConns(1)
+
+	const before, subagents = 20261010000000, 20261018000000
+	require.NoError(t, goose.UpTo(conn, "migrations", before))
+	_, err = conn.ExecContext(t.Context(), `INSERT INTO sessions (id, title, cost, updated_at, created_at) VALUES ('p', 'parent', 0.5, 1, 1)`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(), `INSERT INTO sessions (id, parent_session_id, title, cost, updated_at, created_at) VALUES ('m$$c', 'p', 'child', 0.5, 1, 1)`)
+	require.NoError(t, err)
+
+	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
+	q := New(conn)
+	migrated, err := q.GetSessionByID(t.Context(), "m$$c")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), migrated.UpdatedAt, "marking cost rolled up isn't activity")
+	_, err = conn.ExecContext(t.Context(), `UPDATE sessions SET cost_rolled_up = 0.7 WHERE id = 'm$$c'`)
+	require.NoError(t, err)
+	migrated, err = q.GetSessionByID(t.Context(), "m$$c")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), migrated.UpdatedAt)
+	_, err = conn.ExecContext(t.Context(), `UPDATE sessions SET cost_rolled_up = cost WHERE id = 'm$$c'`)
+	require.NoError(t, err)
+	require.NoError(t, q.CreateSubagent(t.Context(), CreateSubagentParams{
+		SessionID: "m$$c", ParentSessionID: "p", Handle: "fixer-abcd", Origin: "task", AgentType: "fixer", Provider: "p", Model: "m",
+	}))
+	require.NoError(t, q.CreateSubagentCall(t.Context(), CreateSubagentCallParams{ID: "m$$c", SessionID: "m$$c", Kind: "new"}))
+	_, err = q.CreateMessage(t.Context(), CreateMessageParams{
+		ID: "steer", SessionID: "m$$c", Role: "user", MessageType: "subagent_injection",
+		Parts: `[{"type":"text","data":{"text":"<injected_message source=\"human\">use v2</injected_message>"}},` +
+			`{"type":"injection","data":{"source":"human","kind":"steer","text":"use v2","call_id":"m$$c"}}]`,
+	})
+	require.NoError(t, err)
+	child, err := q.GetSessionByID(t.Context(), "m$$c")
+	require.NoError(t, err)
+	require.InDelta(t, 0.5, child.CostRolledUp, 1e-9, "existing children's cost is never rolled up again")
+
+	// Down drops identities, links and watermarks, but keeps sessions and
+	// their accumulated cost.
+	require.NoError(t, goose.DownTo(conn, "migrations", before))
+	var cost float64
+	require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT cost FROM sessions WHERE id = 'p'`).Scan(&cost))
+	require.InDelta(t, 0.5, cost, 1e-9)
+
+	// Builds before this migration can't decode injection parts, so Down
+	// turns injected messages into plain user messages with their text.
+	var parts, msgType string
+	require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT parts, message_type FROM messages WHERE id = 'steer'`).Scan(&parts, &msgType))
+	require.Equal(t, "message", msgType)
+	require.JSONEq(t, `[{"type":"text","data":{"text":"<injected_message source=\"human\">use v2</injected_message>"}},{"type":"finish","data":{"reason":"stop"}}]`, parts)
+
+	require.NoError(t, goose.UpTo(conn, "migrations", subagents))
+	_, err = q.GetSubagent(t.Context(), "m$$c")
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }

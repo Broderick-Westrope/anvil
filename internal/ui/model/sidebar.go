@@ -111,8 +111,9 @@ func (m *UI) modelInfo(width int) string {
 // when NOT drilled in, so tick-driven performance is not a concern there.
 func (m *UI) viewedSessionStats() (turns, toolCalls int) {
 	if entry, ok := m.viewedSessionEntry(); ok {
-		sid := entry.sessionID
-		_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
+		// The item of the call that owns the child's activity, which is
+		// a resume's own item once the child has been resumed.
+		toolCallID, ok := m.agentItemToolCallID(entry.sessionID)
 		if !ok {
 			return 0, 0
 		}
@@ -147,7 +148,10 @@ func (m *UI) isViewedSubagentRunning() bool {
 		return false
 	}
 	sid := entry.sessionID
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(sid)
+	if m.com.Workspace.AgentSubagentRunning(sid) {
+		return true
+	}
+	toolCallID, ok := m.agentItemToolCallID(sid)
 	if !ok {
 		return false
 	}

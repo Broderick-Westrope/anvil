@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -149,7 +150,7 @@ func TestTaskTool(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tt.want, resp.Content)
+			require.Equal(t, tt.want, withoutSubagentID(resp.Content))
 			if tt.wantLog != "" {
 				require.Contains(t, logs.String(), tt.wantLog)
 			}
@@ -158,4 +159,11 @@ func TestTaskTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+var subagentIDFooter = regexp.MustCompile(`\n\nsubagent_id: \S+$`)
+
+// withoutSubagentID strips the handle every task result ends with.
+func withoutSubagentID(content string) string {
+	return subagentIDFooter.ReplaceAllString(content, "")
 }

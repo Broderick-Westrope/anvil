@@ -63,6 +63,11 @@ const (
 	// MessageTypeJobEvent is a user-role notice about background job
 	// events. It is sent to the model like any user message.
 	MessageTypeJobEvent MessageType = "job_event"
+	// MessageTypeSubagentInjection is a user-role message injected into a
+	// running subagent by a human, the orchestrator or the harness. It is
+	// sent to the model like any user message, and its InjectionContent
+	// parts record where it came from.
+	MessageTypeSubagentInjection MessageType = "subagent_injection"
 )
 
 type ContentPart interface {

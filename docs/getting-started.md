@@ -65,6 +65,11 @@ full input and output, or a diagram at full size. `h` comes back out. In
 a tool's detail, `o` opens the file it worked on, `e` opens it in
 `$EDITOR`, and `r` shows it in your file manager.
 
+A subagent that's still running can be redirected without cancelling the
+whole turn. Drill into it, press `tab`, and type a message: `enter` sends
+it at the subagent's next step, and `alt+i` interrupts it to start over
+with your message. `esc` stops just that subagent.
+
 See [Keybindings](./keybindings.md) for the full list.
 
 ## Long sessions

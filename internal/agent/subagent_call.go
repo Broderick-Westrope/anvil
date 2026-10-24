@@ -1,0 +1,559 @@
+package agent
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"slices"
+	"strings"
+	"time"
+
+	"charm.land/fantasy"
+
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
+	"github.com/Broderick-Westrope/anvil/internal/message"
+	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/session"
+	"github.com/Broderick-Westrope/anvil/internal/shell"
+)
+
+// maxReturnedSteers bounds the returned steers waiting for their session
+// to be shown; the oldest are dropped beyond it.
+const maxReturnedSteers = 50
+
+// maxSubagentResumes is how many times one task call resumes its subagent
+// after a transient failure. Fantasy has already retried each step by the
+// time a failure ends a run, so a couple of widely spaced resumes is enough.
+const maxSubagentResumes = 2
+
+// defaultSubagentRetryDelays are the waits before each automatic resume.
+var defaultSubagentRetryDelays = []time.Duration{firstSubagentRetryDelay, laterSubagentRetryDelay}
+
+// The default waits, as constants so the mutation check treats them like
+// any other pinned constant.
+const (
+	firstSubagentRetryDelay = 5 * time.Second
+	laterSubagentRetryDelay = 30 * time.Second
+)
+
+const (
+	// noTextOutput is the result of a subagent that finished without text.
+	noTextOutput = "Sub-agent completed but produced no text output."
+	// subagentContinueText is the harness's message to a subagent resumed
+	// after a transient failure.
+	subagentContinueText = "Your previous attempt stopped because of a transient error. Continue where you left off."
+	// subagentInterruptedText continues a subagent whose interrupting
+	// steer was already delivered before its attempt was cancelled.
+	subagentInterruptedText = "You were interrupted. Continue, taking the latest message into account."
+	// subagentCostTimeout bounds the cost rollup after each attempt, which
+	// runs even when the call was cancelled.
+	subagentCostTimeout = 5 * time.Second
+)
+
+// SubagentSteersReturned reports human steers that a task call ended
+// without delivering, so the UI can give the text back.
+type SubagentSteersReturned struct {
+	// RootSessionID is the top-level session the subagent works for,
+	// whose editor gets the steers back.
+	RootSessionID string
+	// SessionID is the subagent's child session.
+	SessionID string
+	Steers    []string
+	// Reason says why the steers weren't delivered.
+	Reason string
+}
+
+// subAgentParams holds the parameters for running a subagent.
+type subAgentParams struct {
+	Agent SessionAgent
+	// AgentType and Depth are stored as the new subagent's identity. A
+	// task subagent has an AgentType; other callers, such as
+	// agentic_fetch, leave it empty and get no identity, handle or
+	// automatic resume.
+	AgentType      string
+	Depth          int
+	SessionID      string
+	AgentMessageID string
+	ToolCallID     string
+	Prompt         string
+	SessionTitle   string
+	// Resume, when set, continues this existing subagent with Prompt
+	// instead of starting a new one.
+	Resume *session.Subagent
+	// OnSession, when set, is called with the child session's ID before
+	// the agent runs, for custom session configuration.
+	OnSession func(sessionID string)
+}
+
+// childSession describes the session a subagent runs in.
+type childSession struct {
+	ID, ParentID, Title string
+	// Existing marks a child session that already exists, such as a
+	// resumed subagent's.
+	Existing bool
+	// CallID, when set, is the task call charged the child's new cost.
+	CallID string
+	// OnCreate, when set, is called once the session exists.
+	OnCreate func(sessionID string)
+}
+
+// inChildSession runs fn in a child session of s.ParentID, creating it
+// unless it exists, then rolls the child's new cost up to the parent and
+// hands its surviving background jobs to the parent. It returns the
+// hand-off inventory, empty when there were no jobs. Every subagent run,
+// from the task tool or a workflow, goes through here.
+func (c *coordinator) inChildSession(ctx context.Context, s childSession, fn func(ctx context.Context, sessionID string) error) (handedOff string, err error) {
+	// Detach from any submission owner ctx carries: the child's turns are
+	// admitted as their own submissions, not run in place as, or rejected
+	// as, the parent's owner.
+	ctx = context.WithValue(ctx, ownerKey{}, struct{}{})
+	sessionID := s.ID
+	if !s.Existing {
+		created, err := c.sessions.CreateTaskSession(ctx, s.ID, s.ParentID, s.Title)
+		if err != nil {
+			return "", fmt.Errorf("create session: %w", err)
+		}
+		sessionID = created.ID
+	}
+	defer func() {
+		handedOff = handOffSubagentJobs(shell.GetBackgroundShellManager(), c.jobEvents, sessionID, s.ParentID)
+	}()
+	defer c.permissions.RevokeAutoApproveSession(sessionID)
+	defer c.rollUpChildCost(ctx, sessionID, s.CallID)
+	if s.OnCreate != nil {
+		s.OnCreate(sessionID)
+	}
+	return "", fn(ctx, sessionID)
+}
+
+// rollUpChildCost adds the child's cost since the last rollup to its
+// parent. It's best effort, and runs even after cancellation: a failure
+// here must not discard output the subagent already produced.
+func (c *coordinator) rollUpChildCost(ctx context.Context, childID, callID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentCostTimeout)
+	defer cancel()
+	if err := c.sessions.RollUpChildCost(ctx, childID, callID); err != nil {
+		slog.Warn("Failed to roll up subagent cost", "child_session", childID, "error", err)
+	}
+}
+
+// errSubAgentRun marks a failure the task tool reports back to the model
+// as a tool error rather than failing the tool call.
+type errSubAgentRun struct{ msg string }
+
+func (e errSubAgentRun) Error() string { return e.msg }
+
+// taskCall is one task tool call: a new subagent or a resume, holding the
+// lease on its child session from start to final result.
+type taskCall struct {
+	// id is the call's agent tool session ID (messageID$$toolCallID).
+	id     string
+	lease  *subagentLease
+	params subAgentParams
+	handle string
+	output string
+	// recoveries names each transient failure the call resumed after.
+	recoveries []string
+	// costCall is the call charged the child's cost: id for task calls,
+	// "" for callers without call links.
+	costCall string
+}
+
+// runSubAgent runs a task call in its child session and returns the
+// subagent's output as the tool's response. Transient failures resume the
+// same child automatically; every response ends with the subagent's
+// handle so the caller can resume it.
+func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+	callID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
+	child := childSession{ID: callID, ParentID: params.SessionID, Title: params.SessionTitle, OnCreate: params.OnSession}
+	kind := session.SubagentCallNew
+	tc := &taskCall{id: callID, params: params}
+	if params.Resume != nil {
+		child.ID, child.Existing, kind = params.Resume.SessionID, true, session.SubagentCallResume
+		tc.handle = params.Resume.Handle
+	}
+	if params.AgentType != "" {
+		child.CallID, tc.costCall = callID, callID
+	}
+
+	callCtx, cancelCall := context.WithCancelCause(ctx)
+	defer cancelCall(nil)
+	lease, err := c.leases.acquire(child.ID, callID, cancelCall)
+	if err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Subagent %s is running. Resume it after its current task call returns.\n\nsubagent_id: %s", tc.handle, tc.handle)), nil
+	}
+	defer c.leases.release(lease)
+	tc.lease = lease
+
+	handedOff, err := c.inChildSession(callCtx, child, func(ctx context.Context, sessionID string) error {
+		if err := c.recordTaskCall(ctx, tc, sessionID, kind); err != nil {
+			return err
+		}
+		return c.runTaskAttempts(ctx, tc, sessionID)
+	})
+	if undelivered := lease.finalise(); len(undelivered) > 0 {
+		root := cmp.Or(tools.GetRootSessionFromContext(ctx), params.SessionID)
+		c.handBackSteers(root, child.ID, undelivered, err)
+	}
+	if child.CallID != "" {
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentCostTimeout)
+		if finishErr := c.sessions.FinishSubagentCall(finishCtx, callID); finishErr != nil {
+			slog.Warn("Failed to record the end of a task call", "call", callID, "error", finishErr)
+		}
+		cancel()
+	}
+
+	var runErr errSubAgentRun
+	if err != nil && !errors.As(err, &runErr) && tc.handle != "" {
+		// The subagent exists, so the orchestrator gets its handle to
+		// resume it, rather than a failed tool call.
+		err = errSubAgentRun{fmt.Sprintf("Failed to run subagent: %s", err)}
+	}
+	var resp fantasy.ToolResponse
+	if errors.As(err, &runErr) {
+		resp = fantasy.NewTextErrorResponse(runErr.msg)
+	} else if err != nil {
+		if handedOff != "" {
+			slog.Warn("Subagent jobs handed off after error", "parent_session", params.SessionID, "inventory", handedOff)
+		}
+		return fantasy.ToolResponse{}, err
+	} else if tc.output == "" {
+		resp = fantasy.NewTextErrorResponse(noTextOutput)
+	} else {
+		resp = fantasy.NewTextResponse(tc.output)
+		if recovered := tc.recoveryLine(); recovered != "" {
+			resp.Content += "\n\n" + recovered
+		}
+	}
+	if handedOff != "" {
+		resp.Content += "\n\n" + handedOff
+	}
+	if summary := injectionSummary(lease.deliveredInjections()); summary != "" {
+		resp.Content += "\n\n" + summary
+	}
+	if tc.handle != "" {
+		resp.Content += "\n\nsubagent_id: " + tc.handle
+	}
+	return resp, nil
+}
+
+// recordTaskCall stores a new subagent's identity, and every call's link
+// to its child session, before the child's first step.
+func (c *coordinator) recordTaskCall(ctx context.Context, tc *taskCall, sessionID string, kind session.SubagentCallKind) error {
+	if tc.params.AgentType == "" {
+		return nil
+	}
+	if tc.params.Resume == nil {
+		model := tc.params.Agent.Model().ModelCfg
+		sub, err := c.sessions.CreateSubagent(ctx, session.Subagent{
+			SessionID:       sessionID,
+			ParentSessionID: tc.params.SessionID,
+			Origin:          session.SubagentOriginTask,
+			AgentType:       tc.params.AgentType,
+			Depth:           tc.params.Depth,
+			Provider:        model.Provider,
+			Model:           model.Model,
+		})
+		if err != nil {
+			return fmt.Errorf("store subagent identity: %w", err)
+		}
+		tc.handle = sub.Handle
+	}
+	if err := c.sessions.CreateSubagentCall(ctx, session.SubagentCall{ID: tc.id, SessionID: sessionID, Kind: kind}); err != nil {
+		return fmt.Errorf("link task call to subagent: %w", err)
+	}
+	return nil
+}
+
+// runTaskAttempts runs the subagent until it finishes with no steers left
+// to deliver, resuming it after interrupts and transient failures. Each
+// attempt continues the same child session with a new message: the
+// orchestrator's prompt, a human steer, or the harness's continue.
+func (c *coordinator) runTaskAttempts(ctx context.Context, tc *taskCall, sessionID string) error {
+	next := SessionAgentCall{Prompt: message.EscapeInjectionTags(tc.params.Prompt)}
+	if tc.params.Resume != nil {
+		next = tc.injection(message.InjectionContent{
+			Source: message.InjectionSourceOrchestrator, Kind: message.InjectionKindResume, Text: tc.params.Prompt,
+		})
+	}
+	for {
+		call, err := c.subAgentCall(ctx, tc.params.Agent, sessionID, next.Prompt)
+		if err != nil {
+			tc.lease.restore(humanSteers(next.Injections))
+		}
+		if errors.Is(err, errRefreshSubAgentModels) {
+			return errSubAgentRun{"Failed to " + err.Error()}
+		}
+		if err != nil {
+			return err
+		}
+		// Awaited, so the call's and attempt's contexts govern the run
+		// even after it continues past auto-compaction.
+		call.Await = true
+		call.Injections, call.steering, call.state = next.Injections, tc.lease, &runState{}
+		attemptCtx, endAttempt := tc.lease.beginAttempt(ctx)
+		result, runErr := tc.params.Agent.Run(attemptCtx, call)
+		interrupted := errors.Is(context.Cause(attemptCtx), errSubagentInterrupted)
+		endAttempt()
+		c.rollUpChildCost(ctx, sessionID, tc.costCall)
+		if call.state.acceptedUserID != "" {
+			tc.lease.recordDelivered(next.Injections...)
+		} else if runErr != nil {
+			// The turn never persisted its message, so steers it carried
+			// weren't delivered.
+			tc.lease.restore(humanSteers(next.Injections))
+		}
+
+		if runErr == nil {
+			if steers := tc.lease.finaliseOrTake(); len(steers) > 0 {
+				next = SessionAgentCall{Injections: steers}
+				continue
+			}
+			// Finalising now rejects cancels, so one that landed before it
+			// still wins.
+			if ctx.Err() != nil {
+				return tc.failure(ctx, ctx.Err())
+			}
+			tc.output = subAgentOutput(result)
+			return nil
+		}
+		if errors.Is(runErr, errLocalPersistence) {
+			return tc.failure(ctx, runErr)
+		}
+		if ctx.Err() == nil && interrupted {
+			next = tc.afterInterrupt(next, call.state.acceptedUserID != "")
+			continue
+		}
+		retry, reason := classifySubagentFailure(ctx, runErr)
+		resumes := len(tc.recoveries)
+		if !retry || resumes >= maxSubagentResumes || tc.params.AgentType == "" {
+			return tc.failure(ctx, runErr)
+		}
+		if err := waitBeforeResume(ctx, tc.lease, withProviderHint(runErr, c.backoffFor(resumes))); err != nil {
+			return tc.failure(ctx, err)
+		}
+		tc.recoveries = append(tc.recoveries, reason)
+		next = tc.injection(message.InjectionContent{
+			Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: subagentContinueText,
+			Attempt: resumes + 1, MaxAttempts: maxSubagentResumes, Reason: reason,
+		})
+	}
+}
+
+// backoffFor returns the wait before the automatic resume that follows
+// resumes earlier ones.
+func (c *coordinator) backoffFor(resumes int) time.Duration {
+	delays := c.subagentRetryDelays
+	if delays == nil {
+		delays = defaultSubagentRetryDelays
+	}
+	return delays[min(resumes, len(delays)-1)]
+}
+
+// waitBeforeResume waits out a retry backoff. An interrupt ends the wait
+// early; cancelling the call ends it with the call's error.
+func waitBeforeResume(ctx context.Context, lease *subagentLease, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-lease.wake:
+		return nil
+	case <-timer.C:
+		return nil
+	}
+}
+
+// humanSteers returns the steers among injections, which go back to the
+// human when they aren't delivered.
+func humanSteers(injections []message.InjectionContent) []message.InjectionContent {
+	var steers []message.InjectionContent
+	for _, inj := range injections {
+		if inj.Source == message.InjectionSourceHuman {
+			steers = append(steers, inj)
+		}
+	}
+	return steers
+}
+
+// injection returns a run that starts with inj, recorded against the call.
+func (tc *taskCall) injection(inj message.InjectionContent) SessionAgentCall {
+	inj.CallID = tc.id
+	return SessionAgentCall{Injections: []message.InjectionContent{inj}}
+}
+
+// afterInterrupt returns the run that continues the call after
+// interrupt+steer. If the interrupted attempt never saved its message, the
+// call starts that message again, without its human steers, which went
+// back to the lease and reach the first step boundary. Otherwise it runs
+// the human's pending steers, or a harness continue when the cancelled
+// attempt had already delivered them.
+func (tc *taskCall) afterInterrupt(interrupted SessionAgentCall, accepted bool) SessionAgentCall {
+	if !accepted {
+		rest := slices.DeleteFunc(slices.Clone(interrupted.Injections), func(inj message.InjectionContent) bool {
+			return inj.Source == message.InjectionSourceHuman
+		})
+		if len(interrupted.Injections) == 0 || len(rest) > 0 {
+			return SessionAgentCall{Prompt: interrupted.Prompt, Injections: rest}
+		}
+	}
+	if steers := tc.lease.takePending(); len(steers) > 0 {
+		return SessionAgentCall{Injections: steers}
+	}
+	return tc.injection(message.InjectionContent{
+		Source: message.InjectionSourceHarness, Kind: message.InjectionKindContinue, Text: subagentInterruptedText,
+	})
+}
+
+// failure returns the tool error for a call that ended with err.
+func (tc *taskCall) failure(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		if errors.Is(context.Cause(ctx), errCancelledByHuman) {
+			return errSubAgentRun{"Subagent cancelled by human."}
+		}
+		return errSubAgentRun{"Subagent cancelled by parent or run cancel."}
+	}
+	msg := fmt.Sprintf("Failed to generate response: %s", err)
+	if attempts := len(tc.recoveries) + 1; attempts > 1 {
+		msg += fmt.Sprintf(" (after %d attempts)", attempts)
+	}
+	return errSubAgentRun{msg}
+}
+
+// recoveryLine summarises the transient failures a successful call
+// recovered from, or returns "" when there were none.
+func (tc *taskCall) recoveryLine() string {
+	n := len(tc.recoveries)
+	if n == 0 {
+		return ""
+	}
+	noun := "failure"
+	if n > 1 {
+		noun = "failures"
+	}
+	return fmt.Sprintf("recovered after %d transient %s: %s", n, noun, strings.Join(tc.recoveries, ", "))
+}
+
+// injectionSummary lists what was injected into the child during the call.
+// The orchestrator's own resume prompt is left out. The list comes from
+// what the call persisted, not from the model's context, so compaction
+// can't drop entries.
+func injectionSummary(delivered []message.InjectionContent) string {
+	var lines []string
+	for _, inj := range delivered {
+		if inj.Source != message.InjectionSourceOrchestrator {
+			lines = append(lines, "- "+injectionSummaryLine(inj))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "Injected during this run:\n" + strings.Join(lines, "\n")
+}
+
+func injectionSummaryLine(inj message.InjectionContent) string {
+	switch inj.Kind {
+	case message.InjectionKindInterruptSteer:
+		return "human (interrupt+steer): " + inj.Text
+	case message.InjectionKindRetry:
+		return fmt.Sprintf("harness: resumed after %s (retry %d/%d)", inj.Reason, inj.Attempt, inj.MaxAttempts)
+	case message.InjectionKindContinue:
+		return "harness: continued after an interrupt"
+	case message.InjectionKindSteer:
+		return "human (steer): " + inj.Text
+	default:
+		// An unknown kind is labelled by its source, so nothing passes as
+		// a human message.
+		return fmt.Sprintf("%s: %s", inj.Source, inj.Text)
+	}
+}
+
+// handBackSteers queues the accepted steers a call ended without
+// delivering, so the human gets their text back, and tells the UI.
+func (c *coordinator) handBackSteers(rootID, childID string, undelivered []message.InjectionContent, callErr error) {
+	var texts []string
+	for _, inj := range undelivered {
+		texts = append(texts, inj.Text)
+	}
+	reason := "The subagent finished before it could read your message."
+	if callErr != nil {
+		reason = "The subagent's task call ended before it could read your message: " + callErr.Error()
+	}
+	returned := SubagentSteersReturned{RootSessionID: rootID, SessionID: childID, Steers: texts, Reason: reason}
+	c.returnedMu.Lock()
+	c.returned = append(c.returned, returned)
+	if over := len(c.returned) - maxReturnedSteers; over > 0 {
+		// Steers for sessions nobody reopens would otherwise pile up.
+		slog.Warn("Dropping returned subagent steers nobody took", "count", over)
+		c.returned = slices.Delete(c.returned, 0, over)
+	}
+	c.returnedMu.Unlock()
+	// Only a nudge: the steers stay queued until the UI takes them, so a
+	// dropped event can't lose them.
+	c.subagentBroker().Publish(pubsub.CreatedEvent, returned)
+}
+
+// TakeReturnedSteers implements Coordinator.
+func (c *coordinator) TakeReturnedSteers(rootSessionID string) []SubagentSteersReturned {
+	c.returnedMu.Lock()
+	defer c.returnedMu.Unlock()
+	var taken, kept []SubagentSteersReturned
+	for _, r := range c.returned {
+		if r.RootSessionID == rootSessionID {
+			taken = append(taken, r)
+		} else {
+			kept = append(kept, r)
+		}
+	}
+	c.returned = kept
+	return taken
+}
+
+func (c *coordinator) subagentBroker() *pubsub.Broker[SubagentSteersReturned] {
+	c.subagentEventsOnce.Do(func() {
+		if c.subagentEvents == nil {
+			c.subagentEvents = pubsub.NewBroker[SubagentSteersReturned]()
+		}
+	})
+	return c.subagentEvents
+}
+
+// SubscribeSubagentEvents implements Coordinator.
+func (c *coordinator) SubscribeSubagentEvents(ctx context.Context) <-chan pubsub.Event[SubagentSteersReturned] {
+	return c.subagentBroker().Subscribe(ctx)
+}
+
+// SteerSubagent implements Coordinator.
+func (c *coordinator) SteerSubagent(childID, text string, interrupt bool) error {
+	lease := c.leases.get(childID)
+	if lease == nil {
+		return errSteerRejected
+	}
+	return lease.steer(text, interrupt)
+}
+
+// CancelSubagent implements Coordinator.
+func (c *coordinator) CancelSubagent(childID string) bool {
+	lease := c.leases.get(childID)
+	if lease == nil {
+		return false
+	}
+	return lease.cancel(errCancelledByHuman)
+}
+
+// SubagentRunning implements Coordinator.
+func (c *coordinator) SubagentRunning(childID string) bool {
+	return c.leases.get(childID) != nil
+}
+
+// SubagentPendingSteers implements Coordinator.
+func (c *coordinator) SubagentPendingSteers(childID string) []string {
+	lease := c.leases.get(childID)
+	if lease == nil {
+		return nil
+	}
+	return lease.pendingTexts()
+}

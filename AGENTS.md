@@ -231,6 +231,19 @@ Terms with a specific meaning in this codebase are defined in
   SQL in the `anvil-cache-triage` skill
   (`.agents/skills/anvil-cache-triage/references/classify.sql`), not in
   Go. Rows older than 90 days are pruned at startup.
+- **Subagent task calls**: each `task` call (`internal/agent/subagent_call.go`)
+  holds a lease on its subagent's child session (`subagent_lease.go`) for
+  its whole life, so a resume of a running subagent is rejected, not
+  queued. Failures are classified in order (`subagent_retry.go`); up to two
+  transient ones resume the same child with a `harness` injection. The
+  orchestrator resumes a subagent with `task({resume: subagent_id})`, and a
+  human steers or cancels one from its drill-in view; both arrive as
+  `subagent_injection` messages, delivered at step boundaries. Identity
+  and call links live in the `subagents` and `subagent_calls` tables.
+  Session cost only grows, through `AddCost`, `UpdateTitleAndUsage` and
+  `RollUpChildCost`; `Session.Save` never writes it. See
+  `docs/adr/0009-session-cost-only-grows.md` and
+  `plans/completed/design-2026-10-18-subagent-resume-and-steering.md`.
 - **Workflows**: a command whose `COMMAND.md` sets `workflow:` runs a
   JavaScript script (see `plans/completed/design-2026-10-10-workflows.md`).
   `internal/workflow` is the engine: it parses `requires()` without running

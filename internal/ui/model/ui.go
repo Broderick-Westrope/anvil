@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"image"
@@ -481,6 +482,8 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	}
 	ui.features.register(newBranchSummaryFeature(uiHost{ui}, com, com.Workspace))
 	ui.features.register(newFileOpenFeature(com.Workspace.WorkingDir))
+	ui.features.register(newSubagentSteer(uiHost{ui}, com, com.Workspace))
+	ui.features.register(newSubagentCalls())
 
 	// Initialize slash-command autocomplete.
 	ui.slashAC = autocomplete.New(nil, 10)
@@ -747,6 +750,7 @@ func (m *UI) activeChatArea() image.Rectangle {
 	area := m.layout.main
 	if m.isDrilledIn() {
 		area.Min.Y = min(area.Min.Y+drillInChatTopMargin, area.Max.Y)
+		area.Max.Y = max(area.Min.Y, area.Max.Y-m.features.drillInFooterLines())
 	}
 	return area
 }
@@ -1674,14 +1678,25 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		tc := toolItem.ToolCall()
 		messageID := toolItem.MessageID()
 
-		// Get the agent tool session ID.
-		agentSessionID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
+		// Get the agent tool session ID: the call's own, or for a resume,
+		// the child session it continued.
+		callID := m.com.Workspace.CreateAgentToolSessionID(messageID, tc.ID)
+		agentSessionID := callID
+		call, err := m.com.Workspace.GetSubagentCall(context.Background(), callID)
+		linked := err == nil
+		if linked {
+			agentSessionID = call.SessionID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("Failed to load task call link", "call", callID, "error", err)
+		}
 
-		// Fetch nested messages.
+		// Fetch nested messages, keeping only those this call produced.
 		nestedMsgs, err := m.com.Workspace.ListMessages(context.Background(), agentSessionID)
 		if err != nil || len(nestedMsgs) == 0 {
 			continue
 		}
+		ownsChild := linked && latestResumeCall(nestedMsgs) == callID
+		nestedMsgs = messagesOfCall(nestedMsgs, agentSessionID, callID)
 
 		// Build tool result map for nested messages.
 		nestedMsgPtrs := make([]*message.Message, len(nestedMsgs))
@@ -1732,15 +1747,23 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 				da.IncrementToolCalls(len(nm.ToolCalls()))
 			}
 
-			// Populate token/cost stats and timestamps from the child session.
+			// Populate token/cost stats and timestamps: a linked task
+			// call's own, otherwise the child session's.
 			if sess, err := m.com.Workspace.GetSession(context.Background(), agentSessionID); err == nil {
-				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
-				da.SetCost(sess.Cost)
-				if sess.CreatedAt > 0 {
-					da.SetStartedAt(time.Unix(sess.CreatedAt, 0))
+				m.features.calls.SeenCost(agentSessionID, sess.Cost)
+				if ownsChild {
+					// Live activity after the reload belongs to this
+					// resume, not to the call that created the child.
+					m.features.calls.LoadedResume(agentSessionID, callID, time.Unix(call.CreatedAt, 0), max(sess.Cost-call.Cost, 0))
 				}
-				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && sess.UpdatedAt > sess.CreatedAt {
-					da.SetFinishedAt(time.Unix(sess.UpdatedAt, 0))
+				stats := loadedCallStats(sess, call, linked)
+				da.SetTokens(sess.PromptTokens + sess.CompletionTokens)
+				da.SetCost(stats.cost)
+				if !stats.startedAt.IsZero() {
+					da.SetStartedAt(stats.startedAt)
+				}
+				if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && !stats.finishedAt.IsZero() {
+					da.SetFinishedAt(stats.finishedAt)
 				}
 			}
 		}
@@ -1994,7 +2017,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Check if this is an agent tool session and parse it.
 	childSessionID := event.Payload.SessionID
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
+	toolCallID, ok := m.agentItemToolCallID(childSessionID)
 	if !ok {
 		return nil
 	}
@@ -2091,7 +2114,7 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 // parent agent item that owns childSessionID. It searches both the root chat
 // and every drill-stack chat so nested drill-ins are covered.
 func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[message.Message]) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(childSessionID)
+	toolCallID, ok := m.agentItemToolCallID(childSessionID)
 	if !ok {
 		return
 	}
@@ -2138,7 +2161,8 @@ func (m *UI) updateAgentItemStats(childSessionID string, event pubsub.Event[mess
 // updateAgentItemSessionStats propagates token, cost, and timestamp data from
 // a child session update onto the parent agent item that owns that session.
 func (m *UI) updateAgentItemSessionStats(s session.Session) {
-	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(s.ID)
+	stats := m.features.calls.CallStats(s)
+	_, toolCallID, ok := m.com.Workspace.ParseAgentToolSessionID(stats.callID)
 	if !ok {
 		return
 	}
@@ -2150,9 +2174,9 @@ func (m *UI) updateAgentItemSessionStats(s session.Session) {
 
 	if da, ok := item.(chat.DrillableAgent); ok {
 		da.SetTokens(s.PromptTokens + s.CompletionTokens)
-		da.SetCost(s.Cost)
-		if s.CreatedAt > 0 {
-			da.SetStartedAt(time.Unix(s.CreatedAt, 0))
+		da.SetCost(stats.cost)
+		if !stats.startedAt.IsZero() {
+			da.SetStartedAt(stats.startedAt)
 		}
 		if tmi, ok := item.(chat.ToolMessageItem); ok && tmi.HasResult() && s.UpdatedAt > s.CreatedAt {
 			da.SetFinishedAt(time.Unix(s.UpdatedAt, 0))
@@ -3093,6 +3117,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleDialogMsg(msg)
 	}
 
+	if cmd, ok := m.features.preemptInput(msg); ok {
+		return tea.Batch(append(cmds, cmd)...)
+	}
+
 	// Handle cancel key when agent is busy.
 	if key.Matches(msg, m.keyMap.Chat.Cancel) {
 		if cmd, ok := m.features.cancel(); ok {
@@ -3660,7 +3688,12 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			)
 			uv.NewStyledString(breadcrumb).Draw(scr, bcArea)
 
-			m.activeChat().Draw(scr, m.activeChatArea())
+			chatArea := m.activeChatArea()
+			m.activeChat().Draw(scr, chatArea)
+			if footer := m.features.drillInFooter(); footer != nil {
+				footerArea := image.Rect(layout.main.Min.X, chatArea.Max.Y, layout.main.Max.X, layout.main.Max.Y)
+				uv.NewStyledString(footer.Render(footerArea.Dx())).Draw(scr, footerArea)
+			}
 		} else {
 			m.activeChat().Draw(scr, layout.main)
 			if layout.pills.Dy() > 0 && m.pillsView != "" {
@@ -4306,7 +4339,7 @@ func (m *UI) updateSize() {
 	for i, entry := range m.drillStack {
 		h := chatHeight
 		if i == len(m.drillStack)-1 {
-			h = max(0, chatHeight-drillInChatTopMargin)
+			h = max(0, chatHeight-drillInChatTopMargin-m.features.drillInFooterLines())
 		}
 		entry.chat.SetSize(chatWidth, h)
 	}
@@ -5793,6 +5826,10 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 
 	if m.dialog.HasDialogs() {
 		return m.handleDialogMsg(msg)
+	}
+
+	if cmd, ok := m.features.preemptInput(msg); ok {
+		return cmd
 	}
 
 	if m.focus != uiFocusEditor {

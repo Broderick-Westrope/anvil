@@ -32,7 +32,7 @@ A summary of the branch the user left by rewinding, written by a summarizer agen
 
 ## Child Session
 
-A session linked to the session that started it: the session a specialist agent runs in (a task session), or the one used to generate a title.
+A session linked to the session that started it: the session a subagent runs in (a task session), or the one used to generate a title.
 
 - **Code:** `session.Session.ParentSessionID`, `CreateTaskSession`, `CreateTitleSession`
 - **Not:** branch. A child session is a separate session; a branch is a path inside one.
@@ -86,12 +86,19 @@ A user-defined shell command in `anvil.json` that runs before a tool call and ca
 - **Code:** `internal/hooks`, applied by `hookedTool` (`internal/agent/hooked_tool.go`)
 - **Not:** callback, middleware.
 
+## Injection
+
+A message added to a running subagent between its steps instead of as a user prompt. Its source is `human` (a steer), `orchestrator` (a resume prompt) or `harness` (a continue after a transient failure or interrupt). The model sees it wrapped in an `<injected_message source="…">` tag, and the stored message keeps a record of the source that compaction never summarises away.
+
+- **Code:** `message.MessageTypeSubagentInjection`, `message.InjectionContent` (`internal/message/injection.go`)
+- **Not:** queued prompt, which only runs after the current run ends. Job notices are also mid-run messages but have their own type.
+
 ## Job
 
 A long-running shell command moved to the background, with output the agent can read later. Its **origin** says how it got there: **explicit** when the agent asked for `run_in_background`, **auto** when a foreground command was still running at its auto-background threshold.
 
 - **Code:** `internal/shell/background.go`, persisted by `internal/jobstore`; origins are `shell.JobOrigin`
-- **Not:** task. A task is a subagent run.
+- **Not:** task. A task call runs a subagent.
 
 ## Known Provider
 
@@ -163,7 +170,7 @@ A conversation between the user and an agent, stored with its message tree, usag
 A model request made beside a session's turns: a summary, a session title, or a one-shot small-model completion such as a bouncer review. Its request is framed like a turn's, through the same `frameMessages`, and its step usage is recorded, but it has no tools.
 
 - **Code:** `sideCall` (`internal/agent/side_call.go`); request framing in `frameMessages` (`internal/agent/anthropic_oauth.go`)
-- **Not:** turn, sub-agent run. A sub-agent runs full turns in a child session.
+- **Not:** turn, subagent. A subagent runs full turns in a child session.
 
 ## Skill
 
@@ -177,7 +184,14 @@ Knowledge or a procedure in a `SKILL.md` file that an agent loads into its conve
 An agent defined in an agent `.md` file, built in or from a plugin, with its own model, tools and prompt. The orchestrator delegates to it, and it runs in a child session.
 
 - **Code:** built by the coordinator, prompt from `templates/specialist.md.tpl`
-- **Not:** subagent is acceptable in conversation, but code and docs say specialist agent. A summarizer agent is defined the same way but is never delegated to.
+- **Not:** subagent. A specialist agent is the definition; a subagent is one instance of it running in a child session. A summarizer agent is defined the same way but is never delegated to.
+
+## Steer
+
+A message a human sends a running subagent from its drill-in view. It's delivered at the subagent's next step boundary; interrupt+steer also cuts off the current attempt so the task call continues with it. A steer the call ends without delivering goes back to the human.
+
+- **Code:** `subagentLease.steer` (`internal/agent/subagent_lease.go`), `subagentSteer` (`internal/ui/model/subagent_steer.go`)
+- **Not:** queued prompt, resume. Only the orchestrator resumes a subagent.
 
 ## Step
 
@@ -192,12 +206,33 @@ One recorded model response with its normalised token counts, price and request 
 
 - **Code:** `step_usage` table, `internal/agent/cacheusage`
 
+## Subagent
+
+One instance of a specialist agent running in a child session for task calls. It keeps its child session, so the orchestrator can resume it with a follow-up. Its handle, the `subagent_id`, names it to the session that spawned it: `<agent type>-<hex suffix>`, unique per parent.
+
+- **Code:** `session.Subagent`, the `subagents` table (`internal/session/subagent.go`)
+- **Not:** specialist agent (the definition), child session (the storage, which title generation and workflows also use).
+
 ## Summarizer Agent
 
 An agent marked `branch_summarizer: true` in its frontmatter, which the user can pick to write a branch summary when they rewind. Anvil ships `branch-summarizer`, and plugins can add their own. It runs with at most the read-only tools `view`, `grep`, `glob` and `ls`, and it is never a delegation target.
 
 - **Code:** `prompt.AgentMD.BranchSummarizer`, `coordinator.BranchSummarizers`; built-in prompt in `internal/agent/templates/agents/branch-summarizer.md`
 - **Not:** specialist agent, which the orchestrator delegates to.
+
+## Task Call
+
+One call of the `task` tool: it either starts a new subagent or resumes one. It holds a lease on the subagent's child session for its whole life, including automatic resumes after transient failures, and its result always ends with the `subagent_id`.
+
+- **Code:** `taskCall`, `runSubAgent` (`internal/agent/subagent_call.go`), linked to its child session in the `subagent_calls` table
+- **Not:** turn (one model run inside a task call), attempt (one run within the call, ended by a failure or an interrupt).
+
+## Task Call Lease
+
+The exclusive hold a task call has on its subagent's child session. A second task call for the same subagent is rejected, never queued. It carries the human's pending steers and the cancels for the call and its current attempt.
+
+- **Code:** `subagentLease`, `subagentLeases` (`internal/agent/subagent_lease.go`)
+- **Not:** admission ownership, which covers one run and queues competing submissions.
 
 ## Tool Access
 

@@ -646,6 +646,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 	app.jobWaker.setAgent(app.AgentCoordinator)
 	app.reviewCompleter.set(app.AgentCoordinator)
 	app.startWorkflows()
+	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "subagent-steers", app.AgentCoordinator.SubscribeSubagentEvents, app.events)
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -65,6 +66,46 @@ type turn struct {
 	sanitized   map[string]bool
 
 	shouldSummarize bool
+
+	// uncharged is the usage the provider reported for the current step,
+	// until onStepFinish saves it to the session. A step cut off before
+	// then, such as by an interrupt during its tools, is charged on the
+	// way out instead.
+	uncharged *stepCharge
+	// persistErr is the persistence failure that stopped the turn. Fantasy
+	// ignores OnStepFinish's error, so the turn keeps it and stops itself.
+	persistErr error
+}
+
+// stepCharge is usage a provider reported for one step.
+type stepCharge struct {
+	usage fantasy.Usage
+	meta  fantasy.ProviderMetadata
+}
+
+func (t *turn) persistFailure() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.persistErr
+}
+
+// chargeUnfinishedStep saves the usage of a step that ended before
+// onStepFinish could, so cost the provider billed is never lost.
+func (t *turn) chargeUnfinishedStep() {
+	t.mu.Lock()
+	charge := t.uncharged
+	t.uncharged = nil
+	t.mu.Unlock()
+	if charge == nil || usageIsZero(charge.usage) {
+		return
+	}
+	sess, err := t.a.sessions.Get(t.persistCtx, t.call.SessionID)
+	if err == nil {
+		err = t.a.saveSessionUsage(t.persistCtx, t.largeModel, &sess, charge.usage, t.a.openrouterCost(charge.meta), false)
+	}
+	if err != nil {
+		slog.Warn("Failed to charge an unfinished step", "session_id", t.call.SessionID, "error", err)
+	}
 }
 
 func (t *turn) currentLeaf() string {
@@ -254,6 +295,7 @@ func (t *turn) streamCall(history []fantasy.Message, files []fantasy.FilePart) f
 		OnToolResult: t.onToolResult,
 		OnStepFinish: t.onStepFinish,
 		StopWhen: []fantasy.StopCondition{
+			func([]fantasy.StepResult) bool { return t.persistFailure() != nil },
 			t.contextNearlyFull,
 			func(steps []fantasy.StepResult) bool {
 				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
@@ -284,6 +326,9 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 			prepared.Messages = append(prepared.Messages, aiMessages...)
 		}
 	}
+	if err := t.deliverSteers(callContext, options.Messages, &prepared); err != nil {
+		return callContext, prepared, err
+	}
 
 	prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, t.largeModel)
 	t.addCacheControl(prepared.Messages)
@@ -301,7 +346,7 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 		ParentMessageID: t.currentLeaf(),
 	})
 	if err != nil {
-		return callContext, prepared, err
+		return callContext, prepared, localPersistence(callContext, err)
 	}
 	t.call.state.assistantIDs = append(t.call.state.assistantIDs, assistantMsg.ID)
 	t.setLeaf(assistantMsg.ID)
@@ -327,6 +372,35 @@ func (t *turn) prepareStep(callContext context.Context, options fantasy.PrepareS
 	callContext = context.WithValue(callContext, ownerKey{}, struct{}{})
 	t.assistant = &assistantMsg
 	return callContext, prepared, nil
+}
+
+// deliverSteers persists the human steers pending for a subagent run as
+// one subagent_injection message and adds it to the step. Steers that
+// can't be persisted stay pending, so the call hands them back.
+func (t *turn) deliverSteers(ctx context.Context, stepMessages []fantasy.Message, prepared *fantasy.PrepareStepResult) error {
+	if t.call.steering == nil {
+		return nil
+	}
+	steers := t.call.steering.takePending()
+	if len(steers) == 0 {
+		return nil
+	}
+	msg, err := t.a.messages.Create(ctx, t.call.SessionID, message.CreateMessageParams{
+		Role:            message.User,
+		MessageType:     message.MessageTypeSubagentInjection,
+		Parts:           message.InjectionParts(steers),
+		ParentMessageID: t.currentLeaf(),
+	})
+	if err != nil {
+		t.call.steering.restore(steers)
+		return localPersistence(ctx, fmt.Errorf("deliver steer: %w", err))
+	}
+	t.call.steering.recordDelivered(steers...)
+	t.setLeaf(msg.ID)
+	aiMessages := msg.ToAIMessage()
+	t.injected.add(stepMessages, aiMessages...)
+	prepared.Messages = append(prepared.Messages, aiMessages...)
+	return nil
 }
 
 // addCacheControl marks the last system message and the last two messages
@@ -419,6 +493,7 @@ func (t *turn) onRetry(err *fantasy.ProviderError, delay time.Duration) {
 func (t *turn) onStreamFinish(usage fantasy.Usage, reason fantasy.FinishReason, meta fantasy.ProviderMetadata) error {
 	finished := time.Now()
 	t.mu.Lock()
+	t.uncharged = &stepCharge{usage: usage, meta: meta}
 	if t.capture == nil {
 		t.mu.Unlock()
 		return nil
@@ -451,6 +526,20 @@ func (t *turn) onToolCall(tc fantasy.ToolCallContent) error {
 	return t.a.messages.Update(t.persistCtx, *t.assistant)
 }
 
+// interruptedToolResult answers tool calls that interrupt+steer cut off.
+const interruptedToolResult = "Interrupted by user"
+
+// cutOffByInterrupt reports whether result is a tool that failed only
+// because interrupt+steer cancelled it. Errors a tool returned on its own,
+// including a nested task call's result, are kept as they are.
+func cutOffByInterrupt(ctx context.Context, result fantasy.ToolResultContent) bool {
+	if !errors.Is(context.Cause(ctx), errSubagentInterrupted) {
+		return false
+	}
+	out, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result)
+	return ok && errors.Is(out.Error, context.Canceled)
+}
+
 func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 	toolResult := t.a.convertToToolResult(result)
 	toolResult.FinishedAt = time.Now().UnixMilli()
@@ -460,6 +549,9 @@ func (t *turn) onToolResult(result fantasy.ToolResultContent) error {
 	if wasSanitized {
 		toolResult.Content = "Tool call failed: arguments were not valid JSON. Please check your tool call format and try again."
 		toolResult.IsError = true
+	}
+	if cutOffByInterrupt(t.genCtx, result) {
+		toolResult.Content = interruptedToolResult
 	}
 	// Hold the lock across the entire read→create→update sequence.
 	// OnToolResult may be called from parallel tool-execution goroutines;
@@ -520,15 +612,28 @@ func (t *turn) onStepFinish(stepResult fantasy.StepResult) error {
 
 	updatedSession, err := t.a.sessions.Get(t.genCtx, t.call.SessionID)
 	if err != nil {
-		return err
+		return t.failPersist(err)
 	}
 	usage, estimated := fallbackStepUsage(t.stepMessages, stepResult)
-	t.a.updateSessionUsage(t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated)
-	if _, err := t.a.sessions.Save(t.genCtx, updatedSession); err != nil {
-		return err
+	if err := t.a.saveSessionUsage(t.genCtx, t.largeModel, &updatedSession, usage, t.a.openrouterCost(stepResult.ProviderMetadata), estimated); err != nil {
+		return t.failPersist(err)
 	}
+	t.uncharged = nil
 	t.session = updatedSession
-	return t.a.messages.Update(t.genCtx, *t.assistant)
+	if err := t.a.messages.Update(t.genCtx, *t.assistant); err != nil {
+		return t.failPersist(err)
+	}
+	return nil
+}
+
+// failPersist records err from onStepFinish so the turn stops and reports
+// it. The caller must hold t.mu.
+func (t *turn) failPersist(err error) error {
+	err = localPersistence(t.genCtx, err)
+	if t.persistErr == nil {
+		t.persistErr = err
+	}
+	return err
 }
 
 func stopsTurn(stepResult fantasy.StepResult) bool {
@@ -585,6 +690,9 @@ func (t *turn) recordFailure(err error) error {
 	content := "There was an error while executing the tool"
 	if isCancelErr {
 		content = "Error: user cancelled assistant tool calling"
+	}
+	if errors.Is(context.Cause(t.genCtx), errSubagentInterrupted) {
+		content = interruptedToolResult
 	}
 	for _, tc := range t.assistant.ToolCalls() {
 		if !tc.Finished {
