@@ -413,3 +413,15 @@ func TestToolDetailOutputKeepsSourceExpanded(t *testing.T) {
 
 	require.Contains(t, squash(source.Render(60)), squash(command))
 }
+
+// A collapsed header measures its parameters with tabs widened, so a pair
+// that won't fit beside the main parameter once drawn is left out.
+func TestToolParamListMeasuresFlattenedParams(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	// Drawn, "path=a" and six tabs take 30 columns, leaving 40-30-3 = 7 for
+	// the main parameter, under the 30 it needs.
+	out := toolParamList(&sty, []string{"main", "path", "a" + strings.Repeat("\t", 6)}, 40, nil)
+	require.Equal(t, "main", ansi.Strip(out))
+}

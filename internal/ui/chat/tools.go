@@ -829,6 +829,15 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 		collapsed.ExpandedContent = false
 		opts = &collapsed
 	}
+	if opts == nil || !opts.ExpandedContent {
+		// A collapsed header is one line, whatever its parameters hold,
+		// measured as it will be drawn.
+		flat := make([]string, 0, len(params))
+		for _, param := range params {
+			flat = append(flat, collapsedHeaderSpace.Replace(param))
+		}
+		params = flat
+	}
 
 	mainParam := params[0]
 
@@ -847,11 +856,6 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 		if remaining := width - lipgloss.Width(partsStr) - 3; remaining >= minSpaceForMainParam {
 			output = fmt.Sprintf("%s (%s)", mainParam, partsStr)
 		}
-	}
-
-	if opts == nil || !opts.ExpandedContent {
-		// A collapsed header is one line, whatever its parameters hold.
-		output = collapsedHeaderSpace.Replace(output)
 	}
 
 	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
