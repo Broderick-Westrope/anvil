@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
 	"syscall"
 	"testing"
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 )
@@ -68,6 +71,35 @@ func TestClassifySubagentFailure(t *testing.T) {
 			if retry {
 				require.NotEmpty(t, reason)
 			}
+		})
+	}
+}
+
+func TestNetworkFailuresAreResumedWithTheirReason(t *testing.T) {
+	t.Parallel()
+
+	dial := func(err error) error {
+		return fmt.Errorf("retry error: %w", &net.OpError{Op: "dial", Net: "tcp", Err: &os.SyscallError{Syscall: "connect", Err: err}})
+	}
+	tests := map[string]struct {
+		err    error
+		reason string
+	}{
+		"refused":          {err: dial(syscall.ECONNREFUSED), reason: "connection refused"},
+		"network down":     {err: dial(syscall.ENETDOWN), reason: "network unreachable"},
+		"net unreachable":  {err: dial(syscall.ENETUNREACH), reason: "network unreachable"},
+		"host unreachable": {err: dial(syscall.EHOSTUNREACH), reason: "network unreachable"},
+		"no such host": {
+			err:    fmt.Errorf("retry error: %w", &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "api.anthropic.com", IsNotFound: true}}),
+			reason: "DNS lookup failed",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			retry, reason := classifyRunFailure(t.Context(), tc.err)
+			require.True(t, retry)
+			require.Equal(t, tc.reason, reason)
 		})
 	}
 }
@@ -169,4 +201,161 @@ func TestSubagentRetryHintFallsBackAndIgnoresNaN(t *testing.T) {
 			require.Equal(t, tc.want, withProviderHint(err, 5*time.Second))
 		})
 	}
+}
+
+func TestResumeAfterTransientFailures(t *testing.T) {
+	t.Parallel()
+
+	unauthorized := &fantasy.ProviderError{StatusCode: http.StatusUnauthorized, Title: "unauthorized"}
+	badRequest := &fantasy.ProviderError{StatusCode: http.StatusBadRequest, Title: "bad request"}
+	retryInjection := func(attempt int) []message.InjectionContent {
+		return []message.InjectionContent{{
+			Source: message.InjectionSourceHarness, Kind: message.InjectionKindRetry, Text: transientContinueText,
+			Attempt: attempt, MaxAttempts: maxTransientResumes, Reason: "503 overloaded",
+		}}
+	}
+	type outcome struct {
+		accept bool
+		err    error
+	}
+	tests := map[string]struct {
+		accepted      bool
+		summaryFailed bool
+		err           error
+		outcomes      []outcome
+		wantCalls     []SessionAgentCall
+		wantErr       error
+	}{
+		"a saved turn continues with a harness message": {
+			accepted:  true,
+			err:       overloaded(),
+			outcomes:  []outcome{{accept: true}},
+			wantCalls: []SessionAgentCall{{Injections: retryInjection(1)}},
+		},
+		"a prompt that was never saved is sent again": {
+			err:       overloaded(),
+			outcomes:  []outcome{{accept: true}},
+			wantCalls: []SessionAgentCall{{Prompt: "hi", Attachments: []message.Attachment{{FileName: "a.txt"}}}},
+		},
+		"a harness message that was never saved is sent again as the next attempt": {
+			accepted:  true,
+			err:       overloaded(),
+			outcomes:  []outcome{{err: overloaded()}, {accept: true}},
+			wantCalls: []SessionAgentCall{{Injections: retryInjection(1)}, {Injections: retryInjection(2)}},
+		},
+		"it gives up after the last resume": {
+			accepted:  true,
+			err:       overloaded(),
+			outcomes:  []outcome{{accept: true, err: overloaded()}, {accept: true, err: overloaded()}},
+			wantCalls: []SessionAgentCall{{Injections: retryInjection(1)}, {Injections: retryInjection(2)}},
+			wantErr:   overloaded(),
+		},
+		"a permanent failure isn't resumed": {
+			accepted: true,
+			err:      badRequest,
+			wantErr:  badRequest,
+		},
+		"an unauthorized failure is left to the token refresh": {
+			accepted: true,
+			err:      unauthorized,
+			wantErr:  unauthorized,
+		},
+		"a failed summary isn't resumed": {
+			accepted:      true,
+			summaryFailed: true,
+			err:           overloaded(),
+			wantErr:       overloaded(),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c := &coordinator{retryDelays: []time.Duration{time.Millisecond}}
+			first := SessionAgentCall{
+				Prompt: "hi", Attachments: []message.Attachment{{FileName: "a.txt"}},
+				state: &runState{summaryFailed: tc.summaryFailed},
+			}
+			if tc.accepted {
+				first.state.acceptedUserID = "u1"
+			}
+			var calls []SessionAgentCall
+			run := func(call SessionAgentCall) (*fantasy.AgentResult, error) {
+				if tc.accepted {
+					require.NotSame(t, first.state, call.state, "a resumed turn starts from the session's leaf")
+				} else {
+					require.Same(t, first.state, call.state, "an unsaved prompt keeps its run state")
+				}
+				got := tc.outcomes[len(calls)]
+				calls = append(calls, SessionAgentCall{Prompt: call.Prompt, Attachments: call.Attachments, Injections: call.Injections})
+				if got.accept {
+					call.state.acceptedUserID = "u2"
+				}
+				if got.err != nil {
+					return nil, got.err
+				}
+				return agentResultWithText("done"), nil
+			}
+
+			result, err := c.resumeAfterTransientFailures(t.Context(), first, nil, tc.err, run)
+
+			require.Equal(t, tc.wantCalls, calls)
+			if tc.wantErr != nil {
+				require.Equal(t, tc.wantErr, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "done", result.Response.Content.Text())
+		})
+	}
+}
+
+func TestResumeAfterTransientFailuresStopsWaitingWhenCancelled(t *testing.T) {
+	t.Parallel()
+	c := &coordinator{retryDelays: []time.Duration{time.Hour}}
+	ctx, cancel := context.WithCancel(t.Context())
+	first := SessionAgentCall{Prompt: "hi", state: &runState{acceptedUserID: "u1"}}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.resumeAfterTransientFailures(ctx, first, nil, overloaded(), func(SessionAgentCall) (*fantasy.AgentResult, error) {
+			t.Error("a cancelled turn must not be resumed")
+			return nil, nil
+		})
+		done <- err
+	}()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Equal(t, overloaded(), err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the backoff wait didn't end on cancel")
+	}
+}
+
+func TestRunResumesTheTurnAfterATransientFailure(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	c, _ := newReloadTestCoordinator(t, env)
+	c.retryDelays = []time.Duration{time.Millisecond}
+	var calls []SessionAgentCall
+	c.setOrchestratorForTest(newMockAgent(reloadTestProvider, 1000, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		calls = append(calls, call)
+		if len(calls) == 1 {
+			call.state.acceptedUserID = "u1"
+			return nil, overloaded()
+		}
+		return agentResultWithText("done"), nil
+	}))
+
+	result, err := c.Run(t.Context(), "s", "hi")
+
+	require.NoError(t, err)
+	require.Equal(t, "done", result.Response.Content.Text())
+	require.Len(t, calls, 2)
+	require.Equal(t, "hi", calls[0].Prompt)
+	require.Empty(t, calls[1].Prompt)
+	require.Equal(t, "s", calls[1].SessionID)
+	require.Equal(t, calls[0].MaxOutputTokens, calls[1].MaxOutputTokens)
+	require.Equal(t, message.InjectionKindRetry, calls[1].Injections[0].Kind)
 }

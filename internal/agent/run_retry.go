@@ -100,7 +100,9 @@ func providerFailureReason(err *fantasy.ProviderError) string {
 }
 
 // networkFailure names a transient network or transport failure in err, or
-// returns "" when err isn't one. The call's own deadline is ruled out
+// returns "" when err isn't one. A machine that just woke or lost its
+// network fails to look up or reach the provider for a while, so those
+// count too. The call's own deadline is ruled out
 // before this runs, so a deadline here is a request timeout.
 func networkFailure(err error) string {
 	if err == nil {
@@ -112,6 +114,12 @@ func networkFailure(err error) string {
 		return "unexpected EOF"
 	case errors.Is(err, syscall.ECONNRESET):
 		return "connection reset"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETDOWN):
+		return "network unreachable"
+	case errors.As(err, new(*net.DNSError)):
+		return "DNS lookup failed"
 	case fantasy.IsTransportError(err):
 		return "broken stream"
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
