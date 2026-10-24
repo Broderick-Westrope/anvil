@@ -127,7 +127,7 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall, file *toolFile) []
 			toolFile:   file,
 			sty:        sty,
 			id:         "tool-detail-param:raw:" + tc.ID,
-			content:    tc.Input,
+			content:    lineSpace.Replace(tc.Input),
 			indent:     2,
 			styleFunc:  func(s *styles.Styles) lipgloss.Style { return s.Tool.NameNested },
 			toolCallID: tc.ID,
@@ -146,6 +146,9 @@ func buildParamItems(sty *styles.Styles, tc message.ToolCall, file *toolFile) []
 	var items []MessageItem
 	for _, k := range keys {
 		v := params[k]
+		if s, ok := v.(string); ok {
+			v = lineSpace.Replace(s)
+		}
 		items = append(items, &toolDetailParamItem{
 			Versioned:  list.NewVersioned(),
 			toolFile:   file,

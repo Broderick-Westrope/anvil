@@ -43,8 +43,10 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 		"unknown_tool",
 	}
 	inputs := map[string]string{
-		"raw":    long + word,
-		"params": mustJSON(t, map[string]any{"command": long + word, "file_path": "/tmp/" + word, "content": multi, "count": 3, "nested": map[string]any{"key": long}}),
+		"raw":              long + word,
+		"raw with returns": "first\rsecond\r\nthird\t" + long,
+		"returns":          mustJSON(t, map[string]any{"command": "first\rsecond\t" + long, "content": "a\r\nb\rc"}),
+		"params":           mustJSON(t, map[string]any{"command": long + word, "file_path": "/tmp/" + word, "content": multi, "count": 3, "nested": map[string]any{"key": long}}),
 	}
 	statuses := map[string]ToolStatus{
 		"success":             ToolStatusSuccess,
@@ -94,6 +96,7 @@ func requireDetailItemsFit(t *testing.T, source ToolMessageItem, expanded, check
 			whole := squashBody(item.Render(2000))
 			for _, width := range []int{1, 5, 8, 40, 80, 121} {
 				rendered := item.Render(width)
+				require.NotContains(t, rendered, "\r", "width %d, focused %v: %s sends a carriage return", width, focused, item.ID())
 				for i, line := range strings.Split(rendered, "\n") {
 					require.LessOrEqual(t, lipgloss.Width(line), width,
 						"width %d, focused %v: line %d of %s overflows: %q", width, focused, i, item.ID(), line)
