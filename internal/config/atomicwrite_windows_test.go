@@ -1,6 +1,6 @@
 //go:build windows
 
-package fsext
+package config
 
 import (
 	"os"

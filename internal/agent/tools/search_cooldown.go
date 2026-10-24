@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Broderick-Westrope/anvil/internal/fsext"
+	"github.com/Broderick-Westrope/anvil/internal/config"
 )
 
 // ddgCooldown is how long every Anvil process on the machine skips
@@ -90,7 +90,7 @@ func pauseSearches(until time.Time) {
 	}
 	err := os.MkdirAll(filepath.Dir(searchCooldownFile), 0o755)
 	if err == nil {
-		err = fsext.AtomicWriteFile(searchCooldownFile, []byte(until.Format(time.RFC3339Nano)), 0o644)
+		err = config.AtomicWriteFile(searchCooldownFile, []byte(until.Format(time.RFC3339Nano)), 0o644)
 	}
 	if err != nil {
 		slog.Warn("Failed to record the web search cooldown", "path", searchCooldownFile, "error", err)

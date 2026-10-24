@@ -1,6 +1,6 @@
 //go:build !windows
 
-package fsext
+package config
 
 // isTransientRenameError reports whether err is a rename failure that
 // can resolve on its own. Only Windows has such failures.

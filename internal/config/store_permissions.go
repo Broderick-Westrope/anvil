@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/permission/match"
 )
 
@@ -73,7 +72,7 @@ func (s *ConfigStore) SetPermissionRule(scope Scope, toolPattern string, inputPa
 
 	// Rename-into-place so a concurrent reader (including our own
 	// autoReload below) never observes a partially-written file.
-	if err := fsext.AtomicWriteFile(path, out, 0o600); err != nil {
+	if err := AtomicWriteFile(path, out, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

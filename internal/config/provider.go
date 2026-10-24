@@ -18,7 +18,6 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/catwalk/pkg/embedded"
 	"github.com/Broderick-Westrope/anvil/internal/csync"
-	"github.com/Broderick-Westrope/anvil/internal/fsext"
 	"github.com/Broderick-Westrope/anvil/internal/home"
 	"github.com/charmbracelet/x/etag"
 )
@@ -176,7 +175,7 @@ func (c cache[T]) Store(v T) error {
 	// instances start independently and race to refresh this cache, and a
 	// truncating write would let one of them read a half-written catalog and
 	// silently fall back to the bundled copy.
-	if err := fsext.AtomicWriteFile(c.path, data, 0o644); err != nil {
+	if err := AtomicWriteFile(c.path, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write provider data to cache: %w", err)
 	}
 	return nil

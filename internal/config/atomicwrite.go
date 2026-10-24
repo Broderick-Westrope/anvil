@@ -1,4 +1,4 @@
-package fsext
+package config
 
 import (
 	"os"
