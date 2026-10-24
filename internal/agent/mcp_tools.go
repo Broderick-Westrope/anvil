@@ -3,6 +3,7 @@ package agent
 import (
 	"maps"
 	"slices"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
@@ -48,7 +49,7 @@ func (c *coordinator) newAgentMCPTools(access toolAccess, hookRunner *hooks.Runn
 }
 
 // allowed returns the agent's unwrapped MCP tools: every registered tool
-// its allowed_mcp permits, in no particular order.
+// its allowed_mcp permits, sorted by name.
 func (m agentMCPTools) allowed() []*tools.Tool {
 	var out []*tools.Tool
 	for _, tool := range tools.GetMCPTools(m.c.permissions, m.c.cfg, m.c.cfg.WorkingDir()) {
@@ -56,6 +57,7 @@ func (m agentMCPTools) allowed() []*tools.Tool {
 			out = append(out, tool)
 		}
 	}
+	slices.SortFunc(out, func(a, b *tools.Tool) int { return strings.Compare(a.Name(), b.Name()) })
 	return out
 }
 
@@ -80,11 +82,10 @@ func (m agentMCPTools) listed(named []string) ([]fantasy.AgentTool, mcpListing) 
 	cfg := m.c.cfg.Config()
 	var out []fantasy.AgentTool
 	for _, tool := range m.allowed() {
-		isNamed := slices.Contains(named, tool.Name())
-		if m.routes.isCatalogue(tool.MCP()) && !isNamed {
-			continue
-		}
-		if isNamed && m.routes.isCatalogue(tool.MCP()) {
+		if m.routes.isCatalogue(tool.MCP()) {
+			if !slices.Contains(named, tool.Name()) {
+				continue
+			}
 			listing.named[tool.MCP()] = true
 		}
 		out = append(out, tool)
