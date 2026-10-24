@@ -73,9 +73,9 @@ func TestToolDetailItemsFitWidth(t *testing.T) {
 								result = &message.ToolResult{ToolCallID: "tc-test", Name: name, Content: output, Metadata: meta, IsError: status == ToolStatusError}
 							}
 							// A diff lays out side by side once it is wide
-							// enough, and a hook name is cut to fit, so their
-							// text can't be compared across widths.
-							requireDetailItemsFit(t, helperToolItem(t, name, input, result, status), expanded, resultName == "plain")
+							// enough, so its text can't be compared across
+							// widths.
+							requireDetailItemsFit(t, helperToolItem(t, name, input, result, status), expanded, resultName != "diff")
 						})
 					}
 				}
