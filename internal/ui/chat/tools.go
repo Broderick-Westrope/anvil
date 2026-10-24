@@ -807,7 +807,8 @@ func toolIcon(sty *styles.Styles, status ToolStatus) string {
 }
 
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
-// When opts.ExpandedContent is true, the output wraps instead of truncating.
+// When opts.ExpandedContent is true, the output wraps instead of truncating,
+// unless opts.OneLineHeader holds it to one line.
 func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRenderOpts) string {
 	// minSpaceForMainParam is the min space required for the main param
 	// if this is less that the value set we will only show the main param nothing else
@@ -873,7 +874,8 @@ func capLineWidths(s string, width int) string {
 }
 
 // toolHeader builds the tool header line: "● ToolName params..."
-// When opts.ExpandedContent is true, long parameters wrap instead of truncating.
+// When opts.ExpandedContent is true, long parameters wrap instead of
+// truncating, unless opts.OneLineHeader holds them to one line.
 func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, opts *ToolRenderOpts, params ...string) string {
 	icon := toolIcon(sty, status)
 	return toolHeaderWithIcon(sty, icon, name, width, opts, params...)

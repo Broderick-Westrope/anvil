@@ -505,9 +505,9 @@ func (p *toolDetailParamItem) renderBody(width int) string {
 	return wrapBesideKey(keyLine, valStr, width)
 }
 
-// wrapBesideKey wraps value to the right of a one-line keyLine, aligning
-// its continuation lines under its first, or below keyLine, indented, when
-// the room beside it is too narrow to read.
+// wrapBesideKey wraps value to the right of keyLine, aligning its
+// continuation lines under its first. When keyLine wrapped, or the room
+// beside it is too narrow to read, value goes below it, indented.
 func wrapBesideKey(keyLine, value string, width int) string {
 	if strings.Contains(keyLine, "\n") || width-lipgloss.Width(keyLine)-1 < minParamValueWidth {
 		const indent = 4
