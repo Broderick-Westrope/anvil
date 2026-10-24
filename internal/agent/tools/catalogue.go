@@ -359,11 +359,9 @@ func (c *catalogue) searchConnected(ctx context.Context, query []string) string 
 			}
 			continue
 		}
-		_, tools, err := c.serverTools(ctx, server.Name, SearchMCPToolsToolName)
-		if err != nil {
-			continue
+		if _, tools, err := c.serverTools(ctx, server.Name, SearchMCPToolsToolName); err == nil {
+			byServer[server.Name] = tools
 		}
-		byServer[server.Name] = tools
 	}
 	writeMatches(&out, rankTools(query, byServer), true)
 	return out.String()
@@ -488,16 +486,16 @@ func instructionSchemas(instructions string, tools []CatalogueTool) []CatalogueT
 	}
 	slices.SortFunc(mentions, func(a, b mention) int { return a.at - b.at })
 	var picked []CatalogueTool
-	size := 0
+	remaining := maxInstructionSchemaSize
 	for _, m := range mentions {
 		if len(picked) == maxInstructionSchemas {
-			break
+			return picked
 		}
 		schemaSize := len(compactSchema(m.tool.MCP))
-		if size+schemaSize > maxInstructionSchemaSize {
+		if schemaSize > remaining {
 			continue
 		}
-		size += schemaSize
+		remaining -= schemaSize
 		picked = append(picked, m.tool)
 	}
 	return picked
