@@ -43,3 +43,10 @@ func TestCatalogueCallInputRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, call, parsed)
 }
+
+func TestValidateArgumentsReportsInvalidJSON(t *testing.T) {
+	t.Parallel()
+	tool := bareTool("s", "t", "")
+
+	require.Equal(t, "arguments are not valid JSON: unexpected end of JSON input", validateArguments(tool.MCP, []byte("{")))
+}

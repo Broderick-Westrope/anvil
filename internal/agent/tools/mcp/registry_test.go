@@ -58,10 +58,17 @@ func TestSentToolBytesMeasuresWhatReachesTheModel(t *testing.T) {
 		Meta:        map[string]any{"ignored": "never sent"},
 		Title:       "never sent",
 	}
-	updateTools(config.NewTestStore(&config.Config{}), server, []*Tool{tool})
+	other := &Tool{Name: "echo", Description: "Echoes.", InputSchema: map[string]any{"type": "object"}}
+	updateTools(config.NewTestStore(&config.Config{}), server, []*Tool{tool, other})
 
-	want := `{"name":"mcp_registry-size_ping","description":"Replies pong.","parameters":{},"required":[]}`
+	want := `{"name":"mcp_registry-size_ping","description":"Replies pong.","parameters":{},"required":[]}` +
+		`{"name":"mcp_registry-size_echo","description":"Echoes.","parameters":{},"required":[]}`
 	require.Equal(t, len(want), SentToolBytes(server))
+}
+
+func TestDeepCopyOfNilPropertiesIsAnEmptyObject(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, map[string]any{}, deepCopy(nil))
 }
 
 func TestSentToolBytesIsZeroForAnUnknownServer(t *testing.T) {

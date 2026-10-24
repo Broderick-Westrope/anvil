@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"text/template"
 	"time"
 	"unicode/utf8"
 
@@ -295,12 +296,11 @@ func TestDescribeReturnsTheRawSchemaUnderEitherName(t *testing.T) {
 	})}
 	f := newCatalogueFixture(t, "cat-describe", "", false, nullable, logSearchTool)
 
-	text := f.run(t, DescribeMCPToolToolName, map[string]any{"server": "cat-describe", "tools": []string{"MCP_cat-describe_maybe", "search_logs", "nope"}}).Content
+	text := f.run(t, DescribeMCPToolToolName, map[string]any{"server": "cat-describe", "tools": []string{"MCP_cat-describe_maybe", "nope", "search_logs"}}).Content
 
 	require.Contains(t, text, "## maybe\nMaybe.\n\nInput schema:\n")
 	require.Contains(t, text, `"type":["string","null"]`, "the schema as the server sent it, not normalised")
-	require.Contains(t, text, "## search_logs\n")
-	require.Contains(t, text, "## nope\nNo such tool on cat-describe.")
+	require.Contains(t, text, "## nope\nNo such tool on cat-describe.\n\n## search_logs\n", "an unknown name doesn't stop the rest")
 }
 
 func TestCallRunsTheInnerToolUnderItsOwnName(t *testing.T) {
@@ -526,8 +526,8 @@ func TestSearchDropsPluralsOnlyFromWordsLongerThanThreeLetters(t *testing.T) {
 	require.Contains(t, f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-plural", "query": "logs"}).Content, "- search_logs", "a 4-letter plural matches")
 }
 
-func TestInstructionSchemasMayFillExactlyFourKilobytes(t *testing.T) {
-	exact := func(name string, size int) catalogueServerTool {
+func TestInstructionSchemasFitWithinFourKilobytesInTotal(t *testing.T) {
+	sized := func(name string, size int) catalogueServerTool {
 		pad := map[string]any{"x": map[string]any{"type": "string", "description": ""}}
 		tool := catalogueServerTool{name: name, description: "Fits.", schema: objectSchema([]string{"x"}, pad)}
 		raw, err := json.Marshal(tool.schema)
@@ -535,12 +535,28 @@ func TestInstructionSchemasMayFillExactlyFourKilobytes(t *testing.T) {
 		pad["x"].(map[string]any)["description"] = strings.Repeat("y", size-len(raw))
 		return tool
 	}
-	f := newCatalogueFixture(t, "cat-exact", "Use first_tool and second_tool.", false, exact("first_tool", 2048), exact("second_tool", 2048))
+	tests := map[string]struct {
+		first, second int
+		wantSecond    bool
+	}{
+		"exactly 4096 bytes":     {first: 2048, second: 2048, wantSecond: true},
+		"a larger second schema": {first: 1000, second: 2000, wantSecond: true},
+		"over 4096 bytes":        {first: 3000, second: 2000},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogueFixture(t, "cat-exact", "Use first_tool and second_tool.", false, sized("first_tool", tc.first), sized("second_tool", tc.second))
 
-	text := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-exact", "query": "tool"}).Content
+			text := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-exact", "query": "tool"}).Content
 
-	require.Contains(t, text, "Input schema for first_tool")
-	require.Contains(t, text, "Input schema for second_tool", "4096 bytes in total fits")
+			require.Contains(t, text, "Input schema for first_tool")
+			if tc.wantSecond {
+				require.Contains(t, text, "Input schema for second_tool")
+			} else {
+				require.NotContains(t, text, "Input schema for second_tool")
+			}
+		})
+	}
 }
 
 func TestAnExactServerNameWinsOverACaseFoldMatch(t *testing.T) {
@@ -553,4 +569,231 @@ func TestAnExactServerNameWinsOverACaseFoldMatch(t *testing.T) {
 	require.Equal(t, "jira", c.canonicalServer("jira"))
 	require.Equal(t, "Jira", c.canonicalServer("Jira"))
 	require.Equal(t, "Jira", c.canonicalServer("JIRA"), "with no exact match, the first fold match")
+}
+
+func TestInstructionSchemasSkipToolsWithoutRequiredFields(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-first", "load_skill first. get_metrics is handy too.", false, loadSkillTool, metricsTool)
+
+	text := f.run(t, SearchMCPToolsToolName, map[string]any{"server": "cat-first", "query": "skill"}).Content
+
+	require.Contains(t, text, "Input schema for load_skill", "a tool named at the very start counts")
+	require.NotContains(t, text, "Input schema for get_metrics")
+}
+
+func TestCatalogueToolsRejectInputThatIsNotJSON(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-badinput", "", false, logSearchTool)
+
+	for _, tool := range f.tools {
+		t.Run(tool.Info().Name, func(t *testing.T) {
+			resp, err := tool.Run(t.Context(), fantasy.ToolCall{ID: "outer", Name: tool.Info().Name, Input: "{"})
+
+			require.NoError(t, err)
+			require.True(t, resp.IsError)
+			require.Equal(t, "invalid input: unexpected end of JSON input", resp.Content)
+		})
+	}
+}
+
+func TestSearchWithNeitherServerNorQueryListsTheServers(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-bare", "", false, logSearchTool)
+
+	text := f.run(t, SearchMCPToolsToolName, map[string]any{}).Content
+
+	require.Equal(t, "Pass a query, or a server to list its tools. Servers:\n- cat-bare: Logs and metrics.\n", text)
+}
+
+func TestSearchWithoutServerSearchesConnectedServersAfterUnconnectedOnes(t *testing.T) {
+	lazy := newCatalogueFixture(t, "cat-multi-lazy", "", true, metricsTool)
+	live := newCatalogueFixture(t, "cat-multi-live", "", false, logSearchTool)
+	live.tools = NewCatalogueTools(CatalogueOptions{
+		Servers: []CatalogueServer{{Name: lazy.name, Description: "Lazy."}, {Name: live.name, Description: "Live."}},
+		Config:  live.cfg,
+		Tools:   live.serverTools,
+	})
+
+	text := live.run(t, SearchMCPToolsToolName, map[string]any{"query": "logs"}).Content
+
+	require.Equal(t, "- cat-multi-live/search_logs: Search log events.\n", text)
+}
+
+func TestSearchUsesAConnectedServerWithoutWaitingOnItsConnectingMark(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-marked", "", false, logSearchTool)
+	mcp.SetConnectingForTest("cat-marked", true)
+	t.Cleanup(func() { mcp.SetConnectingForTest("cat-marked", false) })
+	ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), SessionIDContextKey, "session-1"), time.Second)
+	defer cancel()
+
+	resp, err := f.tools[0].Run(ctx, fantasy.ToolCall{ID: "outer", Name: SearchMCPToolsToolName, Input: `{"server":"cat-marked","query":"logs"}`})
+
+	require.NoError(t, err)
+	require.Contains(t, resp.Content, "- search_logs")
+}
+
+func TestAWaitThatEndsEarlyIsReported(t *testing.T) {
+	tests := map[string]struct {
+		ctx       func(context.Context) (context.Context, context.CancelFunc)
+		wantError bool
+		want      string
+	}{
+		"cancelled": {
+			ctx: func(ctx context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(ctx)
+				cancel()
+				return ctx, cancel
+			},
+			wantError: true,
+			want:      context.Canceled.Error(),
+		},
+		"out of time": {
+			ctx: func(ctx context.Context) (context.Context, context.CancelFunc) {
+				return context.WithTimeout(ctx, 50*time.Millisecond)
+			},
+			want: "MCP 'cat-wait' is still starting, retry shortly",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogueFixture(t, "cat-wait", "", true, logSearchTool)
+			mcp.SetStateForTest("cat-wait", mcp.StateStarting)
+			ctx, cancel := tc.ctx(context.WithValue(t.Context(), SessionIDContextKey, "session-1"))
+			defer cancel()
+
+			resp, err := f.tools[0].Run(ctx, fantasy.ToolCall{ID: "outer", Name: SearchMCPToolsToolName, Input: `{"server":"cat-wait","query":"logs"}`})
+
+			require.NoError(t, err)
+			require.Equal(t, tc.wantError, resp.IsError)
+			require.Equal(t, tc.want, resp.Content)
+		})
+	}
+}
+
+func TestDescribeOfExactlyTenNamesLeavesNoneOut(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-describe-ten", "", false, logSearchTool)
+	names := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "search_logs"}
+
+	text := f.run(t, DescribeMCPToolToolName, map[string]any{"server": "cat-describe-ten", "tools": names}).Content
+
+	require.Contains(t, text, "## search_logs\n")
+	require.NotContains(t, text, "Not described")
+}
+
+func TestCallMarksAToolNamedAtTheStartOfTheInstructions(t *testing.T) {
+	f := newCatalogueFixture(t, "cat-named-first", "load_skill before anything else.", false, loadSkillTool)
+
+	resp := f.run(t, CallMCPToolToolName, map[string]any{"server": "cat-named-first", "tool": "load_skill", "arguments": map[string]any{}})
+
+	require.True(t, strings.HasPrefix(resp.Content, InvalidArgumentsPrefix+InstructionNamedMarker), resp.Content)
+}
+
+func bareTool(server, name, description string) CatalogueTool {
+	return CatalogueTool{MCP: &Tool{mcpName: server, tool: &mcp.RegisteredTool{Tool: &mcp.Tool{
+		Name:        name,
+		Description: description,
+		InputSchema: objectSchema(nil, map[string]any{}),
+	}}}}
+}
+
+func TestRankToolsOrdersByScoreThenServerThenName(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		query    string
+		byServer map[string][]CatalogueTool
+		want     []string
+	}{
+		"name matches add up": {
+			query: "alpha beta",
+			byServer: map[string][]CatalogueTool{"s": {
+				bareTool("s", "alpha_x", "Beta alpha."),
+				bareTool("s", "alpha_beta", "Nothing."),
+			}},
+			want: []string{"s/alpha_beta", "s/alpha_x"},
+		},
+		"ties go to the server first": {
+			query: "widget",
+			byServer: map[string][]CatalogueTool{
+				"b": {bareTool("b", "aa_widget", "")},
+				"a": {bareTool("a", "zz_widget", "")},
+			},
+			want: []string{"a/zz_widget", "b/aa_widget"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, match := range rankTools(searchTerms(tc.query), tc.byServer) {
+				got = append(got, match.server+"/"+match.tool.MCPToolName())
+			}
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestFirstSentence(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		in, want string
+	}{
+		"stops at the first sentence": {in: "One. Two.", want: "One."},
+		"keeps a leading full stop":   {in: ". One. Two.", want: ". One. Two."},
+		"keeps exactly 200 runes":     {in: strings.Repeat("é", 200), want: strings.Repeat("é", 200)},
+		"cuts more than 200 runes":    {in: strings.Repeat("é", 201), want: strings.Repeat("é", 200) + "..."},
+		"keeps only the first line":   {in: "  One\nTwo", want: "One"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, firstSentence(tc.in))
+		})
+	}
+}
+
+func TestMentionIndexFindsWholeNamesOnly(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		text string
+		want int
+	}{
+		"the whole text":       {text: "x", want: 0},
+		"at the start":         {text: "x y", want: 0},
+		"at the end":           {text: "y x", want: 2},
+		"after a partial name": {text: "xy x", want: 3},
+		"absent":               {text: "y", want: -1},
+	}
+	for _, c := range "_-09azAZ" {
+		tests[fmt.Sprintf("after name part %q", c)] = struct {
+			text string
+			want int
+		}{text: string(c) + "x", want: -1}
+		tests[fmt.Sprintf("before name part %q", c)] = struct {
+			text string
+			want int
+		}{text: "x" + string(c), want: -1}
+	}
+	for _, c := range "/:`{@[ ." {
+		tests[fmt.Sprintf("after separator %q", c)] = struct {
+			text string
+			want int
+		}{text: string(c) + "x", want: 1}
+		tests[fmt.Sprintf("before separator %q", c)] = struct {
+			text string
+			want int
+		}{text: "x" + string(c), want: 0}
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, mentionIndex(tc.text, "x"))
+		})
+	}
+}
+
+func TestSearchDescriptionPanicsWhenItsTemplateFails(t *testing.T) {
+	orig := searchMCPToolsDescriptionTpl
+	searchMCPToolsDescriptionTpl = template.Must(template.New("broken").Parse("{{ .Missing }}"))
+	t.Cleanup(func() { searchMCPToolsDescriptionTpl = orig })
+
+	require.PanicsWithValue(t,
+		`failed to execute tool description template: template: broken:1:3: executing "broken" at <.Missing>: can't evaluate field Missing in type struct { Servers []tools.CatalogueServer }`,
+		func() { searchDescription(nil) })
 }
