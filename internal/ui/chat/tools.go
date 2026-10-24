@@ -817,15 +817,18 @@ func toolIcon(sty *styles.Styles, status ToolStatus) string {
 	}
 }
 
-// collapsedHeaderSpace puts a collapsed header's parameters on one line.
-// Tabs become spaces before the header is measured, since Lip Gloss would
-// widen them after, and a lone carriage return would send the cursor back
-// over the header.
-var collapsedHeaderSpace = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "    ")
-
-// expandedHeaderSpace keeps an expanded header's line breaks but turns each
-// carriage return into one, so none reaches the terminal.
-var expandedHeaderSpace = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+// Text drawn in a tool's header or drill-in goes through one of these
+// first. Tabs become four spaces before the text is measured, since Lip
+// Gloss counts a tab as no columns but draws it as four, and a carriage
+// return, which would send the cursor back over the line, becomes a line
+// break.
+var (
+	// oneLineSpace also turns every line break into a space, for text held
+	// to one line.
+	oneLineSpace = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "    ")
+	// lineSpace keeps line breaks.
+	lineSpace = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\t", "    ")
+)
 
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
 // When opts.ExpandedContent is true, the output wraps instead of truncating,
@@ -844,11 +847,10 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 		collapsed.ExpandedContent = false
 		opts = &collapsed
 	}
-	// A collapsed header is one line, whatever its parameters hold, and
-	// either kind is measured as it will be drawn.
-	space := collapsedHeaderSpace
+	// A collapsed header is one line, whatever its parameters hold.
+	space := oneLineSpace
 	if opts != nil && opts.ExpandedContent {
-		space = expandedHeaderSpace
+		space = lineSpace
 	}
 	spaced := make([]string, 0, len(params))
 	for _, param := range params {
