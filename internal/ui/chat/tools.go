@@ -835,7 +835,8 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 	}
 
 	if width >= 0 && (opts == nil || !opts.ExpandedContent) {
-		return sty.Tool.ParamMain.Render(ansi.Truncate(output, width, "…"))
+		// A collapsed header is one line, whatever its parameters hold.
+		return sty.Tool.ParamMain.Render(ansi.Truncate(strings.ReplaceAll(output, "\n", " "), width, "…"))
 	}
 	if opts != nil && opts.ExpandedContent && width > 0 && lipgloss.Width(output) > width {
 		// Let Lip Gloss do the wrapping rather than wrapping and styling in
