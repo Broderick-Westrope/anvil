@@ -29,7 +29,14 @@ const maxReturnedSteers = 50
 const maxSubagentResumes = 2
 
 // defaultSubagentRetryDelays are the waits before each automatic resume.
-var defaultSubagentRetryDelays = []time.Duration{5 * time.Second, 30 * time.Second}
+var defaultSubagentRetryDelays = []time.Duration{firstSubagentRetryDelay, laterSubagentRetryDelay}
+
+// The default waits, as constants so the mutation check treats them like
+// any other pinned constant.
+const (
+	firstSubagentRetryDelay = 5 * time.Second
+	laterSubagentRetryDelay = 30 * time.Second
+)
 
 const (
 	// noTextOutput is the result of a subagent that finished without text.
