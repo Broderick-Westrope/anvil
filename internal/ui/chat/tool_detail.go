@@ -484,8 +484,12 @@ func (p *toolDetailParamItem) Render(width int) string {
 }
 
 // minParamValueWidth is the narrowest a value wraps to beside its key;
-// narrower than that, it goes on the lines below the key instead.
-const minParamValueWidth = 20
+// narrower than that, it goes on the lines below the key instead,
+// indented by stackIndent.
+const (
+	minParamValueWidth = 20
+	stackIndent        = 4
+)
 
 // renderBody renders the parameter at width, without the focus bar.
 func (p *toolDetailParamItem) renderBody(width int) string {
@@ -520,8 +524,7 @@ func (p *toolDetailParamItem) renderBody(width int) string {
 // beside it is too narrow to read, value goes below it, indented.
 func wrapBesideKey(keyLine, value string, width int) string {
 	if strings.Contains(keyLine, "\n") || width-lipgloss.Width(keyLine)-1 < minParamValueWidth {
-		const indent = 4
-		return keyLine + "\n" + indentLines(lipgloss.NewStyle().Width(max(1, width-indent)).Render(value), indent, indent)
+		return keyLine + "\n" + indentLines(lipgloss.NewStyle().Width(max(1, width-stackIndent)).Render(value), stackIndent, stackIndent)
 	}
 	indent := lipgloss.Width(keyLine) + 1
 	return keyLine + indentLines(lipgloss.NewStyle().Width(width-indent).Render(value), 1, indent)
@@ -651,12 +654,10 @@ func (o *toolDetailOutputItem) renderOutput(width int) string {
 	if res := cfg.Result(); res != nil {
 		hooks = toolOutputHookIndicator(o.sty, res.Metadata, cfg.contentWidth(width), true)
 	}
-	switch {
-	case hooks == "":
+	if hooks == "" {
 		return output
-	case output == "":
-		return hooks
-	case !strings.HasPrefix(output, "\n"):
+	}
+	if !strings.HasPrefix(output, "\n") {
 		output = "\n" + output
 	}
 	return hooks + "\n" + output

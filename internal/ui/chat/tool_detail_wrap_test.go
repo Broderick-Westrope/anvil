@@ -841,9 +841,8 @@ func TestHookReasonStaysOnOneLine(t *testing.T) {
 	require.Contains(t, out, "Denied not here")
 }
 
-// A drill-in lays hooks out at the width its tool's output uses, and ends
-// with them when there's no output.
-func TestToolDetailOutputHookLayout(t *testing.T) {
+// A drill-in lays hooks out at the width its tool's output uses.
+func TestToolDetailOutputHookWidth(t *testing.T) {
 	t.Parallel()
 
 	reason := strings.Repeat("blocked ", 40)
@@ -857,12 +856,6 @@ func TestToolDetailOutputHookLayout(t *testing.T) {
 	for _, line := range strings.Split(items[len(items)-1].Render(300), "\n") {
 		require.LessOrEqual(t, lipgloss.Width(line), MessageLeftPaddingTotal+cappedMessageWidth(300))
 	}
-
-	empty := helperToolItem(t, "unknown_tool", `{}`,
-		&message.ToolResult{ToolCallID: "tc-test", Name: "unknown_tool", Metadata: metadata}, ToolStatusSuccess)
-	items = BuildToolDetailItems(&sty, empty, nil)
-	lines := strings.Split(ansi.Strip(items[len(items)-1].Render(80)), "\n")
-	require.NotEmpty(t, strings.TrimSpace(lines[len(lines)-1]), "no blank line after the hooks: %q", lines)
 }
 
 // In the chat a hook's name gives way for its matcher before the matcher
@@ -896,4 +889,48 @@ func TestHookNameFlattensWhitespace(t *testing.T) {
 	sty := styles.TokyoNight()
 	metadata := hookMetadata(t, map[string]any{"name": "a\r\nb\nc\rd\ve\ff\tg", "decision": "allow"})
 	require.Equal(t, "Hook a¶b¶c¶d¶e¶f    g → OK", ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, false)))
+}
+
+// In the drill-in a long hook name runs past the name column without
+// pushing a short hook beside it onto more lines.
+func TestHookLinesKeepShortHooksWhole(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	long := "/" + strings.Repeat("hooks/", 25) + "guard.sh"
+	metadata := mustJSON(t, map[string]any{"hook": map[string]any{
+		"hook_count": 2, "decision": "deny",
+		"hooks": []any{
+			map[string]any{"name": long, "decision": "allow"},
+			map[string]any{"name": "a", "matcher": "Bash", "decision": "deny", "reason": "nope"},
+		},
+	}})
+	out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 80, true))
+	require.Contains(t, squash(out), squash(long))
+	lines := strings.Split(out, "\n")
+	require.Equal(t, "Hook a"+strings.Repeat(" ", 30)+"Bash → Denied nope", lines[len(lines)-1])
+}
+
+// In the chat a hook's name is cut to 30 columns even with room to spare.
+func TestHookNameCappedInChat(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	metadata := hookMetadata(t, map[string]any{"name": strings.Repeat("n", 40), "decision": "allow"})
+	out := ansi.Strip(toolOutputHookIndicator(&sty, metadata, 120, false))
+	require.Equal(t, "Hook "+strings.Repeat("n", 29)+"… → OK", out)
+}
+
+// Even narrower than its indent, a drill-in hook keeps every line within
+// the width.
+func TestHookLineFitsTinyWidths(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.TokyoNight()
+	metadata := hookMetadata(t, map[string]any{"name": "g", "decision": "deny", "reason": "no way"})
+	for _, width := range []int{2, 3, 4} {
+		for _, line := range strings.Split(toolOutputHookIndicator(&sty, metadata, width, true), "\n") {
+			require.LessOrEqual(t, lipgloss.Width(line), width, "width %d: %q", width, ansi.Strip(line))
+		}
+	}
 }

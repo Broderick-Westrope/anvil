@@ -128,7 +128,8 @@ type ToolRenderOpts struct {
 	// OneLineHeader keeps the header on one line when the content is
 	// expanded, for a caller that drops the header's line. toolParamList
 	// enforces it, so a header built without that has to hold itself to
-	// one line.
+	// one line. The item also leaves its hook lines out, since they'd sit
+	// above the header; the caller draws them.
 	OneLineHeader bool
 	// MessageCreatedAt is when the assistant message carrying the tool call
 	// was created, in whole seconds; zero when unknown.
@@ -1086,10 +1087,10 @@ func toolOutputSkillContent(sty *styles.Styles, name, description string) string
 
 // toolOutputHookIndicator renders hook indicator lines from tool metadata.
 // Returns empty string if no hook metadata is present. Hook names are
-// sanitized (newlines replaced with ¶) and, like matchers, cut to fit the
-// available horizontal space. A line still too wide is cut with an
-// ellipsis, or with noTruncate has its detail wrapped under where it
-// starts.
+// sanitized (newlines replaced with ¶), as are matchers. In the chat the
+// name, then the matcher, narrows to fit the available horizontal space
+// and a line still too wide is cut with an ellipsis. With noTruncate (the
+// drill-in) nothing is cut: the detail wraps beside the line, or below it.
 func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noTruncate bool) string {
 	if metadata == "" {
 		return ""
@@ -1107,7 +1108,8 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 
 	// Sanitize names (replace newlines with ¶) and matchers, and compute
 	// max widths for the name, matcher, and detail columns so they align.
-	// The name column is capped at maxHookNameWidth characters.
+	// The name column is capped at maxHookNameWidth characters; in the
+	// chat a longer name is cut to it, and in the drill-in it runs past.
 	const maxHookNameWidth = 30
 	sanitizedNames := make([]string, len(h.Hooks))
 	matchers := make([]string, len(h.Hooks))
@@ -1132,8 +1134,9 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 	// A line that's cut gives up its name, then its matcher, to keep its
 	// detail, which says why. With noTruncate (the drill-in) nothing is
 	// cut: fitHookLine wraps the line instead.
+	maxNameWidth = min(maxNameWidth, maxHookNameWidth)
 	if !noTruncate {
-		maxNameWidth, maxMatcherWidth = fitHookColumns(sty, width, min(maxNameWidth, maxHookNameWidth), maxMatcherWidth, maxDetailWidth)
+		maxNameWidth, maxMatcherWidth = fitHookColumns(sty, width, maxNameWidth, maxMatcherWidth, maxDetailWidth)
 		for i := range matchers {
 			matchers[i] = ansi.Truncate(matchers[i], maxMatcherWidth, "…")
 		}
@@ -1141,7 +1144,10 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 
 	var lines []string
 	for i, hi := range h.Hooks {
-		name := truncateHookName(sanitizedNames[i], maxNameWidth)
+		name := sanitizedNames[i]
+		if !noTruncate {
+			name = truncateHookName(name, maxNameWidth)
+		}
 		line := renderHookLine(sty, hi, name, matchers[i], details[i], maxNameWidth, maxMatcherWidth)
 		lines = append(lines, fitHookLine(line, details[i], width, noTruncate))
 	}
@@ -1184,8 +1190,8 @@ func fitHookLine(line, detail string, width int, noTruncate bool) string {
 	col := lipgloss.Width(line) - lipgloss.Width(detail)
 	if width-col < minParamValueWidth {
 		// The head ends with the space before the detail, which goes.
-		const indent = 4
-		below := indentLines(lipgloss.Wrap(detail, max(1, width-indent), ""), indent, indent)
+		indent := min(stackIndent, width-1)
+		below := indentLines(lipgloss.Wrap(detail, width-indent, ""), indent, indent)
 		return lipgloss.Wrap(ansi.Truncate(line, col-1, ""), width, "") + "\n" + below
 	}
 	return ansi.Truncate(line, col, "") + indentLines(lipgloss.Wrap(detail, width-col, ""), 0, col)
