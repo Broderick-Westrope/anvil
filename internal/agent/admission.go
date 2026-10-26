@@ -226,8 +226,8 @@ func (a *admission) continueWith(ctx context.Context, id string, job submission)
 func (a *admission) ownsWithNothingWaiting(ctx context.Context, id string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
-	return ok && owner != nil && a.owners[id] == owner && owner.done == nil &&
+	owner, _ := ctx.Value(ownerKey{}).(*submissionOwner)
+	return owner != nil && a.owners[id] == owner && owner.done == nil &&
 		len(a.queues[id]) == 0 && a.held[id] == 0 && ctx.Err() == nil
 }
 
