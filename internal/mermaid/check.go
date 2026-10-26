@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	pele "github.com/Broderick-Westrope/pele-go"
@@ -23,12 +24,22 @@ type Problem struct {
 	Message string
 	// Hint suggests a fix for a failure models often make, or is "".
 	Hint string
+	// Inconclusive is set when the check couldn't tell whether the diagram
+	// is valid: it timed out, was too large, or crashed the renderer.
+	Inconclusive bool
 }
 
 // Report is the result of checking content for diagrams that don't render.
 type Report struct {
 	Diagrams int
 	Problems []Problem
+}
+
+// Conclusive returns the report without the problems the check couldn't
+// be sure of.
+func (r Report) Conclusive() Report {
+	r.Problems = slices.DeleteFunc(slices.Clone(r.Problems), func(p Problem) bool { return p.Inconclusive })
+	return r
 }
 
 // CheckMarkdown renders every diagram the chat would draw from content: the
@@ -59,7 +70,7 @@ func check(ctx context.Context, diagrams []Segment) (Report, error) {
 		return Report{}, fmt.Errorf("load diagram renderer: %w", err)
 	}
 	for i, d := range diagrams {
-		_, err := renderer.Render(ctx, d.Text, raster.Options{})
+		err := render(ctx, renderer, d.Text)
 		if err == nil {
 			continue
 		}
@@ -71,11 +82,27 @@ func check(ctx context.Context, diagrams []Segment) (Report, error) {
 	return report, nil
 }
 
+func render(ctx context.Context, renderer *raster.Renderer, source string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", errRendererCrashed, r)
+		}
+	}()
+	_, err = renderer.Render(ctx, source, raster.Options{})
+	return err
+}
+
+var errRendererCrashed = errors.New("diagram renderer crashed")
+
 func problemFor(diagram int, d Segment, err error) Problem {
 	p := Problem{Diagram: diagram, Message: err.Error()}
 	var pe *pele.Error
-	if errors.As(err, &pe) {
+	switch {
+	case errors.Is(err, raster.ErrRenderTimeout), errors.Is(err, raster.ErrSourceTooLarge), errors.Is(err, errRendererCrashed):
+		p.Inconclusive = true
+	case errors.As(err, &pe):
 		p.Message = pe.Message
+		p.Inconclusive = pe.Code == pele.CodeInternal
 		if pe.Line > 0 {
 			lines := max(strings.Count(strings.TrimSuffix(d.Text, "\n"), "\n")+1, 1)
 			p.Line = d.Line + min(pe.Line, lines) - 1

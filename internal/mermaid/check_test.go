@@ -1,6 +1,7 @@
 package mermaid_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
@@ -43,6 +44,8 @@ func TestCheckDiagram(t *testing.T) {
 		wantMsg  string
 		wantHint bool
 		wantText string
+
+		wantInconclusive bool
 	}{
 		"renders": {
 			source:   "sequenceDiagram\n  A->>B: hi\n",
@@ -58,6 +61,17 @@ func TestCheckDiagram(t *testing.T) {
 			source:   "flowchart TD\n  A --> B(\n",
 			wantLine: 2,
 			wantMsg:  "Parse error",
+		},
+		"lines count front matter and comments": {
+			source:   "---\ntitle: Buying\n---\n%% one\n%% two\nsequenceDiagram\n    participant Off as offerings\n    A->>Off: buys\n",
+			wantLine: 8,
+			wantMsg:  "got 'off'",
+			wantHint: true,
+		},
+		"too large is inconclusive": {
+			source:           "flowchart LR\n" + strings.Repeat("  A --> B\n", 8000),
+			wantMsg:          "too large",
+			wantInconclusive: true,
 		},
 		"no diagram type": {
 			source:  "just some text",
@@ -80,6 +94,8 @@ func TestCheckDiagram(t *testing.T) {
 			require.Equal(t, tc.wantLine, p.Line)
 			require.Contains(t, p.Message, tc.wantMsg)
 			require.Equal(t, tc.wantHint, p.Hint != "")
+			require.Equal(t, tc.wantInconclusive, p.Inconclusive)
+			require.Equal(t, !tc.wantInconclusive, len(report.Conclusive().Problems) == 1)
 		})
 	}
 }
