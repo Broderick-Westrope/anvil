@@ -178,6 +178,8 @@ func injectionBlock(inj message.InjectionContent) string {
 		return fmt.Sprintf("**Harness · retry %d/%d after %s**", inj.Attempt, inj.MaxAttempts, inj.Reason)
 	case message.InjectionKindContinue:
 		return "**Harness · continue after interrupt**"
+	case message.InjectionKindDiagramFix:
+		return "**Harness · fix diagrams that don't render**"
 	case message.InjectionKindResume:
 		return "**Orchestrator · resume**\n\n" + inj.Text
 	case message.InjectionKindInterruptSteer:

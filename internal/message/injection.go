@@ -33,6 +33,9 @@ const (
 	// InjectionKindContinue is the harness's continue message after an
 	// interrupt whose steer was already delivered.
 	InjectionKindContinue InjectionKind = "continue"
+	// InjectionKindDiagramFix is the harness's request to fix diagrams in
+	// the last reply that don't render.
+	InjectionKindDiagramFix InjectionKind = "diagram_fix"
 )
 
 // InjectionContent is the audit record of one injected message. It lives

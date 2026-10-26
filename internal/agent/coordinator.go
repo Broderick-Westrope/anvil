@@ -873,6 +873,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		UsageRecorder:        c.usageRecorder,
 		AgentName:            agentName,
 		WorkingDir:           c.cfg.WorkingDir(),
+		CheckDiagrams:        !isSubAgent && c.cfg.DiagramsEnabled(),
 	})
 
 	// Capture values needed in goroutines.

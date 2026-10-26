@@ -161,6 +161,7 @@ type sessionAgent struct {
 	messages             message.Service
 	disableAutoSummarize bool
 	isYolo               bool
+	checkDiagrams        bool
 	notify               pubsub.Publisher[notify.Notification]
 	providerConfig       *csync.Value[config.ProviderConfig]
 	jobEvents            *jobevents.Store
@@ -240,6 +241,9 @@ type SessionAgentOptions struct {
 	// AgentName and WorkingDir label recorded usage rows.
 	AgentName  string
 	WorkingDir string
+	// CheckDiagrams asks the model to fix diagrams in its interactive
+	// replies that don't render.
+	CheckDiagrams bool
 }
 
 func NewSessionAgent(
@@ -265,6 +269,7 @@ func NewSessionAgent(
 		tools:                csync.NewSliceFrom(opts.Tools),
 		mcpListing:           csync.NewValue(mcpListing{}),
 		isYolo:               opts.IsYolo,
+		checkDiagrams:        opts.CheckDiagrams,
 		notify:               opts.Notify,
 		providerConfig:       csync.NewValue(opts.ProviderConfig),
 		admission:            opts.admission,
@@ -416,6 +421,8 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		if err := a.summarizeAndResume(ctx, call, len(t.assistant.ToolCalls()) > 0); err != nil {
 			return nil, err
 		}
+	} else {
+		a.checkReplyDiagrams(ctx, call, t.assistant)
 	}
 
 	// Retitle after the first reply, except in non-interactive (task)

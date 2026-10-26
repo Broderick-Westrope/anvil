@@ -345,6 +345,19 @@ Terms with a specific meaning in this codebase are defined in
   `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
   measurements and resvg workarounds:
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
+- **Diagram checks**: `internal/mermaid` owns which fences are diagrams
+  (`mermaid.Split`, which the chat splits messages with) and whether they
+  render (`CheckMarkdown`, `CheckDiagram`, using the chat's pele-go
+  renderer, so a pass means the chat can draw it). The `validate_mermaid`
+  tool checks a diagram or a file's fences, and the system prompt's
+  diagram line tells the model to call it. As a backstop, when a
+  top-level interactive turn ends with diagrams that don't render
+  (`sessionAgent.checkReplyDiagrams`, on when `DiagramsEnabled`), it
+  queues one more turn through `admission.continueWith` with a
+  `diagram_fix` harness injection holding the failures. A turn that
+  starts from that injection isn't checked again, so it never loops.
+  Prompt changes edit the orchestrator cassettes in place (YAML escapes
+  `'` as `''`).
 - **Tool images**: a tool result carrying image data (`view`, MCP) is
   drawn as the Output item of its tool drill-in
   (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any
