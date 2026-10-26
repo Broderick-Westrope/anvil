@@ -349,7 +349,9 @@ func TestReplyDiagramFixNamesValidateMermaidOnlyWhenTheAgentHasIt(t *testing.T) 
 			require.Equal(t, 2, model.steps())
 			last := model.prompts[1]
 			fixPrompt := textOf(last[len(last)-1])
-			require.Equal(t, hasTool, strings.Contains(fixPrompt, "Check them with validate_mermaid before replying."))
+			require.Contains(t, fixPrompt, diagramFixText, "the request itself is always there")
+			require.Equal(t, hasTool, strings.Contains(fixPrompt, diagramFixText+diagramFixCheckText+"\n\n"))
+			require.Contains(t, fixPrompt, "Diagram 1, line 6:")
 		})
 	}
 }
