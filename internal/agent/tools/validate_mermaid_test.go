@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"charm.land/fantasy"
@@ -29,6 +30,7 @@ func TestValidateMermaid(t *testing.T) {
 	tests := map[string]struct {
 		params    ValidateMermaidParams
 		files     map[string]string
+		trusted   bool
 		wantError bool
 		want      []string
 	}{
@@ -43,6 +45,19 @@ func TestValidateMermaid(t *testing.T) {
 		"source with its fence": {
 			params: ValidateMermaidParams{Source: "```mermaid\n" + brokenSequence + "```"},
 			want:   []string{"Diagram 1, line 4:"},
+		},
+		"unclosed fence in source is checked as the diagram": {
+			params: ValidateMermaidParams{Source: "```mermaid\nflowchart LR\n  A --> B\n"},
+			want:   []string{"The diagram renders."},
+		},
+		"tilde fence in source": {
+			params: ValidateMermaidParams{Source: "~~~mermaid\n" + brokenSequence + "~~~"},
+			want:   []string{"Diagram 1, line 4:"},
+		},
+		"trusted directory needs no permission": {
+			params:  ValidateMermaidParams{FilePath: "TRUSTED/doc.md"},
+			trusted: true,
+			want:    []string{"The diagram renders."},
 		},
 		"markdown file reports file lines": {
 			params: ValidateMermaidParams{FilePath: "doc.md"},
@@ -81,8 +96,15 @@ func TestValidateMermaid(t *testing.T) {
 			for name, content := range tc.files {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
 			}
+			var trusted []string
+			if tc.trusted {
+				trustedDir := t.TempDir()
+				trusted = []string{trustedDir}
+				require.NoError(t, os.WriteFile(filepath.Join(trustedDir, "doc.md"), []byte("```mermaid\nflowchart LR\n  A --> B\n```\n"), 0o644))
+				tc.params.FilePath = strings.Replace(tc.params.FilePath, "TRUSTED", trustedDir, 1)
+			}
 			perms := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-			resp := runValidateMermaid(t, NewValidateMermaidTool(perms, dir), tc.params)
+			resp := runValidateMermaid(t, NewValidateMermaidTool(perms, dir, trusted), tc.params)
 
 			require.Equal(t, tc.wantError, resp.IsError, resp.Content)
 			for _, want := range tc.want {
@@ -100,7 +122,7 @@ func TestValidateMermaidOutsideWorkingDirAsksToRead(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("```mermaid\nflowchart LR\n  A --> B\n```\n"), 0o644))
 	perms := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
 
-	resp := runValidateMermaid(t, NewValidateMermaidTool(perms, t.TempDir()), ValidateMermaidParams{FilePath: path})
+	resp := runValidateMermaid(t, NewValidateMermaidTool(perms, t.TempDir(), nil), ValidateMermaidParams{FilePath: path})
 
 	require.False(t, resp.IsError, resp.Content)
 	require.Equal(t, "The diagram renders.", resp.Content)

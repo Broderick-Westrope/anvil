@@ -27,9 +27,10 @@ const maxValidateFileSize = 1 << 20
 var validateMermaidDescription string
 
 // NewValidateMermaidTool returns a tool that renders Mermaid diagrams with
-// the renderer the chat uses and reports any that fail. Files outside
-// workingDir need the same permission as reading them with view.
-func NewValidateMermaidTool(permissions permission.Service, workingDir string) fantasy.AgentTool {
+// the renderer the chat uses and reports any that fail. It reads files
+// under the same rules as view, which takes the same trustedReadDirs and
+// skillsPaths.
+func NewValidateMermaidTool(permissions permission.Service, workingDir string, trustedReadDirs []string, skillsPaths ...string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		ValidateMermaidToolName,
 		validateMermaidDescription,
@@ -38,11 +39,10 @@ func NewValidateMermaidTool(permissions permission.Service, workingDir string) f
 				return fantasy.NewTextErrorResponse("Pass exactly one of source or file_path."), nil
 			}
 			if params.Source != "" {
-				if strings.HasPrefix(strings.TrimSpace(params.Source), "```") {
-					report, err := mermaid.CheckMarkdown(ctx, strings.TrimSpace(params.Source)+"\n")
-					return reportResponse(report, err)
+				report, err := mermaid.CheckMarkdown(ctx, strings.TrimSpace(params.Source)+"\n")
+				if err == nil && report.Diagrams == 0 {
+					report, err = mermaid.CheckDiagram(ctx, withoutOpeningFence(params.Source))
 				}
-				report, err := mermaid.CheckDiagram(ctx, params.Source)
 				return reportResponse(report, err)
 			}
 
@@ -50,7 +50,7 @@ func NewValidateMermaidTool(permissions permission.Service, workingDir string) f
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("resolve file path: %w", err)
 			}
-			resp, ok, err := ensureReadAllowed(ctx, call, ViewPermissionsParams{FilePath: absPath}, absPath, workingDir, nil, nil, permissions)
+			resp, ok, err := ensureReadAllowed(ctx, call, ViewPermissionsParams{FilePath: absPath}, absPath, workingDir, skillsPaths, trustedReadDirs, permissions)
 			if err != nil || !ok {
 				return resp, err
 			}
@@ -97,4 +97,13 @@ func reportResponse(report mermaid.Report, err error) (fantasy.ToolResponse, err
 		return fantasy.ToolResponse{}, err
 	}
 	return fantasy.NewTextResponse(report.String()), nil
+}
+
+func withoutOpeningFence(source string) string {
+	trimmed := strings.TrimLeft(source, " \t\r\n")
+	if !strings.HasPrefix(trimmed, "```") && !strings.HasPrefix(trimmed, "~~~") {
+		return source
+	}
+	_, rest, _ := strings.Cut(trimmed, "\n")
+	return rest
 }
