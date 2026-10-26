@@ -873,6 +873,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		UsageRecorder:        c.usageRecorder,
 		AgentName:            agentName,
 		WorkingDir:           c.cfg.WorkingDir(),
+		CheckDiagrams:        !isSubAgent && c.cfg.DiagramFixEnabled(),
 	})
 
 	// Capture values needed in goroutines.
@@ -951,7 +952,10 @@ func (c *coordinator) buildPromptWithState(
 
 	// buildTools reports an invalid AllowedTools filter.
 	access, _ := newToolAccess(agentCfg, c.cfg.Config().Options)
-	opts = append(opts, prompt.WithViewToolAvailable(access.allowsTool(tools.ViewToolName)))
+	opts = append(opts,
+		prompt.WithViewToolAvailable(access.allowsTool(tools.ViewToolName)),
+		prompt.WithValidateMermaidAvailable(access.allowsTool(tools.ValidateMermaidToolName)),
+	)
 
 	if agentName == config.AgentOrchestrator {
 		// Build agents block and delegation workflow from parsed .md files.
@@ -1161,6 +1165,7 @@ func (c *coordinator) buildToolsWithState(
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
+		tools.NewValidateMermaidTool(c.permissions, c.cfg.WorkingDir(), []string{shell.SpillDir(spillDataDir)}, trustedReadPaths(c.cfg.Config(), plugins)...),
 		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, skillTracker, activeSkills, []string{shell.SpillDir(spillDataDir)}, c.cfg.WorkingDir(), trustedReadPaths(c.cfg.Config(), plugins)...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir()),
 	)

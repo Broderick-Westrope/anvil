@@ -294,7 +294,7 @@ func setupWorkspaceWithProgressBar(cmd *cobra.Command) (workspace.Workspace, fun
 // setupWorkspace creates an in-process app.App and returns an
 // AppWorkspace.
 func setupWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
-	return setupLocalWorkspace(cmd)
+	return setupLocalWorkspace(cmd, false)
 }
 
 // resolveYoloLevel returns the level set by --yolo when it was passed, and
@@ -314,7 +314,7 @@ func resolveYoloLevel(cmd *cobra.Command, cfg *config.Config) (config.YoloLevel,
 
 // setupLocalWorkspace creates an in-process app.App and wraps it in an
 // AppWorkspace.
-func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error) {
+func setupLocalWorkspace(cmd *cobra.Command, headless bool) (workspace.Workspace, func(), error) {
 	debug, _ := cmd.Flags().GetBool("debug")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	ctx := cmd.Context()
@@ -335,6 +335,7 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 		return nil, nil, err
 	}
 	store.Overrides().YoloLevel = yoloLevel
+	store.Overrides().Headless = headless
 
 	if err := os.MkdirAll(cfg.Options.ProjectDirectory, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("failed to create data directory: %q %w", cfg.Options.ProjectDirectory, err)

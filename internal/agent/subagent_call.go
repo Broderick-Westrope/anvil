@@ -449,6 +449,8 @@ func injectionSummaryLine(inj message.InjectionContent) string {
 		return fmt.Sprintf("harness: resumed after %s (retry %d/%d)", inj.Reason, inj.Attempt, inj.MaxAttempts)
 	case message.InjectionKindContinue:
 		return "harness: continued after an interrupt"
+	case message.InjectionKindDiagramFix:
+		return "harness: asked to fix diagrams that don't render"
 	case message.InjectionKindSteer:
 		return "human (steer): " + inj.Text
 	default:

@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/common"
 	"github.com/Broderick-Westrope/anvil/internal/ui/list"
@@ -126,87 +127,6 @@ func IsSegmentOf(id, messageID string) bool {
 	return strings.HasPrefix(id, messageID+"#")
 }
 
-type markdownSegment struct {
-	text    string
-	mermaid bool
-}
-
-// codeFence is an open fenced code block: its fence character and length.
-type codeFence struct {
-	char byte
-	n    int
-}
-
-// openCodeFence reports whether line opens a fenced code block at the top
-// level, and returns the first word of its info string.
-func openCodeFence(line string) (codeFence, string, bool) {
-	line = strings.TrimRight(line, "\r\n")
-	if line == "" || (line[0] != '`' && line[0] != '~') {
-		return codeFence{}, "", false
-	}
-	char := line[0]
-	n := len(line) - len(strings.TrimLeft(line, string(char)))
-	info := strings.TrimSpace(line[n:])
-	if n < 3 || (char == '`' && strings.Contains(info, "`")) {
-		return codeFence{}, "", false
-	}
-	lang, _, _ := strings.Cut(info, " ")
-	return codeFence{char: char, n: n}, lang, true
-}
-
-// closedBy reports whether line closes the fence: the same character, at
-// least as many times, and nothing else.
-func (f codeFence) closedBy(line string) bool {
-	line = strings.TrimRight(line, " \t\r\n")
-	return len(line) >= f.n && strings.Trim(line, string(f.char)) == ""
-}
-
-// splitMermaid cuts content at every closed mermaid fence that starts a
-// line at the top level. Fences indented into a list item or quoted in a
-// blockquote stay in the text, since cutting there would break the list or
-// quote in two, and so do mermaid examples inside another fence. Mermaid
-// segments hold the diagram source without the fence lines.
-func splitMermaid(content string) []markdownSegment {
-	var segs []markdownSegment
-	var text, diagram strings.Builder
-	var fence codeFence
-	var opening string
-	inFence, inMermaid := false, false
-	for line := range strings.SplitAfterSeq(content, "\n") {
-		switch {
-		case inMermaid && fence.closedBy(line):
-			if text.Len() > 0 {
-				segs = append(segs, markdownSegment{text: text.String()})
-				text.Reset()
-			}
-			segs = append(segs, markdownSegment{text: diagram.String(), mermaid: true})
-			diagram.Reset()
-			inFence, inMermaid = false, false
-		case inMermaid:
-			diagram.WriteString(line)
-		case inFence:
-			text.WriteString(line)
-			inFence = !fence.closedBy(line)
-		default:
-			f, lang, ok := openCodeFence(line)
-			fence, inFence = f, ok
-			if ok && lang == "mermaid" {
-				opening, inMermaid = line, true
-			} else {
-				text.WriteString(line)
-			}
-		}
-	}
-	if inMermaid {
-		// Unclosed: keep it as the markdown it was.
-		text.WriteString(opening + diagram.String())
-	}
-	if text.Len() > 0 {
-		segs = append(segs, markdownSegment{text: text.String()})
-	}
-	return segs
-}
-
 // MaySplit reports whether msg may be shown as several nodes. Only a
 // message that finished normally is split: while it streams it stays one
 // node, so nodes never appear or vanish mid-stream, and canceled or failed
@@ -230,27 +150,27 @@ func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message, diagrams
 	if diagrams == nil || !MaySplit(msg) {
 		return []MessageItem{head}
 	}
-	segs := splitMermaid(msg.Content().Text)
+	segs := mermaid.Split(msg.Content().Text)
 	hasDiagram := false
 	for _, s := range segs {
-		hasDiagram = hasDiagram || s.mermaid
+		hasDiagram = hasDiagram || s.Mermaid
 	}
 	if !hasDiagram {
 		return []MessageItem{head}
 	}
 
 	// Blank text between nodes makes no node.
-	segs = slices.DeleteFunc(segs, func(s markdownSegment) bool {
-		return !s.mermaid && strings.TrimSpace(s.text) == ""
+	segs = slices.DeleteFunc(segs, func(s mermaid.Segment) bool {
+		return !s.Mermaid && strings.TrimSpace(s.Text) == ""
 	})
 
 	var items []MessageItem
 	next := 0
 	switch {
-	case !segs[0].mermaid:
+	case !segs[0].Mermaid:
 		// Text before the first diagram goes in the head, with the
 		// "Thought for" line.
-		head.segment = &assistantSegment{text: segs[0].text}
+		head.segment = &assistantSegment{text: segs[0].Text}
 		items, segs, next = append(items, head), segs[1:], 1
 	case head.hasThinking():
 		// The "Thought for" line needs a node before the first diagram.
@@ -258,11 +178,11 @@ func NewAssistantMessageItems(sty *styles.Styles, msg *message.Message, diagrams
 		items, next = append(items, head), 1
 	}
 	for _, s := range segs {
-		if s.mermaid {
-			items = append(items, NewDiagramItem(sty, msg, next, s.text, diagrams))
+		if s.Mermaid {
+			items = append(items, NewDiagramItem(sty, msg, next, s.Text, diagrams))
 		} else {
 			seg := NewAssistantMessageItem(sty, msg).(*AssistantMessageItem)
-			seg.segment = &assistantSegment{index: next, text: s.text}
+			seg.segment = &assistantSegment{index: next, text: s.Text}
 			items = append(items, seg)
 		}
 		next++

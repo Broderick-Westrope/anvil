@@ -387,12 +387,6 @@ func TestOpenCodeFenceInfoString(t *testing.T) {
 	}
 }
 
-func TestSplitMermaidMakesNoEmptyTextSegments(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, []markdownSegment{{text: "A\n", mermaid: true}}, splitMermaid("```mermaid\nA\n```\n"))
-}
-
 func TestIsAssistantHead(t *testing.T) {
 	t.Parallel()
 

@@ -345,6 +345,37 @@ Terms with a specific meaning in this codebase are defined in
   `plans/completed/design-2026-10-20-mermaid-diagrams.md`;
   measurements and resvg workarounds:
   `plans/completed/spike-2026-10-20-mermaid-rendering.md`.
+- **Diagram checks**: `internal/mermaid` owns which fences are diagrams
+  (`mermaid.Split`, which the chat splits messages with) and whether they
+  lay out (`CheckMarkdown`, `CheckDiagram`, with the chat's pele-go
+  renderer; rasterizing can still fail after a pass). A timeout, an
+  oversized source, a renderer crash or a diagram left when ctx ends is an
+  `Inconclusive` problem, which `Report.Conclusive` drops. The
+  `validate_mermaid` tool checks a diagram or a file's fences, reading
+  files under view's rules (its permission prompt is view's, so a session
+  grant covers both). The system prompt's diagram line warns against
+  keyword IDs and names the tool, only when the agent has it, for unsure
+  syntax and files. As a backstop for
+  chat replies, when a top-level interactive turn ends with diagrams that
+  conclusively fail (`sessionAgent.diagramFix`, on when
+  `ConfigStore.DiagramFixEnabled`: `options.tui.diagram_fix`, default on,
+  needing diagrams; checked within 2s), `runOwned` runs one best-effort fix turn in place,
+  as `a.Run` under the same owner after setting up its notification, with
+  a `diagram_fix` harness injection holding the failures. In place, Esc
+  cancels it; its failure is logged and the turn still succeeds, and the
+  finished notification fires once, after the fix (even when it was
+  cancelled). It's
+  skipped for wakes, awaited runs (a workflow's `Turn` gets its own
+  reply), diagrams the user's prompt or attachments quote, and when
+  anything is queued or holding behind the run
+  (`admission.ownsWithNothingWaiting`). A turn that starts from that
+  injection isn't checked again, so it never loops, and `beginAttempt`
+  leaves wake counts and Esc's wake suppression alone for it, since it
+  isn't the user acting. A type Pele doesn't draw is inconclusive: Pele
+  follows Mermaid closely but isn't it.
+  `anvil run` sets `RuntimeOverrides.Headless`, which turns
+  `DiagramsEnabled` off. Prompt changes edit the orchestrator cassettes in
+  place (YAML escapes `'` as `''`).
 - **Tool images**: a tool result carrying image data (`view`, MCP) is
   drawn as the Output item of its tool drill-in
   (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any

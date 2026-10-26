@@ -105,17 +105,19 @@ type tuiRestart struct {
 	compactMode bool
 	transparent bool
 	diagrams    bool
+	diagramFix  bool
 }
 
 func tuiRestartSettings(c *Config) tuiRestart {
 	if c.Options == nil || c.Options.TUI == nil {
-		return tuiRestart{diagrams: true}
+		return tuiRestart{diagrams: true, diagramFix: true}
 	}
 	tui := c.Options.TUI
 	return tuiRestart{
 		compactMode: tui.CompactMode,
 		transparent: tui.Transparent != nil && *tui.Transparent,
 		diagrams:    tui.DiagramsEnabled(),
+		diagramFix:  tui.DiagramFixEnabled(),
 	}
 }
 

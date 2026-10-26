@@ -104,7 +104,7 @@ anvil run --reasoning-effort high "Review this design"
 			}
 		}
 
-		ws, cleanup, err := setupLocalWorkspace(cmd)
+		ws, cleanup, err := setupLocalWorkspace(cmd, true)
 		if err != nil {
 			return err
 		}

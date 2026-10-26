@@ -137,3 +137,21 @@ func TestDiagramLineFollowsDiagramsOption(t *testing.T) {
 		}
 	}
 }
+
+func TestDiagramLineNamesValidateMermaidOnlyWhenAvailable(t *testing.T) {
+	t.Parallel()
+	for _, available := range []bool{false, true} {
+		t.Run(fmt.Sprintf("available=%t", available), func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.Init(t.TempDir(), t.TempDir(), false)
+			require.NoError(t, err)
+			cfg.Config().Options.ContextPaths = nil
+			p, err := orchestratorPrompt(prompt.WithAvailableSkills(nil), prompt.WithValidateMermaidAvailable(available))
+			require.NoError(t, err)
+			built, err := p.Build(t.Context(), "test", "test", cfg)
+			require.NoError(t, err)
+			require.Contains(t, built, "Mermaid diagrams in your replies may be rendered")
+			require.Equal(t, available, strings.Contains(built, "validate_mermaid"))
+		})
+	}
+}

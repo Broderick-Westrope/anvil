@@ -120,3 +120,64 @@ func TestAdmissionCompletionObservesReleasedOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, completed)
 }
+
+func TestOwnsWithNothingWaiting(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		setup func(a *admission, owner *submissionOwner) context.Context
+		want  bool
+	}{
+		"the owner with nothing behind it": {
+			setup: func(_ *admission, owner *submissionOwner) context.Context { return owner.ctx },
+			want:  true,
+		},
+		"a context with no owner": {
+			setup: func(*admission, *submissionOwner) context.Context { return context.Background() },
+		},
+		"another session's owner": {
+			setup: func(a *admission, _ *submissionOwner) context.Context {
+				return a.claim(context.Background(), "other").ctx
+			},
+		},
+		"an owner that has been replaced": {
+			setup: func(a *admission, owner *submissionOwner) context.Context {
+				a.claim(context.Background(), owner.sessionID)
+				return owner.ctx
+			},
+		},
+		"an awaited owner": {
+			setup: func(_ *admission, owner *submissionOwner) context.Context {
+				owner.done = make(chan submissionResult, 1)
+				return owner.ctx
+			},
+		},
+		"queued work": {
+			setup: func(a *admission, owner *submissionOwner) context.Context {
+				a.queues[owner.sessionID] = []submission{{silent: true}}
+				return owner.ctx
+			},
+		},
+		"a hold": {
+			setup: func(a *admission, owner *submissionOwner) context.Context {
+				a.held[owner.sessionID] = 1
+				return owner.ctx
+			},
+		},
+		"a cancelled owner": {
+			setup: func(_ *admission, owner *submissionOwner) context.Context {
+				owner.cancel()
+				return owner.ctx
+			},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			a := newAdmission(t.Context())
+			owner := a.claim(t.Context(), "s")
+			ctx := tc.setup(a, owner)
+			require.Equal(t, tc.want, a.ownsWithNothingWaiting(ctx, "s"))
+		})
+	}
+}

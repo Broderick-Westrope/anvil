@@ -219,6 +219,18 @@ func (a *admission) continueWith(ctx context.Context, id string, job submission)
 	a.queues[id] = append([]submission{job}, a.queues[id]...)
 }
 
+// ownsWithNothingWaiting reports whether ctx's run owns the session, isn't
+// an awaited submission, and has nothing queued or holding behind it. Work
+// it then runs in place under ctx is part of the same run: cancelling it
+// cancels that work too.
+func (a *admission) ownsWithNothingWaiting(ctx context.Context, id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	owner, _ := ctx.Value(ownerKey{}).(*submissionOwner)
+	return owner != nil && a.owners[id] == owner && owner.done == nil &&
+		len(a.queues[id]) == 0 && a.held[id] == 0 && ctx.Err() == nil
+}
+
 func (a *admission) submit(ctx context.Context, id string, job submission) (*fantasy.AgentResult, error) {
 	a.mu.Lock()
 	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok {

@@ -45,14 +45,15 @@ func RevealLabel(goos string) string {
 // tool's file_path may name a file elsewhere (a repository, a remote
 // host), which opening it here would mistake for a local one.
 var fileTools = map[string]bool{
-	tools.ViewToolName:        true,
-	tools.EditToolName:        true,
-	tools.MultiEditToolName:   true,
-	tools.WriteToolName:       true,
-	tools.DownloadToolName:    true,
-	tools.SymbolsToolName:     true,
-	tools.DiagnosticsToolName: true,
-	tools.RenameToolName:      true,
+	tools.ViewToolName:            true,
+	tools.EditToolName:            true,
+	tools.MultiEditToolName:       true,
+	tools.WriteToolName:           true,
+	tools.DownloadToolName:        true,
+	tools.SymbolsToolName:         true,
+	tools.DiagnosticsToolName:     true,
+	tools.RenameToolName:          true,
+	tools.ValidateMermaidToolName: true,
 }
 
 // toolFile is the file a tool drill-in's call names in its file_path

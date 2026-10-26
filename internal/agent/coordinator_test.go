@@ -1675,3 +1675,47 @@ func TestCallTopK(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// Not parallel: NewCoordinator reads MCP package state.
+func TestBuildAgentChecksDiagramsOnlyForTheOrchestratorWithDiagramFixOn(t *testing.T) {
+	const (
+		providerID = "openai-compat-test"
+		modelID    = "test-model"
+	)
+	off := false
+	tests := map[string]struct {
+		depth      int
+		diagramFix *bool
+		want       bool
+	}{
+		"orchestrator":                 {depth: 3, want: true},
+		"orchestrator with fix off":    {depth: 3, diagramFix: &off},
+		"subagent":                     {depth: 2},
+		"subagent with fix left unset": {depth: 1},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			env := testEnv(t)
+			cfg, err := config.Init(env.workingDir, "", false)
+			require.NoError(t, err)
+			cfg.Config().Providers.Set(providerID, config.ProviderConfig{
+				ID:     providerID,
+				Type:   openaicompat.Name,
+				Models: []catwalk.Model{{ID: modelID, ContextWindow: 10000, DefaultMaxTokens: 1000}},
+			})
+			cfg.Config().Models = map[config.SelectedModelType]config.SelectedModel{
+				config.SelectedModelTypeLarge: {Provider: providerID, Model: modelID},
+				config.SelectedModelTypeSmall: {Provider: providerID, Model: modelID},
+			}
+			cfg.Config().Options.TUI.DiagramFix = tc.diagramFix
+			coord, err := NewCoordinator(t.Context(), cfg, env.sessions, env.messages, env.permissions,
+				*env.filetracker, nil, nil, nil, nil, nil, nil, nil)
+			require.NoError(t, err)
+
+			built, err := coord.(*coordinator).buildAgent(t.Context(), config.AgentOrchestrator,
+				config.Agent{ID: config.AgentOrchestrator}, tc.depth, false)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, built.(*sessionAgent).checkDiagrams)
+		})
+	}
+}

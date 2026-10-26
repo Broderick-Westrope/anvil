@@ -54,6 +54,9 @@ type fileSnapshot struct {
 // the lifetime of the process (or workspace).
 type RuntimeOverrides struct {
 	YoloLevel YoloLevel
+	// Headless is set for runs with no chat to draw diagrams in, such as
+	// `anvil run`.
+	Headless bool
 	// Models records the model choices made in this instance, whether
 	// persisted or not. They are reapplied after a config reload so that a
 	// selection made here always outranks whatever the shared config file
@@ -208,7 +211,7 @@ func (s *ConfigStore) StartupSnapshot() (*Config, *TrustedBouncer, string) {
 }
 
 // DiagramsEnabled reports whether Mermaid fences render as diagrams, as
-// configured at startup. Turning it on or off needs a restart, so the UI
+// configured at startup, and never in a headless run. Turning it on or off needs a restart, so the UI
 // and the system prompt read this rather than the live config and never
 // disagree.
 func (s *ConfigStore) DiagramsEnabled() bool {
@@ -216,7 +219,23 @@ func (s *ConfigStore) DiagramsEnabled() bool {
 	if cfg == nil {
 		cfg = s.Config()
 	}
+	if s.Overrides().Headless {
+		return false
+	}
 	return cfg.Options == nil || cfg.Options.TUI.DiagramsEnabled()
+}
+
+// DiagramFixEnabled reports whether a reply's diagrams that don't render
+// get a fix turn, as configured at startup. It needs DiagramsEnabled.
+func (s *ConfigStore) DiagramFixEnabled() bool {
+	if !s.DiagramsEnabled() {
+		return false
+	}
+	cfg, _, _ := s.StartupSnapshot()
+	if cfg == nil {
+		cfg = s.Config()
+	}
+	return cfg.Options == nil || cfg.Options.TUI.DiagramFixEnabled()
 }
 
 // markAppliedLive records a change this process has already applied in the

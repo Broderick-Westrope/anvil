@@ -1069,6 +1069,11 @@
           "type": "boolean",
           "description": "Render Mermaid diagrams in assistant messages as images where the terminal supports it",
           "default": true
+        },
+        "diagram_fix": {
+          "type": "boolean",
+          "description": "When a reply's Mermaid diagrams don't render, ask the model for one more turn to fix them. Needs diagrams on",
+          "default": true
         }
       },
       "additionalProperties": false,
