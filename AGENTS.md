@@ -353,14 +353,18 @@ Terms with a specific meaning in this codebase are defined in
   `Inconclusive` problem, which `Report.Conclusive` drops. The
   `validate_mermaid` tool checks a diagram or a file's fences, reading
   files under view's rules (its permission prompt is view's, so a session
-  grant covers both); the system prompt's diagram line names it, only
-  when the agent has it, for unsure syntax and files. As a backstop for
+  grant covers both). The system prompt's diagram line warns against
+  keyword IDs and names the tool, only when the agent has it, for unsure
+  syntax and files. As a backstop for
   chat replies, when a top-level interactive turn ends with diagrams that
-  conclusively fail (`sessionAgent.diagramFix`, on when `DiagramsEnabled`,
-  checked within 2s), `runOwned` runs one best-effort fix turn in place,
+  conclusively fail (`sessionAgent.diagramFix`, on when
+  `ConfigStore.DiagramFixEnabled`: `options.tui.diagram_fix`, default on,
+  needing diagrams; checked within 2s), `runOwned` runs one best-effort fix turn in place,
   as `a.Run` under the same owner after setting up its notification, with
   a `diagram_fix` harness injection holding the failures. In place, Esc
-  cancels it; its failure is logged and the turn still succeeds. It's
+  cancels it; its failure is logged and the turn still succeeds, and the
+  finished notification fires once, after the fix (even when it was
+  cancelled). It's
   skipped for wakes (a fix would reset the wake budget), awaited runs (a
   workflow's `Turn` gets its own reply), and when anything is queued or
   holding behind the run (`admission.ownsWithNothingWaiting`). A turn that
