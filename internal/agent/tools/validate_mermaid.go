@@ -40,8 +40,8 @@ func NewValidateMermaidTool(permissions permission.Service, workingDir string, t
 			}
 			if params.Source != "" {
 				report, err := mermaid.CheckMarkdown(ctx, strings.TrimSpace(params.Source)+"\n")
-				if err == nil && report.Diagrams == 0 {
-					report, err = mermaid.CheckDiagram(ctx, withoutOpeningFence(params.Source))
+				if body, fenced := withoutOpeningFence(params.Source); err == nil && report.Diagrams == 0 && (fenced || !strings.Contains(body, "mermaid\n")) {
+					report, err = mermaid.CheckDiagram(ctx, body)
 				}
 				return reportResponse(report, err)
 			}
@@ -99,11 +99,11 @@ func reportResponse(report mermaid.Report, err error) (fantasy.ToolResponse, err
 	return fantasy.NewTextResponse(report.String()), nil
 }
 
-func withoutOpeningFence(source string) string {
+func withoutOpeningFence(source string) (string, bool) {
 	trimmed := strings.TrimLeft(source, " \t\r\n")
 	if !strings.HasPrefix(trimmed, "```") && !strings.HasPrefix(trimmed, "~~~") {
-		return source
+		return source, false
 	}
 	_, rest, _ := strings.Cut(trimmed, "\n")
-	return rest
+	return rest, true
 }

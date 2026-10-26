@@ -101,7 +101,7 @@ func problemFor(diagram int, d Segment, err error) Problem {
 		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		p.Inconclusive = true
 	case errors.As(err, &pe):
-		p.Message = pe.Message
+		p.Message = parseErrorLine.ReplaceAllString(pe.Message, "")
 		p.Inconclusive = pe.Code == pele.CodeInternal
 		if pe.Line > 0 {
 			lines := max(strings.Count(strings.TrimSuffix(d.Text, "\n"), "\n")+1, 1)
@@ -111,6 +111,8 @@ func problemFor(diagram int, d Segment, err error) Problem {
 	p.Hint = hintFor(p.Message)
 	return p
 }
+
+var parseErrorLine = regexp.MustCompile(`^Parse error on line \d+:\n`)
 
 var keywordAsActor = regexp.MustCompile(`Expecting [^\n]*'ACTOR'[^\n]*, got '([a-z_]+)'`)
 

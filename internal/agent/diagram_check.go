@@ -17,7 +17,7 @@ const replyCheckTimeout = 2 * time.Second
 
 const (
 	diagramFixText = "Some diagrams in your last reply don't render, so the chat shows them as plain code. " +
-		"Reply with only the corrected diagrams, each in its own mermaid fence. " +
+		"Reply with only the corrected diagrams, each in its own mermaid fence after one short line saying which diagram it replaces. " +
 		"Don't repeat the rest of the reply. Line numbers count from the start of your reply."
 	diagramFixCheckText = " Check them with validate_mermaid before replying."
 )

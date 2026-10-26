@@ -54,6 +54,10 @@ func TestValidateMermaid(t *testing.T) {
 			params: ValidateMermaidParams{Source: "~~~mermaid\n" + brokenSequence + "~~~"},
 			want:   []string{"Diagram 1, line 4:"},
 		},
+		"indented fence in source explains what's drawn": {
+			params: ValidateMermaidParams{Source: "- item\n\n    ```mermaid\n    flowchart LR\n    ```\n"},
+			want:   []string{"No mermaid diagrams found.", "outside lists"},
+		},
 		"trusted directory needs no permission": {
 			params:  ValidateMermaidParams{FilePath: "TRUSTED/doc.md"},
 			trusted: true,

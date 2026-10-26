@@ -32,7 +32,8 @@ func TestCheckMarkdown(t *testing.T) {
 
 	text := report.String()
 	require.Contains(t, text, "1 of 2 diagrams don't render")
-	require.Contains(t, text, "Diagram 2, line 14:")
+	require.Contains(t, text, "Diagram 2, line 14:\n    P->>Off: buys prescription A\n")
+	require.NotContains(t, text, "Parse error on line", "one line number per failure, counted in the content")
 	require.Contains(t, text, "Hint: ")
 }
 
@@ -61,7 +62,7 @@ func TestCheckDiagram(t *testing.T) {
 		"an error at the end of input stays on the last line": {
 			source:   "flowchart TD\n  A --> B(\n",
 			wantLine: 2,
-			wantMsg:  "Parse error",
+			wantMsg:  "Expecting",
 		},
 		"lines count front matter and comments": {
 			source:   "---\ntitle: Buying\n---\n%% one\n%% two\nsequenceDiagram\n    participant Off as offerings\n    A->>Off: buys\n",
