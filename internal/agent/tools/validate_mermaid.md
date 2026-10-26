@@ -1,9 +1,9 @@
-Check that Mermaid diagrams render, with the same renderer the chat draws them with. Use it before sending a reply with a diagram, and after writing or editing a diagram in a file.
+Check that Mermaid diagrams render, with the same renderer the chat draws them with. Use it when you're unsure of a diagram's syntax, and after writing or editing a diagram in a file.
 
 <usage>
 - Pass `source` with one diagram, or `file_path` to check every top-level mermaid fence in a markdown file (a `.mmd` or `.mermaid` file is checked as one diagram)
 - Returns whether each diagram renders, and for each one that doesn't, the line it fails on (in the file when `file_path` is given) and the parser's message
-- Fix every failure and check again before sending; a diagram that fails here shows as plain code in the chat and fails in other Mermaid renderers too
+- Fix every failure and check again; a diagram that fails here shows as plain code in the chat and fails in other Mermaid renderers too
 </usage>
 
 <common_failures>

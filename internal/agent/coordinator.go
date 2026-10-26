@@ -952,7 +952,10 @@ func (c *coordinator) buildPromptWithState(
 
 	// buildTools reports an invalid AllowedTools filter.
 	access, _ := newToolAccess(agentCfg, c.cfg.Config().Options)
-	opts = append(opts, prompt.WithViewToolAvailable(access.allowsTool(tools.ViewToolName)))
+	opts = append(opts,
+		prompt.WithViewToolAvailable(access.allowsTool(tools.ViewToolName)),
+		prompt.WithValidateMermaidAvailable(access.allowsTool(tools.ValidateMermaidToolName)),
+	)
 
 	if agentName == config.AgentOrchestrator {
 		// Build agents block and delegation workflow from parsed .md files.
