@@ -23,7 +23,7 @@ func (a *sessionAgent) beginAttempt(ctx context.Context, call SessionAgentCall) 
 	if call.state.acceptedUserID != "" {
 		return a.restoreAttempt(ctx, call.SessionID, call.state)
 	}
-	if !call.wake {
+	if !call.wake && !isDiagramFix(call) {
 		unlock := a.lockDispatch(call.SessionID)
 		a.wakeCounts.Del(call.SessionID)
 		a.wakeSuppressed.Del(call.SessionID)

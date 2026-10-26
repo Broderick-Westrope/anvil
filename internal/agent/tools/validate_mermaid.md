@@ -3,7 +3,7 @@ Check that Mermaid diagrams render, with the same renderer the chat draws them w
 <usage>
 - Pass `source` with one diagram, or `file_path` to check every top-level mermaid fence in a markdown file (a `.mmd` or `.mermaid` file is checked as one diagram)
 - Returns whether each diagram renders, and for each one that doesn't, the line it fails on (in the file when `file_path` is given) and the parser's message
-- Fix every failure and check again; a diagram that fails here shows as plain code in the chat and fails in other Mermaid renderers too
+- Fix every failure and check again; a diagram that fails here shows as plain code in the chat. The renderer is Pele, which follows Mermaid closely; a failure marked "couldn't check" (such as a type it doesn't draw yet) may still be valid Mermaid
 </usage>
 
 <common_failures>

@@ -27,9 +27,7 @@ func (a *sessionAgent) diagramFix(ctx context.Context, t *turn) (SessionAgentCal
 	if !a.checkDiagrams || t.shouldSummarize || call.wake || call.NonInteractive || call.Await || reply == nil || reply.FinishReason() != message.FinishReasonEndTurn {
 		return SessionAgentCall{}, false
 	}
-	if slices.ContainsFunc(call.Injections, func(inj message.InjectionContent) bool {
-		return inj.Kind == message.InjectionKindDiagramFix
-	}) {
+	if isDiagramFix(call) {
 		return SessionAgentCall{}, false
 	}
 	text := reply.Content().Text
@@ -44,6 +42,9 @@ func (a *sessionAgent) diagramFix(ctx context.Context, t *turn) (SessionAgentCal
 		return SessionAgentCall{}, false
 	}
 	report = report.Conclusive()
+	report.Problems = slices.DeleteFunc(report.Problems, func(p mermaid.Problem) bool {
+		return quotedByUser(call, p.Source)
+	})
 	if len(report.Problems) == 0 {
 		return SessionAgentCall{}, false
 	}
@@ -79,4 +80,23 @@ func (a *sessionAgent) runDiagramFix(ctx context.Context, t *turn, fix SessionAg
 	if _, err := a.Run(ctx, fix); err != nil && ctx.Err() == nil {
 		slog.Warn("Diagram fix turn failed", "session_id", fix.SessionID, "error", err)
 	}
+}
+
+func quotedByUser(call SessionAgentCall, source string) bool {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return false
+	}
+	if strings.Contains(call.Prompt, source) {
+		return true
+	}
+	return slices.ContainsFunc(call.Attachments, func(att message.Attachment) bool {
+		return strings.Contains(string(att.Content), source)
+	})
+}
+
+func isDiagramFix(call SessionAgentCall) bool {
+	return slices.ContainsFunc(call.Injections, func(inj message.InjectionContent) bool {
+		return inj.Kind == message.InjectionKindDiagramFix
+	})
 }

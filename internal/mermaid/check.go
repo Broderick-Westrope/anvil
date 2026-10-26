@@ -25,8 +25,11 @@ type Problem struct {
 	// Hint suggests a fix for a failure models often make, or is "".
 	Hint string
 	// Inconclusive is set when the check couldn't tell whether the diagram
-	// is valid: it timed out, was too large, or crashed the renderer.
+	// is valid Mermaid: it timed out, was too large, crashed the renderer,
+	// or is a type the renderer doesn't draw yet.
 	Inconclusive bool
+	// Source is the diagram's source.
+	Source string
 }
 
 // Report is the result of checking content for diagrams that don't render.
@@ -71,7 +74,7 @@ func check(ctx context.Context, diagrams []Segment) (Report, error) {
 	}
 	for i, d := range diagrams {
 		if ctx.Err() != nil {
-			report.Problems = append(report.Problems, Problem{Diagram: i + 1, Message: "Not checked: " + ctx.Err().Error(), Inconclusive: true})
+			report.Problems = append(report.Problems, Problem{Diagram: i + 1, Message: "Not checked: " + ctx.Err().Error(), Inconclusive: true, Source: d.Text})
 			continue
 		}
 		if err := render(ctx, renderer, d.Text); err != nil {
@@ -94,7 +97,7 @@ func render(ctx context.Context, renderer *raster.Renderer, source string) (err 
 var errRendererCrashed = errors.New("diagram renderer crashed")
 
 func problemFor(diagram int, d Segment, err error) Problem {
-	p := Problem{Diagram: diagram, Message: err.Error()}
+	p := Problem{Diagram: diagram, Message: err.Error(), Source: d.Text}
 	var pe *pele.Error
 	switch {
 	case errors.Is(err, raster.ErrRenderTimeout), errors.Is(err, raster.ErrSourceTooLarge), errors.Is(err, errRendererCrashed),
@@ -102,7 +105,8 @@ func problemFor(diagram int, d Segment, err error) Problem {
 		p.Inconclusive = true
 	case errors.As(err, &pe):
 		p.Message = parseErrorLine.ReplaceAllString(pe.Message, "")
-		p.Inconclusive = pe.Code == pele.CodeInternal
+		p.Inconclusive = pe.Code == pele.CodeInternal || pe.Code == pele.CodeLimit || pe.Code == pele.CodeCanceled ||
+			(pe.Code == pele.CodeUnsupportedDiagram && pe.Type != "")
 		if pe.Line > 0 {
 			lines := max(strings.Count(strings.TrimSuffix(d.Text, "\n"), "\n")+1, 1)
 			p.Line = d.Line + min(pe.Line, lines) - 1

@@ -365,10 +365,14 @@ Terms with a specific meaning in this codebase are defined in
   cancels it; its failure is logged and the turn still succeeds, and the
   finished notification fires once, after the fix (even when it was
   cancelled). It's
-  skipped for wakes (a fix would reset the wake budget), awaited runs (a
-  workflow's `Turn` gets its own reply), and when anything is queued or
-  holding behind the run (`admission.ownsWithNothingWaiting`). A turn that
-  starts from that injection isn't checked again, so it never loops.
+  skipped for wakes, awaited runs (a workflow's `Turn` gets its own
+  reply), diagrams the user's prompt or attachments quote, and when
+  anything is queued or holding behind the run
+  (`admission.ownsWithNothingWaiting`). A turn that starts from that
+  injection isn't checked again, so it never loops, and `beginAttempt`
+  leaves wake counts and Esc's wake suppression alone for it, since it
+  isn't the user acting. A type Pele doesn't draw is inconclusive: Pele
+  follows Mermaid closely but isn't it.
   `anvil run` sets `RuntimeOverrides.Headless`, which turns
   `DiagramsEnabled` off. Prompt changes edit the orchestrator cassettes in
   place (YAML escapes `'` as `''`).

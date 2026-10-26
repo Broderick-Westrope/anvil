@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -105,6 +106,7 @@ func TestReplyDiagramCheck(t *testing.T) {
 		await          bool
 		submitAwait    bool
 		queuePrompt    bool
+		prompt         string
 		holdDuringTurn bool
 		failStep       int
 		wantSteps      int
@@ -162,6 +164,12 @@ func TestReplyDiagramCheck(t *testing.T) {
 			wantSteps:     2,
 			wantFixes:     1,
 		},
+		"skipped for a diagram the user quoted": {
+			replies:       []string{brokenDiagramReply},
+			checkDiagrams: true,
+			prompt:        "why doesn't this render?\n\nsequenceDiagram\n    participant Off as offerings\n    A->>Off: buys\n",
+			wantSteps:     1,
+		},
 		"skipped when the user queued a prompt during the turn": {
 			replies:       []string{brokenDiagramReply, fixedDiagramReply},
 			checkDiagrams: true,
@@ -204,7 +212,7 @@ func TestReplyDiagramCheck(t *testing.T) {
 					}
 				}
 			}
-			call := SessionAgentCall{SessionID: sess.ID, Prompt: "draw it", NonInteractive: tc.nonInteractive, Await: tc.await}
+			call := SessionAgentCall{SessionID: sess.ID, Prompt: cmp.Or(tc.prompt, "draw it"), NonInteractive: tc.nonInteractive, Await: tc.await}
 			if tc.submitAwait {
 				sa := a.(*sessionAgent)
 				call.state = &runState{}
@@ -263,4 +271,39 @@ func TestReplyDiagramFixIsCancelledWithTheRun(t *testing.T) {
 	require.NoError(t, err, "the first reply succeeded; the fix is best-effort")
 	require.Equal(t, 2, model.steps())
 	require.False(t, a.IsSessionBusy(sess.ID))
+}
+
+func TestReplyDiagramFixLeavesWakeStateAlone(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Diagrams", t.TempDir())
+	require.NoError(t, err)
+	model := &replyModel{replies: []string{brokenDiagramReply, fixedDiagramReply}}
+	cfg := catwalk.Model{ContextWindow: 200000, DefaultMaxTokens: 10000}
+	a := NewSessionAgent(SessionAgentOptions{
+		LargeModel:    Model{Model: model, CatwalkCfg: cfg},
+		SmallModel:    Model{Model: &replyModel{replies: []string{"title"}}, CatwalkCfg: cfg},
+		SystemPrompt:  "system",
+		IsYolo:        true,
+		Sessions:      env.sessions,
+		Messages:      env.messages,
+		CheckDiagrams: true,
+	}).(*sessionAgent)
+	model.onStream = func(step int) {
+		if step == 0 {
+			a.wakeSuppressed.Set(sess.ID, true)
+			a.wakeCounts.Set(sess.ID, 2)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "draw it"})
+	require.NoError(t, err)
+	a.WaitBackgroundJobs()
+
+	require.Equal(t, 2, model.steps())
+	suppressed, _ := a.wakeSuppressed.Get(sess.ID)
+	require.True(t, suppressed, "a harness fix isn't the user acting")
+	require.Equal(t, 2, a.wakeCount(sess.ID))
 }
