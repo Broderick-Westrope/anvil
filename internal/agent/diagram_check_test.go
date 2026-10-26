@@ -25,13 +25,20 @@ type replyModel struct {
 	mu      sync.Mutex
 	replies []string
 	prompts [][]fantasy.Message
+	// onStream, when set, runs at the start of each step with its index.
+	onStream func(step int)
 }
 
 func (m *replyModel) Stream(_ context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
 	m.mu.Lock()
 	m.prompts = append(m.prompts, cloneFantasyMessages(call.Prompt))
-	reply := m.replies[min(len(m.prompts), len(m.replies))-1]
+	step := len(m.prompts) - 1
+	reply := m.replies[min(step, len(m.replies)-1)]
+	onStream := m.onStream
 	m.mu.Unlock()
+	if onStream != nil {
+		onStream(step)
+	}
 	return iter.Seq[fantasy.StreamPart](func(yield func(fantasy.StreamPart) bool) {
 		for _, part := range []fantasy.StreamPart{
 			{Type: fantasy.StreamPartTypeTextStart, ID: "text"},
@@ -67,6 +74,21 @@ func (m *replyModel) StreamObject(context.Context, fantasy.ObjectCall) (fantasy.
 func (m *replyModel) Provider() string { return "reply" }
 func (m *replyModel) Model() string    { return "reply" }
 
+func diagramFixes(t *testing.T, messages message.Service, sessionID string) int {
+	t.Helper()
+	msgs, err := messages.List(t.Context(), sessionID)
+	require.NoError(t, err)
+	var fixes int
+	for _, msg := range msgs {
+		for _, inj := range msg.Injections() {
+			if inj.Kind == message.InjectionKindDiagramFix {
+				fixes++
+			}
+		}
+	}
+	return fixes
+}
+
 func TestReplyDiagramCheck(t *testing.T) {
 	t.Parallel()
 
@@ -74,17 +96,22 @@ func TestReplyDiagramCheck(t *testing.T) {
 		replies        []string
 		checkDiagrams  bool
 		nonInteractive bool
+		await          bool
+		queuePrompt    bool
 		wantSteps      int
+		wantFixes      int
 	}{
 		"a broken diagram gets one fix turn": {
 			replies:       []string{brokenDiagramReply, fixedDiagramReply},
 			checkDiagrams: true,
 			wantSteps:     2,
+			wantFixes:     1,
 		},
 		"a fix that still fails isn't asked again": {
 			replies:       []string{brokenDiagramReply},
 			checkDiagrams: true,
 			wantSteps:     2,
+			wantFixes:     1,
 		},
 		"diagrams that render aren't fixed": {
 			replies:       []string{fixedDiagramReply},
@@ -100,6 +127,18 @@ func TestReplyDiagramCheck(t *testing.T) {
 			checkDiagrams:  true,
 			nonInteractive: true,
 			wantSteps:      1,
+		},
+		"off for awaited turns, which return their own reply": {
+			replies:       []string{brokenDiagramReply},
+			checkDiagrams: true,
+			await:         true,
+			wantSteps:     1,
+		},
+		"skipped when the user queued a prompt during the turn": {
+			replies:       []string{brokenDiagramReply, fixedDiagramReply},
+			checkDiagrams: true,
+			queuePrompt:   true,
+			wantSteps:     2,
 		},
 	}
 	for name, tc := range tests {
@@ -122,12 +161,21 @@ func TestReplyDiagramCheck(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "draw it", NonInteractive: tc.nonInteractive, Await: true})
+			if tc.queuePrompt {
+				model.onStream = func(step int) {
+					if step == 0 {
+						_, err := a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "and another"})
+						require.NoError(t, err)
+					}
+				}
+			}
+			_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "draw it", NonInteractive: tc.nonInteractive, Await: tc.await})
 			require.NoError(t, err)
 			a.(*sessionAgent).WaitBackgroundJobs()
 
 			require.Equal(t, tc.wantSteps, model.steps())
-			if tc.wantSteps < 2 {
+			require.Equal(t, tc.wantFixes, diagramFixes(t, env.messages, sess.ID))
+			if tc.wantFixes == 0 {
 				return
 			}
 			last := model.prompts[1]
@@ -135,18 +183,6 @@ func TestReplyDiagramCheck(t *testing.T) {
 			require.Contains(t, fixPrompt, `<injected_message source="harness">`)
 			require.Contains(t, fixPrompt, "Diagram 1, line 6:")
 			require.Contains(t, fixPrompt, "got 'off'")
-
-			msgs, err := env.messages.List(t.Context(), sess.ID)
-			require.NoError(t, err)
-			var fixes int
-			for _, msg := range msgs {
-				for _, inj := range msg.Injections() {
-					if inj.Kind == message.InjectionKindDiagramFix {
-						fixes++
-					}
-				}
-			}
-			require.Equal(t, 1, fixes)
 		})
 	}
 }

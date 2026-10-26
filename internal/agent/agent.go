@@ -421,9 +421,8 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		if err := a.summarizeAndResume(ctx, call, len(t.assistant.ToolCalls()) > 0); err != nil {
 			return nil, err
 		}
-	} else {
-		a.checkReplyDiagrams(ctx, call, t.assistant)
 	}
+	fixQueued := !t.shouldSummarize && a.checkReplyDiagrams(ctx, call, t.assistant)
 
 	// Retitle after the first reply, except in non-interactive (task)
 	// sub-sessions.
@@ -433,7 +432,7 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 
 	// Notify when the turn finishes, except in nested and non-interactive
 	// sessions.
-	if !call.NonInteractive && a.notify != nil {
+	if !call.NonInteractive && !fixQueued && a.notify != nil {
 		if err := a.notifyWhenFinished(ctx, call.SessionID, t.sessionTitle); err != nil {
 			return nil, err
 		}

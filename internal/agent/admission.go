@@ -219,6 +219,26 @@ func (a *admission) continueWith(ctx context.Context, id string, job submission)
 	a.queues[id] = append([]submission{job}, a.queues[id]...)
 }
 
+// followUpIfIdle queues job to run right after the owner's work, as silent
+// work, but only when nothing else is queued for the session and the
+// owner's submission isn't awaited: queued prompts mean the user has moved
+// on, and an awaited submitter must get its own result. It reports whether
+// job was queued.
+func (a *admission) followUpIfIdle(ctx context.Context, id string, job submission) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if ctx.Err() != nil || len(a.queues[id]) > 0 {
+		return false
+	}
+	owner, ok := ctx.Value(ownerKey{}).(*submissionOwner)
+	if !ok || owner == nil || owner.sessionID != id || owner.done != nil {
+		return false
+	}
+	job.silent = true
+	a.queues[id] = append(a.queues[id], job)
+	return true
+}
+
 func (a *admission) submit(ctx context.Context, id string, job submission) (*fantasy.AgentResult, error) {
 	a.mu.Lock()
 	if owner, ok := ctx.Value(ownerKey{}).(*submissionOwner); ok {
