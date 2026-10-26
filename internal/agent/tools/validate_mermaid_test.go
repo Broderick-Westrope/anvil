@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,4 +135,62 @@ func TestValidateMermaidOutsideWorkingDirAsksToRead(t *testing.T) {
 	require.Len(t, perms.requests, 1)
 	require.Equal(t, "read", perms.requests[0].Action)
 	require.Equal(t, path, perms.requests[0].Path)
+}
+
+func TestValidateMermaidOutsideWorkingDirDenied(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "doc.md")
+	require.NoError(t, os.WriteFile(path, []byte("```mermaid\nflowchart LR\n  A --> B\n```\n"), 0o644))
+	perms := &mockViewPermissionService{
+		Broker: pubsub.NewBroker[permission.PermissionRequest](),
+		requestFunc: func(context.Context, permission.CreatePermissionRequest) (permission.RequestResult, error) {
+			return permission.RequestResult{Reason: "not today"}, nil
+		},
+	}
+
+	resp := runValidateMermaid(t, NewValidateMermaidTool(perms, t.TempDir(), nil), ValidateMermaidParams{FilePath: path})
+
+	require.True(t, resp.IsError)
+	require.True(t, resp.StopTurn)
+	require.Equal(t, "Permission denied: not today", resp.Content)
+}
+
+func TestValidateMermaidFilesItWontRead(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		setup func(dir string) string
+		want  string
+	}{
+		"a directory": {
+			setup: func(dir string) string { return dir },
+			want:  "Path is a directory, not a file: ",
+		},
+		"a file over the size limit": {
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "big.md")
+				require.NoError(t, os.WriteFile(path, make([]byte, maxValidateFileSize+1), 0o644))
+				return path
+			},
+			want: fmt.Sprintf("File is too large (%d bytes). Maximum size is %d bytes.", maxValidateFileSize+1, maxValidateFileSize),
+		},
+		"a file at the size limit is read": {
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "edge.md")
+				require.NoError(t, os.WriteFile(path, make([]byte, maxValidateFileSize), 0o644))
+				return path
+			},
+			want: "No mermaid diagrams found.",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			perms := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+			resp := runValidateMermaid(t, NewValidateMermaidTool(perms, dir, nil), ValidateMermaidParams{FilePath: tc.setup(dir)})
+			require.Contains(t, resp.Content, tc.want)
+		})
+	}
 }

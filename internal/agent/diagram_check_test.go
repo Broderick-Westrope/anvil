@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/stretchr/testify/require"
 )
@@ -306,4 +309,86 @@ func TestReplyDiagramFixLeavesWakeStateAlone(t *testing.T) {
 	suppressed, _ := a.wakeSuppressed.Get(sess.ID)
 	require.True(t, suppressed, "a harness fix isn't the user acting")
 	require.Equal(t, 2, a.wakeCount(sess.ID))
+}
+
+func newDiagramFixAgent(env fakeEnv, model *replyModel, agentTools ...fantasy.AgentTool) *sessionAgent {
+	cfg := catwalk.Model{ContextWindow: 200000, DefaultMaxTokens: 10000}
+	return NewSessionAgent(SessionAgentOptions{
+		LargeModel:    Model{Model: model, CatwalkCfg: cfg},
+		SmallModel:    Model{Model: &replyModel{replies: []string{"title"}}, CatwalkCfg: cfg},
+		SystemPrompt:  "system",
+		IsYolo:        true,
+		Sessions:      env.sessions,
+		Messages:      env.messages,
+		Tools:         agentTools,
+		CheckDiagrams: true,
+	}).(*sessionAgent)
+}
+
+func TestReplyDiagramFixNamesValidateMermaidOnlyWhenTheAgentHasIt(t *testing.T) {
+	t.Parallel()
+	for _, hasTool := range []bool{false, true} {
+		t.Run(fmt.Sprintf("has tool=%t", hasTool), func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t)
+			sess, err := env.sessions.Create(t.Context(), "Diagrams", t.TempDir())
+			require.NoError(t, err)
+			model := &replyModel{replies: []string{brokenDiagramReply, fixedDiagramReply}}
+			var agentTools []fantasy.AgentTool
+			if hasTool {
+				agentTools = append(agentTools, stepTool(tools.ValidateMermaidToolName, func(context.Context, int) fantasy.ToolResponse {
+					return fantasy.NewTextResponse("ok")
+				}))
+			}
+			a := newDiagramFixAgent(env, model, agentTools...)
+
+			_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "draw it"})
+			require.NoError(t, err)
+			a.WaitBackgroundJobs()
+
+			require.Equal(t, 2, model.steps())
+			last := model.prompts[1]
+			fixPrompt := textOf(last[len(last)-1])
+			require.Equal(t, hasTool, strings.Contains(fixPrompt, "Check them with validate_mermaid before replying."))
+		})
+	}
+}
+
+// Not parallel: it captures the default logger.
+func TestReplyDiagramFixLogsAFailureButNotACancel(t *testing.T) {
+	tests := map[string]struct {
+		cancelFix bool
+		wantLog   bool
+	}{
+		"a failed fix is logged":       {wantLog: true},
+		"a cancelled fix isn't logged": {cancelFix: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			logs := &lockedBuffer{}
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			env := testEnv(t)
+			sess, err := env.sessions.Create(t.Context(), "Diagrams", t.TempDir())
+			require.NoError(t, err)
+			model := &replyModel{replies: []string{brokenDiagramReply}, failStep: 2}
+			a := newDiagramFixAgent(env, model)
+			if tc.cancelFix {
+				model.onStream = func(step int) {
+					if step == 1 {
+						a.Cancel(sess.ID)
+					}
+				}
+			}
+
+			_, err = a.Run(t.Context(), SessionAgentCall{SessionID: sess.ID, Prompt: "draw it"})
+			require.NoError(t, err)
+			a.WaitBackgroundJobs()
+
+			require.Equal(t, 2, model.steps())
+			require.Equal(t, tc.wantLog, strings.Contains(logs.String(), "Diagram fix turn failed"))
+		})
+	}
 }
