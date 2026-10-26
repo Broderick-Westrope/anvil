@@ -1123,6 +1123,7 @@ func allToolNames() []string {
 		"ls",
 		"sourcegraph",
 		"todos",
+		"validate_mermaid",
 		"view",
 		"write",
 		"list_mcp_resources",
@@ -1144,6 +1145,7 @@ func readOnlyTools() []string {
 		"lsp_symbols",
 		"lsp_call_hierarchy",
 		"sourcegraph",
+		"validate_mermaid",
 	}
 }
 

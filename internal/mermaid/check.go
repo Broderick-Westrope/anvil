@@ -49,9 +49,6 @@ func CheckDiagram(ctx context.Context, source string) (Report, error) {
 	return check(ctx, []Segment{{Text: source, Mermaid: true, Line: 1}})
 }
 
-// check renders with the renderer the chat uses, so a diagram passes
-// exactly when the chat can draw it. A renderer is cheap to make (under a
-// millisecond and about 50 KB), so none is kept between calls.
 func check(ctx context.Context, diagrams []Segment) (Report, error) {
 	report := Report{Diagrams: len(diagrams)}
 	if len(diagrams) == 0 {
@@ -80,8 +77,6 @@ func problemFor(diagram int, d Segment, err error) Problem {
 	if errors.As(err, &pe) {
 		p.Message = pe.Message
 		if pe.Line > 0 {
-			// An error at the end of input can be reported on a line past
-			// the last one, which in a file would point outside the fence.
 			lines := max(strings.Count(strings.TrimSuffix(d.Text, "\n"), "\n")+1, 1)
 			p.Line = d.Line + min(pe.Line, lines) - 1
 		}
@@ -90,9 +85,6 @@ func problemFor(diagram int, d Segment, err error) Problem {
 	return p
 }
 
-// keywordAsActor matches a sequence diagram parse error where a keyword
-// such as "end", "off" or "opt" stands where a participant ID should be.
-// The lexer ignores case, so an ID like "Off" or "End" hits it too.
 var keywordAsActor = regexp.MustCompile(`Expecting [^\n]*'ACTOR'[^\n]*, got '([a-z_]+)'`)
 
 func hintFor(message string) string {
@@ -118,7 +110,11 @@ func (r Report) String() string {
 		return fmt.Sprintf("All %d diagrams render.", r.Diagrams)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d of %d diagrams don't render:", len(r.Problems), r.Diagrams)
+	if r.Diagrams == 1 {
+		b.WriteString("The diagram doesn't render:")
+	} else {
+		fmt.Fprintf(&b, "%d of %d diagrams don't render:", len(r.Problems), r.Diagrams)
+	}
 	for _, p := range r.Problems {
 		b.WriteString("\n\n")
 		fmt.Fprintf(&b, "Diagram %d", p.Diagram)
