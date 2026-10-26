@@ -44,7 +44,7 @@ func (r Report) Conclusive() Report {
 
 // CheckMarkdown renders every diagram the chat would draw from content: the
 // top-level mermaid fences that Split finds. It returns an error only when
-// the renderer can't load.
+// the renderer can't load or ctx ends.
 func CheckMarkdown(ctx context.Context, content string) (Report, error) {
 	var diagrams []Segment
 	for _, s := range Split(content) {
@@ -147,6 +147,9 @@ func (r Report) String() string {
 		fmt.Fprintf(&b, "Diagram %d", p.Diagram)
 		if p.Line > 0 {
 			fmt.Fprintf(&b, ", line %d", p.Line)
+		}
+		if p.Inconclusive {
+			b.WriteString(" (couldn't check, so it may be fine)")
 		}
 		b.WriteString(":\n")
 		b.WriteString(p.Message)
