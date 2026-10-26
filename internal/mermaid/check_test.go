@@ -114,7 +114,6 @@ func TestReportString(t *testing.T) {
 	require.Equal(t, "All 3 diagrams render.", mermaid.Report{Diagrams: 3}.String())
 }
 
-
 func TestCheckMarkdownWhenTheDeadlineHasPassed(t *testing.T) {
 	t.Parallel()
 
