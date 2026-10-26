@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"sync"
@@ -27,6 +28,8 @@ type replyModel struct {
 	prompts [][]fantasy.Message
 	// onStream, when set, runs at the start of each step with its index.
 	onStream func(step int)
+	// failStep, when positive, is the 1-based step that fails.
+	failStep int
 }
 
 func (m *replyModel) Stream(_ context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
@@ -38,6 +41,9 @@ func (m *replyModel) Stream(_ context.Context, call fantasy.Call) (fantasy.Strea
 	m.mu.Unlock()
 	if onStream != nil {
 		onStream(step)
+	}
+	if m.failStep == step+1 {
+		return nil, errors.New("provider down")
 	}
 	return iter.Seq[fantasy.StreamPart](func(yield func(fantasy.StreamPart) bool) {
 		for _, part := range []fantasy.StreamPart{
@@ -99,6 +105,8 @@ func TestReplyDiagramCheck(t *testing.T) {
 		await          bool
 		submitAwait    bool
 		queuePrompt    bool
+		holdDuringTurn bool
+		failStep       int
 		wantSteps      int
 		wantFixes      int
 	}{
@@ -141,6 +149,19 @@ func TestReplyDiagramCheck(t *testing.T) {
 			submitAwait:   true,
 			wantSteps:     1,
 		},
+		"skipped when a hold waits for the turn": {
+			replies:        []string{brokenDiagramReply},
+			checkDiagrams:  true,
+			holdDuringTurn: true,
+			wantSteps:      1,
+		},
+		"a failed fix leaves the turn's success alone": {
+			replies:       []string{brokenDiagramReply},
+			checkDiagrams: true,
+			failStep:      2,
+			wantSteps:     2,
+			wantFixes:     1,
+		},
 		"skipped when the user queued a prompt during the turn": {
 			replies:       []string{brokenDiagramReply, fixedDiagramReply},
 			checkDiagrams: true,
@@ -154,7 +175,7 @@ func TestReplyDiagramCheck(t *testing.T) {
 			env := testEnv(t)
 			sess, err := env.sessions.Create(t.Context(), "Diagrams", t.TempDir())
 			require.NoError(t, err)
-			model := &replyModel{replies: tc.replies}
+			model := &replyModel{replies: tc.replies, failStep: tc.failStep}
 			small := &replyModel{replies: []string{"title"}}
 			a := NewSessionAgent(SessionAgentOptions{
 				LargeModel:    Model{Model: model, CatwalkCfg: catwalk.Model{ContextWindow: 200000, DefaultMaxTokens: 10000}},
@@ -168,6 +189,13 @@ func TestReplyDiagramCheck(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
+			if tc.holdDuringTurn {
+				model.onStream = func(step int) {
+					if step == 0 {
+						t.Cleanup(a.(*sessionAgent).admission.reserve([]string{sess.ID}))
+					}
+				}
+			}
 			if tc.queuePrompt {
 				model.onStream = func(step int) {
 					if step == 0 {
@@ -232,7 +260,7 @@ func TestReplyDiagramFixIsCancelledWithTheRun(t *testing.T) {
 	_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "draw it"})
 	a.(*sessionAgent).WaitBackgroundJobs()
 
-	require.Error(t, err)
+	require.NoError(t, err, "the first reply succeeded; the fix is best-effort")
 	require.Equal(t, 2, model.steps())
 	require.False(t, a.IsSessionBusy(sess.ID))
 }

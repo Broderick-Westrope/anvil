@@ -349,23 +349,25 @@ Terms with a specific meaning in this codebase are defined in
   (`mermaid.Split`, which the chat splits messages with) and whether they
   lay out (`CheckMarkdown`, `CheckDiagram`, with the chat's pele-go
   renderer; rasterizing can still fail after a pass). A timeout, an
-  oversized source or a renderer crash is an `Inconclusive` problem, which
-  `Report.Conclusive` drops. The `validate_mermaid` tool checks a diagram
-  or a file's fences, reading files under view's rules (its permission
-  prompt is view's, so a session grant covers both); the system prompt's
-  diagram line points the model at it for unsure syntax and files. As a
-  backstop for chat replies, when a top-level interactive turn ends with
-  diagrams that conclusively fail (`sessionAgent.diagramFix`, on when
-  `DiagramsEnabled`, checked within 2s), `runOwned` runs one fix turn in
-  place, as `a.Run` under the same owner, with a `diagram_fix` harness
-  injection holding the failures. In place, it's part of the same run:
-  Esc cancels it, holds wait for it, it notifies once, and the
-  coordinator's transient resume covers it. It runs only when the run
-  isn't awaited (a workflow's `Turn` gets its own reply) and nothing is
-  queued behind it (a queued prompt means the user moved on), which
-  `admission.ownsWithNothingQueued` checks. A turn that starts from that
-  injection isn't checked again, so it never loops. Prompt changes edit
-  the orchestrator cassettes in place (YAML escapes `'` as `''`).
+  oversized source, a renderer crash or a diagram left when ctx ends is an
+  `Inconclusive` problem, which `Report.Conclusive` drops. The
+  `validate_mermaid` tool checks a diagram or a file's fences, reading
+  files under view's rules (its permission prompt is view's, so a session
+  grant covers both); the system prompt's diagram line names it, only
+  when the agent has it, for unsure syntax and files. As a backstop for
+  chat replies, when a top-level interactive turn ends with diagrams that
+  conclusively fail (`sessionAgent.diagramFix`, on when `DiagramsEnabled`,
+  checked within 2s), `runOwned` runs one best-effort fix turn in place,
+  as `a.Run` under the same owner after setting up its notification, with
+  a `diagram_fix` harness injection holding the failures. In place, Esc
+  cancels it; its failure is logged and the turn still succeeds. It's
+  skipped for wakes (a fix would reset the wake budget), awaited runs (a
+  workflow's `Turn` gets its own reply), and when anything is queued or
+  holding behind the run (`admission.ownsWithNothingWaiting`). A turn that
+  starts from that injection isn't checked again, so it never loops.
+  `anvil run` sets `RuntimeOverrides.Headless`, which turns
+  `DiagramsEnabled` off. Prompt changes edit the orchestrator cassettes in
+  place (YAML escapes `'` as `''`).
 - **Tool images**: a tool result carrying image data (`view`, MCP) is
   drawn as the Output item of its tool drill-in
   (`toolDetailOutputItem`, `internal/ui/chat/tool_image.go`), under any

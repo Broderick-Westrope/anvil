@@ -429,10 +429,6 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		a.retitleFromFirstReply(ctx, call.SessionID, t.currentLeaf())
 	}
 
-	if fix, ok := a.diagramFix(ctx, t); ok {
-		return a.runDiagramFix(ctx, t, fix)
-	}
-
 	// Notify when the turn finishes, except in nested and non-interactive
 	// sessions.
 	if !call.NonInteractive && a.notify != nil {
@@ -442,6 +438,9 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 	}
 
 	a.reportIdleWhenDone(ctx, call.SessionID)
+	if fix, ok := a.diagramFix(ctx, t); ok {
+		a.runDiagramFix(ctx, t, fix)
+	}
 	return result, err
 }
 
