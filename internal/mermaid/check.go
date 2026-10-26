@@ -44,7 +44,7 @@ func (r Report) Conclusive() Report {
 
 // CheckMarkdown renders every diagram the chat would draw from content: the
 // top-level mermaid fences that Split finds. It returns an error only when
-// the renderer can't load or ctx ends.
+// the renderer can't load; diagrams left when ctx ends are inconclusive.
 func CheckMarkdown(ctx context.Context, content string) (Report, error) {
 	var diagrams []Segment
 	for _, s := range Split(content) {
@@ -70,14 +70,13 @@ func check(ctx context.Context, diagrams []Segment) (Report, error) {
 		return Report{}, fmt.Errorf("load diagram renderer: %w", err)
 	}
 	for i, d := range diagrams {
-		err := render(ctx, renderer, d.Text)
-		if err == nil {
+		if ctx.Err() != nil {
+			report.Problems = append(report.Problems, Problem{Diagram: i + 1, Message: "Not checked: " + ctx.Err().Error(), Inconclusive: true})
 			continue
 		}
-		if ctx.Err() != nil {
-			return Report{}, ctx.Err()
+		if err := render(ctx, renderer, d.Text); err != nil {
+			report.Problems = append(report.Problems, problemFor(i+1, d, err))
 		}
-		report.Problems = append(report.Problems, problemFor(i+1, d, err))
 	}
 	return report, nil
 }
@@ -98,7 +97,8 @@ func problemFor(diagram int, d Segment, err error) Problem {
 	p := Problem{Diagram: diagram, Message: err.Error()}
 	var pe *pele.Error
 	switch {
-	case errors.Is(err, raster.ErrRenderTimeout), errors.Is(err, raster.ErrSourceTooLarge), errors.Is(err, errRendererCrashed):
+	case errors.Is(err, raster.ErrRenderTimeout), errors.Is(err, raster.ErrSourceTooLarge), errors.Is(err, errRendererCrashed),
+		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		p.Inconclusive = true
 	case errors.As(err, &pe):
 		p.Message = pe.Message

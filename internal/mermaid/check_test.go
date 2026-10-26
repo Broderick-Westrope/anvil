@@ -1,6 +1,7 @@
 package mermaid_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -105,4 +106,16 @@ func TestReportString(t *testing.T) {
 
 	require.Contains(t, mermaid.Report{}.String(), "No mermaid diagrams found")
 	require.Equal(t, "All 3 diagrams render.", mermaid.Report{Diagrams: 3}.String())
+}
+
+func TestCheckMarkdownMarksDiagramsLeftAtTheDeadlineInconclusive(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	report, err := mermaid.CheckMarkdown(ctx, "```mermaid\nflowchart LR\n  A --> B\n```\n")
+	require.NoError(t, err)
+	require.Len(t, report.Problems, 1)
+	require.True(t, report.Problems[0].Inconclusive)
+	require.Empty(t, report.Conclusive().Problems)
 }
