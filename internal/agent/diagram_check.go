@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/fantasy"
 	"github.com/Broderick-Westrope/anvil/internal/mermaid"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 )
@@ -17,8 +18,9 @@ const diagramFixText = "Some diagrams in your last reply don't render, so the ch
 	"Reply with only the corrected diagrams, each in its own mermaid fence, and check them with validate_mermaid first. " +
 	"Don't repeat the rest of the reply. Line numbers count from the start of your reply.\n\n"
 
-func (a *sessionAgent) diagramFix(ctx context.Context, call SessionAgentCall, reply *message.Message) (SessionAgentCall, bool) {
-	if !a.checkDiagrams || call.NonInteractive || call.Await || reply == nil || reply.FinishReason() != message.FinishReasonEndTurn {
+func (a *sessionAgent) diagramFix(ctx context.Context, t *turn) (SessionAgentCall, bool) {
+	call, reply := t.call, t.assistant
+	if !a.checkDiagrams || t.shouldSummarize || call.NonInteractive || call.Await || reply == nil || reply.FinishReason() != message.FinishReasonEndTurn {
 		return SessionAgentCall{}, false
 	}
 	if slices.ContainsFunc(call.Injections, func(inj message.InjectionContent) bool {
@@ -52,4 +54,12 @@ func (a *sessionAgent) diagramFix(ctx context.Context, call SessionAgentCall, re
 		Text:   diagramFixText + report.String(),
 	}}
 	return fix, a.admission.ownsWithNothingQueued(ctx, call.SessionID)
+}
+
+func (a *sessionAgent) runDiagramFix(ctx context.Context, t *turn, fix SessionAgentCall) (*fantasy.AgentResult, error) {
+	t.endStep()
+	if err := a.messages.FlushAll(t.persistCtx); err != nil {
+		return nil, localPersistence(t.persistCtx, err)
+	}
+	return a.Run(ctx, fix)
 }

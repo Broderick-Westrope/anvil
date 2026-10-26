@@ -429,14 +429,8 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		a.retitleFromFirstReply(ctx, call.SessionID, t.currentLeaf())
 	}
 
-	if !t.shouldSummarize {
-		if fix, ok := a.diagramFix(ctx, call, t.assistant); ok {
-			t.endStep()
-			if err := a.messages.FlushAll(t.persistCtx); err != nil {
-				return nil, localPersistence(t.persistCtx, err)
-			}
-			return a.Run(ctx, fix)
-		}
+	if fix, ok := a.diagramFix(ctx, t); ok {
+		return a.runDiagramFix(ctx, t, fix)
 	}
 
 	// Notify when the turn finishes, except in nested and non-interactive
