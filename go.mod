@@ -12,6 +12,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	charm.land/log/v2 v2.0.1
 	charm.land/x/vcr v0.1.1
+	github.com/Broderick-Westrope/pele-go v0.1.0
 	github.com/Broderick-Westrope/pele-go/raster v0.1.0
 	github.com/Broderick-Westrope/wtp/v3 v3.3.0
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
@@ -86,7 +87,6 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
-	github.com/Broderick-Westrope/pele-go v0.1.0 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.68.0 // indirect
