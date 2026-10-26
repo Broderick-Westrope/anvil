@@ -1005,6 +1005,31 @@ func TestDiagramsEnabledIsOffWhenHeadless(t *testing.T) {
 	require.False(t, store.DiagramsEnabled())
 }
 
+func TestDiagramFixEnabled(t *testing.T) {
+	t.Parallel()
+
+	off, on := false, true
+	tests := map[string]struct {
+		tui      *TUIOptions
+		headless bool
+		want     bool
+	}{
+		"unset means on":    {tui: &TUIOptions{}, want: true},
+		"off":               {tui: &TUIOptions{DiagramFix: &off}, want: false},
+		"needs diagrams":    {tui: &TUIOptions{Diagrams: &off, DiagramFix: &on}, want: false},
+		"off when headless": {tui: &TUIOptions{DiagramFix: &on}, headless: true, want: false},
+		"no tui options":    {want: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store := testStore(&Config{Options: &Options{TUI: tc.tui}})
+			store.Overrides().Headless = tc.headless
+			require.Equal(t, tc.want, store.DiagramFixEnabled())
+		})
+	}
+}
+
 func TestStartupSnapshot_UnconfiguredStore(t *testing.T) {
 	t.Parallel()
 

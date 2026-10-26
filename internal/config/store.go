@@ -225,6 +225,19 @@ func (s *ConfigStore) DiagramsEnabled() bool {
 	return cfg.Options == nil || cfg.Options.TUI.DiagramsEnabled()
 }
 
+// DiagramFixEnabled reports whether a reply's diagrams that don't render
+// get a fix turn, as configured at startup. It needs DiagramsEnabled.
+func (s *ConfigStore) DiagramFixEnabled() bool {
+	if !s.DiagramsEnabled() {
+		return false
+	}
+	cfg, _, _ := s.StartupSnapshot()
+	if cfg == nil {
+		cfg = s.Config()
+	}
+	return cfg.Options == nil || cfg.Options.TUI.DiagramFixEnabled()
+}
+
 // markAppliedLive records a change this process has already applied in the
 // startup snapshot, so RestartRequired doesn't report it.
 func (s *ConfigStore) markAppliedLive(apply func(*Config)) {

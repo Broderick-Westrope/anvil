@@ -376,12 +376,19 @@ type TUIOptions struct {
 	Transparent *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
 	Mouse       *bool       `json:"mouse,omitempty" jsonschema:"description=Enable terminal mouse capture for selection\\, clicks\\, and scrolling in the TUI. Disable to let the terminal emulator or tmux handle text selection and copy/paste,default=true"`
 	Diagrams    *bool       `json:"diagrams,omitempty" jsonschema:"description=Render Mermaid diagrams in assistant messages as images where the terminal supports it,default=true"`
+	DiagramFix  *bool       `json:"diagram_fix,omitempty" jsonschema:"description=When a reply's Mermaid diagrams don't render\\, ask the model for one more turn to fix them. Needs diagrams on,default=true"`
 }
 
 // DiagramsEnabled reports whether Mermaid fences render as diagrams. Unset
 // means on.
 func (o *TUIOptions) DiagramsEnabled() bool {
 	return o == nil || o.Diagrams == nil || *o.Diagrams
+}
+
+// DiagramFixEnabled reports whether a reply's diagrams that don't render
+// get a fix turn. Unset means on.
+func (o *TUIOptions) DiagramFixEnabled() bool {
+	return o == nil || o.DiagramFix == nil || *o.DiagramFix
 }
 
 // Completions defines options for the completions UI.
