@@ -422,7 +422,6 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 			return nil, err
 		}
 	}
-	fixQueued := !t.shouldSummarize && a.checkReplyDiagrams(ctx, call, t.assistant)
 
 	// Retitle after the first reply, except in non-interactive (task)
 	// sub-sessions.
@@ -430,9 +429,19 @@ func (a *sessionAgent) runOwned(ctx context.Context, call SessionAgentCall) (*fa
 		a.retitleFromFirstReply(ctx, call.SessionID, t.currentLeaf())
 	}
 
+	if !t.shouldSummarize {
+		if fix, ok := a.diagramFix(ctx, call, t.assistant); ok {
+			t.endStep()
+			if err := a.messages.FlushAll(t.persistCtx); err != nil {
+				return nil, localPersistence(t.persistCtx, err)
+			}
+			return a.Run(ctx, fix)
+		}
+	}
+
 	// Notify when the turn finishes, except in nested and non-interactive
 	// sessions.
-	if !call.NonInteractive && !fixQueued && a.notify != nil {
+	if !call.NonInteractive && a.notify != nil {
 		if err := a.notifyWhenFinished(ctx, call.SessionID, t.sessionTitle); err != nil {
 			return nil, err
 		}

@@ -97,6 +97,7 @@ func TestReplyDiagramCheck(t *testing.T) {
 		checkDiagrams  bool
 		nonInteractive bool
 		await          bool
+		submitAwait    bool
 		queuePrompt    bool
 		wantSteps      int
 		wantFixes      int
@@ -134,6 +135,12 @@ func TestReplyDiagramCheck(t *testing.T) {
 			await:         true,
 			wantSteps:     1,
 		},
+		"off for awaited submissions, as a workflow's RunTurn makes": {
+			replies:       []string{brokenDiagramReply},
+			checkDiagrams: true,
+			submitAwait:   true,
+			wantSteps:     1,
+		},
 		"skipped when the user queued a prompt during the turn": {
 			replies:       []string{brokenDiagramReply, fixedDiagramReply},
 			checkDiagrams: true,
@@ -169,8 +176,19 @@ func TestReplyDiagramCheck(t *testing.T) {
 					}
 				}
 			}
-			_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "draw it", NonInteractive: tc.nonInteractive, Await: tc.await})
-			require.NoError(t, err)
+			call := SessionAgentCall{SessionID: sess.ID, Prompt: "draw it", NonInteractive: tc.nonInteractive, Await: tc.await}
+			if tc.submitAwait {
+				sa := a.(*sessionAgent)
+				call.state = &runState{}
+				result, err := sa.admission.submitAwait(ctx, sess.ID, submission{prompt: call.Prompt, run: func(ctx context.Context) (*fantasy.AgentResult, error) {
+					return sa.runOwned(ctx, call)
+				}})
+				require.NoError(t, err)
+				require.Contains(t, result.Response.Content.Text(), "participant Off", "the submitter gets its own reply")
+			} else {
+				_, err = a.Run(ctx, call)
+				require.NoError(t, err)
+			}
 			a.(*sessionAgent).WaitBackgroundJobs()
 
 			require.Equal(t, tc.wantSteps, model.steps())
@@ -185,4 +203,36 @@ func TestReplyDiagramCheck(t *testing.T) {
 			require.Contains(t, fixPrompt, "got 'off'")
 		})
 	}
+}
+
+func TestReplyDiagramFixIsCancelledWithTheRun(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "Diagrams", t.TempDir())
+	require.NoError(t, err)
+	model := &replyModel{replies: []string{brokenDiagramReply, fixedDiagramReply}}
+	cfg := catwalk.Model{ContextWindow: 200000, DefaultMaxTokens: 10000}
+	a := NewSessionAgent(SessionAgentOptions{
+		LargeModel:    Model{Model: model, CatwalkCfg: cfg},
+		SmallModel:    Model{Model: &replyModel{replies: []string{"title"}}, CatwalkCfg: cfg},
+		SystemPrompt:  "system",
+		IsYolo:        true,
+		Sessions:      env.sessions,
+		Messages:      env.messages,
+		CheckDiagrams: true,
+	})
+	model.onStream = func(step int) {
+		if step == 1 {
+			a.Cancel(sess.ID)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, err = a.Run(ctx, SessionAgentCall{SessionID: sess.ID, Prompt: "draw it"})
+	a.(*sessionAgent).WaitBackgroundJobs()
+
+	require.Error(t, err)
+	require.Equal(t, 2, model.steps())
+	require.False(t, a.IsSessionBusy(sess.ID))
 }
