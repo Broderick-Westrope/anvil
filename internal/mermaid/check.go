@@ -25,8 +25,8 @@ type Problem struct {
 	// Hint suggests a fix for a failure models often make, or is "".
 	Hint string
 	// Inconclusive is set when the check couldn't tell whether the diagram
-	// is valid Mermaid: it timed out, was too large, crashed the renderer,
-	// or is a type the renderer doesn't draw yet.
+	// is valid Mermaid: anything but a syntax or semantic error, such as a
+	// timeout, a crash, a limit, or a type the renderer doesn't know.
 	Inconclusive bool
 	// Source is the diagram's source.
 	Source string
@@ -105,8 +105,7 @@ func problemFor(diagram int, d Segment, err error) Problem {
 		p.Inconclusive = true
 	case errors.As(err, &pe):
 		p.Message = parseErrorLine.ReplaceAllString(pe.Message, "")
-		p.Inconclusive = pe.Code == pele.CodeInternal || pe.Code == pele.CodeLimit || pe.Code == pele.CodeCanceled ||
-			(pe.Code == pele.CodeUnsupportedDiagram && pe.Type != "")
+		p.Inconclusive = pe.Code != pele.CodeSyntax && pe.Code != pele.CodeSemantic
 		if pe.Line > 0 {
 			lines := max(strings.Count(strings.TrimSuffix(d.Text, "\n"), "\n")+1, 1)
 			p.Line = d.Line + min(pe.Line, lines) - 1

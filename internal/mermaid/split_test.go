@@ -30,6 +30,26 @@ func TestSplit(t *testing.T) {
 			content: "````md\n```mermaid\nA\n```\n````\n",
 			want:    []mermaid.Segment{{Text: "````md\n```mermaid\nA\n```\n````\n", Line: 1}},
 		},
+		"a tilde fence is a diagram": {
+			content: "~~~mermaid\nA\n~~~\n",
+			want:    []mermaid.Segment{{Text: "A\n", Mermaid: true, Line: 2}},
+		},
+		"two backticks aren't a fence": {
+			content: "``mermaid\nA\n``\n",
+			want:    []mermaid.Segment{{Text: "``mermaid\nA\n``\n", Line: 1}},
+		},
+		"a backtick in a backtick fence's info string isn't a fence": {
+			content: "```mermaid `x`\nA\n```\n",
+			want:    []mermaid.Segment{{Text: "```mermaid `x`\nA\n```\n", Line: 1}},
+		},
+		"a backtick in a tilde fence's info string is fine": {
+			content: "~~~mermaid `x`\nA\n~~~\n",
+			want:    []mermaid.Segment{{Text: "A\n", Mermaid: true, Line: 2}},
+		},
+		"a closing fence must be as long as the opening one": {
+			content: "````mermaid\nA\n```\nB\n````\n",
+			want:    []mermaid.Segment{{Text: "A\n```\nB\n", Mermaid: true, Line: 2}},
+		},
 		"an unclosed fence stays text": {
 			content: "Intro\n```mermaid\nA\n",
 			want:    []mermaid.Segment{{Text: "Intro\n```mermaid\nA\n", Line: 1}},

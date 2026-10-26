@@ -75,9 +75,14 @@ func TestCheckDiagram(t *testing.T) {
 			wantMsg:          "too large",
 			wantInconclusive: true,
 		},
-		"no diagram type": {
-			source:  "just some text",
-			wantMsg: "No diagram type detected",
+		"a semantic error is conclusive": {
+			source:  "flowchart LR\n  A@{ shape: nope }\n",
+			wantMsg: "No such shape: nope.",
+		},
+		"a type the renderer doesn't know is inconclusive": {
+			source:           "zenuml\n  A.method()\n",
+			wantMsg:          "No diagram type detected",
+			wantInconclusive: true,
 		},
 	}
 	for name, tc := range tests {
@@ -109,14 +114,30 @@ func TestReportString(t *testing.T) {
 	require.Equal(t, "All 3 diagrams render.", mermaid.Report{Diagrams: 3}.String())
 }
 
-func TestCheckMarkdownMarksDiagramsLeftAtTheDeadlineInconclusive(t *testing.T) {
+
+func TestCheckMarkdownWhenTheDeadlineHasPassed(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	report, err := mermaid.CheckMarkdown(ctx, "```mermaid\nflowchart LR\n  A --> B\n```\n")
+	report, err := mermaid.CheckMarkdown(ctx, "```mermaid\nflowchart LR\n  A --> B\n```\n\n```mermaid\npie\n  \"a\": 1\n```\n")
+	require.NoError(t, err)
+	require.Equal(t, 2, report.Diagrams)
+	require.Len(t, report.Problems, 2, "every diagram left is reported")
+	for i, p := range report.Problems {
+		require.Equal(t, i+1, p.Diagram)
+		require.True(t, p.Inconclusive)
+		require.Contains(t, p.Message, "Not checked: context canceled")
+	}
+	require.Contains(t, report.String(), "Diagram 2 (couldn't check, so it may be fine):")
+}
+
+func TestCheckMarkdownGivesNoLineForErrorsWithoutOne(t *testing.T) {
+	t.Parallel()
+
+	report, err := mermaid.CheckMarkdown(t.Context(), "Intro\n\n```mermaid\nflowchart LR\n  A@{ shape: nope }\n```\n")
 	require.NoError(t, err)
 	require.Len(t, report.Problems, 1)
-	require.True(t, report.Problems[0].Inconclusive)
-	require.Empty(t, report.Conclusive().Problems)
+	require.Zero(t, report.Problems[0].Line)
+	require.Contains(t, report.String(), "Diagram 1:\nNo such shape: nope.")
 }
