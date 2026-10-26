@@ -996,6 +996,15 @@ func TestDiagramsEnabledWithoutStartupSnapshotReadsConfig(t *testing.T) {
 	require.True(t, testStore(&Config{Options: &Options{}}).DiagramsEnabled(), "no tui options")
 }
 
+func TestDiagramsEnabledIsOffWhenHeadless(t *testing.T) {
+	t.Parallel()
+
+	on := true
+	store := testStore(&Config{Options: &Options{TUI: &TUIOptions{Diagrams: &on}}})
+	store.Overrides().Headless = true
+	require.False(t, store.DiagramsEnabled())
+}
+
 func TestStartupSnapshot_UnconfiguredStore(t *testing.T) {
 	t.Parallel()
 
