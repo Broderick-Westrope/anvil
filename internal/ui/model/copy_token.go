@@ -11,7 +11,7 @@ import (
 // which word segmentation would split at their punctuation. Earlier
 // patterns win, so a UUID inside a URL selects the URL.
 var copyTokenPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\b(?:https?|ftp|file)://[^\s<>"'` + "`" + `]+`),
+	regexp.MustCompile(`\b(?:https?|ftp|file)://[^\s<>"'\x60]+`),
 	regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`),
 	// Linear-style issue IDs such as ENG-1234.
 	regexp.MustCompile(`\b[A-Z][A-Z0-9]{1,9}-[0-9]+\b`),

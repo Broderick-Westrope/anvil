@@ -68,6 +68,16 @@ func TestFindWordBoundaries_CopyTokens(t *testing.T) {
 			marker: "example",
 			want:   "https://example.com/x",
 		},
+		"url stops at a backtick": {
+			line:   "run `curl https://example.com/x` now",
+			marker: "example",
+			want:   "https://example.com/x",
+		},
+		"url stops at a quote": {
+			line:   `href="https://example.com/x"`,
+			marker: "example",
+			want:   "https://example.com/x",
+		},
 		"url keeps balanced parens": {
 			line:   "Read https://en.wikipedia.org/wiki/Go_(programming_language) first",
 			marker: "wiki/Go",
