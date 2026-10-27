@@ -48,10 +48,7 @@ func resultImage(source ToolMessageItem) *message.ToolResult {
 // any text the tool returned with it (an MCP tool's notes, say), then the
 // image, prefixed with the focus bar. Expanding it shows all the text.
 func (o *toolDetailOutputItem) renderImage(res *message.ToolResult, width int) string {
-	prefix := o.sty.Messages.ToolCallBlurred.Render()
-	if o.focused {
-		prefix = o.sty.Messages.ToolCallFocused.Render()
-	}
+	prefix := detailPrefix(o.sty, o.focused)
 	inner := max(1, width-lipgloss.Width(prefix))
 	view := o.images.FullImage(res.Data, res.MIMEType, inner)
 	hint := o.sty.Header.Keystroke.Render("o") + " " + o.sty.Header.KeystrokeTip.Render("open in viewer") +
@@ -64,11 +61,7 @@ func (o *toolDetailOutputItem) renderImage(res *message.ToolResult, width int) s
 		parts = append(parts, renderToolResultTextContent(o.sty, res.Content, widths, o.expanded, true), "")
 	}
 	parts = append(parts, o.imageBody(res, view, inner))
-	lines := strings.Split(strings.Join(parts, "\n"), "\n")
-	for i, ln := range lines {
-		lines[i] = prefix + ln
-	}
-	return strings.Join(lines, "\n")
+	return prefixDetailLines(prefix, strings.Join(parts, "\n"))
 }
 
 // imageBody is the image itself, a placeholder while it loads, or the

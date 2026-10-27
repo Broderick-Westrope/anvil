@@ -125,6 +125,12 @@ type ToolRenderOpts struct {
 	IsSpinning      bool
 	Status          ToolStatus
 	NoTruncate      bool
+	// OneLineHeader keeps the header on one line when the content is
+	// expanded, for a caller that drops the header's line. toolParamList
+	// enforces it, so a header built without that has to hold itself to
+	// one line. The item also leaves its hook lines out, since they'd sit
+	// above the header; the caller draws them.
+	OneLineHeader bool
 	// MessageCreatedAt is when the assistant message carrying the tool call
 	// was created, in whole seconds; zero when unknown.
 	MessageCreatedAt time.Time
@@ -203,6 +209,7 @@ type baseToolMessageItem struct {
 	anim            *anim.Anim
 	expandedContent bool
 	noTruncate      bool
+	oneLineHeader   bool
 	resultVersion   uint64
 	// messageCreatedAt is when the assistant message carrying the tool
 	// call was created.
@@ -363,9 +370,31 @@ func (t *baseToolMessageItem) SetCompact(compact bool) {
 	t.Bump()
 }
 
-// SetNoTruncate enables or disables line-level truncation for rendering.
-func (t *baseToolMessageItem) SetNoTruncate(v bool) {
-	t.noTruncate = v
+// contentWidth is the width the tool lays its content out at in a list of
+// width.
+func (t *baseToolMessageItem) contentWidth(width int) int {
+	if t.hasCappedWidth {
+		return cappedMessageWidth(width)
+	}
+	return width - MessageLeftPaddingTotal
+}
+
+// currentRenderState implements detailRenderConfigurable.
+func (t *baseToolMessageItem) currentRenderState() renderState {
+	return renderState{
+		compact:       t.isCompact,
+		expanded:      t.expandedContent,
+		noTruncate:    t.noTruncate,
+		oneLineHeader: t.oneLineHeader,
+	}
+}
+
+// setRenderState implements detailRenderConfigurable.
+func (t *baseToolMessageItem) setRenderState(s renderState) {
+	t.isCompact = s.compact
+	t.expandedContent = s.expanded
+	t.noTruncate = s.noTruncate
+	t.oneLineHeader = s.oneLineHeader
 	t.clearCache()
 }
 
@@ -421,10 +450,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 // from the cache unless it is spinning. It returns the content, its
 // height, and the width it was laid out at.
 func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
-	toolItemWidth := width - MessageLeftPaddingTotal
-	if t.hasCappedWidth {
-		toolItemWidth = cappedMessageWidth(width)
-	}
+	toolItemWidth := t.contentWidth(width)
 
 	content, height, ok := t.getCachedRender(toolItemWidth)
 	// if we are spinning or there is no cache rerender
@@ -439,14 +465,17 @@ func (t *baseToolMessageItem) renderContent(width int) (string, int, int) {
 			IsSpinning:       t.isSpinning(),
 			Status:           t.computeStatus(),
 			NoTruncate:       t.noTruncate,
+			OneLineHeader:    t.oneLineHeader,
 			MessageCreatedAt: t.messageCreatedAt,
 			Now:              now,
 			Duration:         t.timerDuration(now),
 		})
 
-		// Prepend hook indicator if hooks ran for this tool call.
-		if t.result != nil {
-			if hookLine := toolOutputHookIndicator(t.sty, t.result.Metadata, toolItemWidth); hookLine != "" {
+		// Prepend hook indicator if hooks ran for this tool call. A
+		// caller that drops the header's line (the drill-in) draws them
+		// itself, since they'd sit above the header here.
+		if t.result != nil && !t.oneLineHeader {
+			if hookLine := toolOutputHookIndicator(t.sty, t.result.Metadata, toolItemWidth, false); hookLine != "" {
 				content = hookLine + "\n\n" + content
 			}
 		}
@@ -656,12 +685,6 @@ func (t *baseToolMessageItem) ToggleExpanded() bool {
 	return t.expandedContent
 }
 
-// SetExpandedContent explicitly sets the expanded content state.
-func (t *baseToolMessageItem) SetExpandedContent(expanded bool) {
-	t.expandedContent = expanded
-	t.clearCache()
-}
-
 // ToolDrillIn returns this item as a ToolMessageItem for drill-in navigation.
 func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
 	return t
@@ -669,7 +692,7 @@ func (t *baseToolMessageItem) ToolDrillIn() ToolMessageItem {
 
 // ToolDrillInLabel returns the tool display name for the breadcrumb.
 func (t *baseToolMessageItem) ToolDrillInLabel() string {
-	return prettifyToolName(t.toolCall.Name)
+	return oneLineSpace.Replace(prettifyToolName(t.toolCall.Name))
 }
 
 // Finished implements list.Item. A tool call is freezable once the
@@ -719,7 +742,7 @@ func pendingTool(sty *styles.Styles, name string, anim *anim.Anim, nested bool) 
 	if nested {
 		nameStyle = sty.Tool.NameNested
 	}
-	toolName := nameStyle.Render(name)
+	toolName := nameStyle.Render(oneLineSpace.Replace(name))
 
 	var animView string
 	if anim != nil {
@@ -743,7 +766,7 @@ func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) 
 	var msg string
 	switch opts.Status {
 	case ToolStatusError:
-		msg = toolErrorContent(sty, opts.Result, width)
+		msg = toolResultErrorContent(sty, opts.Result, width, opts.NoTruncate)
 	case ToolStatusCanceled:
 		msg = sty.Tool.StateCancelled.Render("Canceled.")
 	case ToolStatusAwaitingPermission:
@@ -756,22 +779,31 @@ func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) 
 	return msg, true
 }
 
-// toolErrorContent formats an error message with an ERROR or WARN tag.
+// toolErrorContent formats an error message with an ERROR or WARN tag, cut
+// to one line.
 func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int) string {
+	return toolResultErrorContent(sty, result, width, false)
+}
+
+// toolResultErrorContent formats an error message with an ERROR or WARN
+// tag. With noTruncate, as in the drill-in, the whole message wraps beside
+// the tag instead of being cut to one line.
+func toolResultErrorContent(sty *styles.Styles, result *message.ToolResult, width int, noTruncate bool) string {
 	if result == nil {
 		return ""
 	}
-	errContent := strings.ReplaceAll(result.Content, "\n", " ")
-	if strings.Contains(errContent, "User denied permission") {
-		deniedTag := sty.Tool.WarnTag.Render("WARN")
-		deniedTagWidth := lipgloss.Width(deniedTag)
-		errContent = ansi.Truncate(errContent, width-deniedTagWidth-3, "…")
-		return fmt.Sprintf("%s %s", deniedTag, sty.Tool.WarnMessage.Render(errContent))
+	tag, msgStyle := sty.Tool.ErrorTag.Render("ERROR"), sty.Tool.ErrorMessage
+	if strings.Contains(oneLineSpace.Replace(result.Content), "User denied permission") {
+		tag, msgStyle = sty.Tool.WarnTag.Render("WARN"), sty.Tool.WarnMessage
 	}
-	errTag := sty.Tool.ErrorTag.Render("ERROR")
-	tagWidth := lipgloss.Width(errTag)
-	errContent = ansi.Truncate(errContent, width-tagWidth-3, "…")
-	return fmt.Sprintf("%s %s", errTag, sty.Tool.ErrorMessage.Render(errContent))
+	tagWidth := lipgloss.Width(tag)
+	if !noTruncate {
+		errContent := ansi.Truncate(oneLineSpace.Replace(result.Content), width-tagWidth-3, "…")
+		return fmt.Sprintf("%s %s", tag, msgStyle.Render(errContent))
+	}
+	errContent := stringext.NormalizeSpace(lineSpace.Replace(result.Content))
+	body := msgStyle.Width(max(1, width-tagWidth-3)).Render(errContent)
+	return tag + " " + indentLines(body, 0, tagWidth+1)
 }
 
 // toolIcon returns the status icon for a tool call.
@@ -789,8 +821,29 @@ func toolIcon(sty *styles.Styles, status ToolStatus) string {
 	}
 }
 
+// Text drawn in a tool's header or drill-in goes through one of these
+// first. Tabs become four spaces before the text is measured, since Lip
+// Gloss counts a tab as no columns but draws it as four. A carriage return,
+// which would send the cursor back over the line, and a vertical tab or
+// form feed, which many terminals treat as a line feed, become a line
+// break.
+var (
+	// oneLineSpace also turns every line break into a space, for text held
+	// to one line.
+	oneLineSpace = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\v", " ", "\f", " ", "\t", "    ")
+	// lineSpace keeps line breaks.
+	lineSpace = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\v", "\n", "\f", "\n", "\t", "    ")
+	// codeSpace keeps a file's own lines, so its line numbers hold: any
+	// other break becomes a space.
+	codeSpace = strings.NewReplacer("\r", " ", "\v", " ", "\f", " ")
+	// hookNameSpace shows a hook name's line breaks as pilcrows, on one
+	// line.
+	hookNameSpace = strings.NewReplacer("\r\n", "¶", "\n", "¶", "\r", "¶", "\v", "¶", "\f", "¶", "\t", "    ")
+)
+
 // toolParamList formats tool parameters as "main (key=value, ...)" with truncation.
-// When opts.ExpandedContent is true, the output wraps instead of truncating.
+// When opts.ExpandedContent is true, the output wraps instead of truncating,
+// unless opts.OneLineHeader holds it to one line.
 func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRenderOpts) string {
 	// minSpaceForMainParam is the min space required for the main param
 	// if this is less that the value set we will only show the main param nothing else
@@ -798,6 +851,23 @@ func toolParamList(sty *styles.Styles, params []string, width int, opts *ToolRen
 	if len(params) == 0 {
 		return ""
 	}
+	// A header kept to one line renders as if collapsed, because the
+	// drill-in drops the header's line and would show any more under Output.
+	if opts != nil && opts.OneLineHeader {
+		collapsed := *opts
+		collapsed.ExpandedContent = false
+		opts = &collapsed
+	}
+	// A collapsed header is one line, whatever its parameters hold.
+	space := oneLineSpace
+	if opts != nil && opts.ExpandedContent {
+		space = lineSpace
+	}
+	spaced := make([]string, 0, len(params))
+	for _, param := range params {
+		spaced = append(spaced, space.Replace(param))
+	}
+	params = spaced
 
 	mainParam := params[0]
 
@@ -851,7 +921,8 @@ func capLineWidths(s string, width int) string {
 }
 
 // toolHeader builds the tool header line: "● ToolName params..."
-// When opts.ExpandedContent is true, long parameters wrap instead of truncating.
+// When opts.ExpandedContent is true, long parameters wrap instead of
+// truncating, unless opts.OneLineHeader holds them to one line.
 func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, opts *ToolRenderOpts, params ...string) string {
 	icon := toolIcon(sty, status)
 	return toolHeaderWithIcon(sty, icon, name, width, opts, params...)
@@ -871,7 +942,7 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 	if opts != nil {
 		duration = opts.Duration
 	}
-	toolName := nameStyle.Render(name)
+	toolName := nameStyle.Render(oneLineSpace.Replace(name))
 	prefix := fmt.Sprintf("%s %s ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
 	suffix, remainingWidth := fitToolTimerSuffix(sty, duration, width, prefixWidth)
@@ -895,7 +966,9 @@ func toolHeaderWithIcon(sty *styles.Styles, icon, name string, width int, opts *
 
 // toolOutputPlainContent renders plain text with optional expansion support.
 func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
-	content = stringext.NormalizeSpace(content)
+	// A progress bar's carriage returns each end a line, so none reaches
+	// the terminal.
+	content = stringext.NormalizeSpace(lineSpace.Replace(content))
 	lines := strings.Split(content, "\n")
 
 	maxLines := collapsedMaxLines(len(lines))
@@ -908,15 +981,15 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		if i >= maxLines {
 			break
 		}
-		ln = " " + ln
-		if !noTruncate && lipgloss.Width(ln) > width {
-			ln = ansi.Truncate(ln, width, "…")
-		}
 		if noTruncate {
-			out = append(out, sty.Tool.ContentLine.Render(ln))
-		} else {
-			out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+			// Wrapped lines keep the one-column indent of the first.
+			for _, part := range strings.Split(lipgloss.Wrap(ln, max(1, width-1), ""), "\n") {
+				out = append(out, sty.Tool.ContentLine.Width(width).Render(" "+part))
+			}
+			continue
 		}
+		ln = ansi.Truncate(" "+ln, width, "…")
+		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
 	}
 
 	wasTruncated := len(lines) > maxLines
@@ -932,7 +1005,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 
 // toolOutputCodeContent renders code with syntax highlighting and line numbers.
 func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded, noTruncate bool) string {
-	content = stringext.NormalizeSpace(content)
+	content = codeSpace.Replace(stringext.NormalizeSpace(content))
 
 	lines := strings.Split(content, "\n")
 	maxLines := collapsedMaxLines(len(lines))
@@ -956,7 +1029,8 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	numFmt := fmt.Sprintf("%%%dd", maxDigits)
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	codeWidth := bodyWidth - maxDigits
+	numWidth := lipgloss.Width(sty.Tool.ContentLineNumber.Render(fmt.Sprintf(numFmt, maxLineNumber)))
+	codeWidth := max(1, bodyWidth-numWidth)
 
 	var out []string
 	for i, ln := range highlightedLines {
@@ -995,7 +1069,7 @@ func toolOutputImageContent(sty *styles.Styles, data, mediaType string) string {
 		"%s %s %s %s",
 		sty.Tool.ResourceLoadedText.Render("Loaded Image"),
 		sty.Tool.ResourceLoadedIndicator.Render(styles.ArrowRightIcon),
-		sty.Tool.MediaType.Render(mediaType),
+		sty.Tool.MediaType.Render(oneLineSpace.Replace(mediaType)),
 		sty.Tool.ResourceSize.Render(sizeStr),
 	))
 }
@@ -1006,16 +1080,18 @@ func toolOutputSkillContent(sty *styles.Styles, name, description string) string
 		"%s %s %s %s",
 		sty.Tool.ResourceLoadedText.Render("Loaded Skill"),
 		sty.Tool.ResourceLoadedIndicator.Render(styles.ArrowRightIcon),
-		sty.Tool.ResourceName.Render(name),
-		sty.Tool.ResourceSize.Render(description),
+		sty.Tool.ResourceName.Render(oneLineSpace.Replace(name)),
+		sty.Tool.ResourceSize.Render(oneLineSpace.Replace(description)),
 	))
 }
 
 // toolOutputHookIndicator renders hook indicator lines from tool metadata.
 // Returns empty string if no hook metadata is present. Hook names are
-// sanitized (newlines replaced with ¶) and truncated to fit the available
-// horizontal space.
-func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int) string {
+// sanitized (newlines replaced with ¶), as are matchers. In the chat the
+// name, then the matcher, narrows to fit the available horizontal space
+// and a line still too wide is cut with an ellipsis. With noTruncate (the
+// drill-in) nothing is cut: the detail wraps beside the line, or below it.
+func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noTruncate bool) string {
 	if metadata == "" {
 		return ""
 	}
@@ -1030,58 +1106,90 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int) str
 		return ""
 	}
 
-	// Sanitize names (replace newlines with ¶) and compute max widths
-	// for the name, matcher, and detail columns so they align. The name
-	// column is capped at maxHookNameWidth characters.
+	// Sanitize names (replace newlines with ¶) and matchers, and compute
+	// max widths for the name, matcher, and detail columns so they align.
+	// The name column is capped at maxHookNameWidth characters; in the
+	// chat a longer name is cut to it, and in the drill-in it runs past.
 	const maxHookNameWidth = 30
 	sanitizedNames := make([]string, len(h.Hooks))
+	matchers := make([]string, len(h.Hooks))
 	details := make([]string, len(h.Hooks))
 	maxNameWidth := 0
 	maxMatcherWidth := 0
 	maxDetailWidth := 0
 	for i, hi := range h.Hooks {
-		sanitizedNames[i] = strings.ReplaceAll(hi.Name, "\n", "¶")
-		w := lipgloss.Width(sty.Tool.HookName.Render(sanitizedNames[i]))
-		if w > maxNameWidth {
-			maxNameWidth = w
-		}
-		if hi.Matcher != "" {
-			mw := lipgloss.Width(sty.Tool.HookMatcher.Render(hi.Matcher))
-			if mw > maxMatcherWidth {
-				maxMatcherWidth = mw
-			}
-		}
+		sanitizedNames[i] = hookNameSpace.Replace(hi.Name)
+		maxNameWidth = max(maxNameWidth, lipgloss.Width(sty.Tool.HookName.Render(sanitizedNames[i])))
+		matchers[i] = oneLineSpace.Replace(hi.Matcher)
+		maxMatcherWidth = max(maxMatcherWidth, lipgloss.Width(sty.Tool.HookMatcher.Render(matchers[i])))
 		details[i] = hookDetail(sty, hi)
-		if dw := lipgloss.Width(details[i]); dw > maxDetailWidth {
-			maxDetailWidth = dw
-		}
+		maxDetailWidth = max(maxDetailWidth, lipgloss.Width(details[i]))
 	}
 
-	if maxNameWidth > maxHookNameWidth {
-		maxNameWidth = maxHookNameWidth
-	}
-
-	// Cap the name column so the widest line still fits in width. The
-	// per-line layout is:
-	//   "Hook " + name(padded) + [" " + matcher(padded)] + " → " + detail
-	if width > 0 {
-		fixed := lipgloss.Width(sty.Tool.HookLabel.Render("Hook")) + 1
-		if maxMatcherWidth > 0 {
-			fixed += 1 + maxMatcherWidth
-		}
-		fixed += 1 + lipgloss.Width(sty.Tool.HookArrow.Render(styles.ArrowRightIcon)) + 1
-		fixed += maxDetailWidth
-		if budget := width - fixed; budget < maxNameWidth {
-			maxNameWidth = max(1, budget)
+	// A line that's cut gives up its name, then its matcher, to keep its
+	// detail, which says why. With noTruncate (the drill-in) nothing is
+	// cut: fitHookLine wraps the line instead.
+	maxNameWidth = min(maxNameWidth, maxHookNameWidth)
+	if !noTruncate {
+		maxNameWidth, maxMatcherWidth = fitHookColumns(sty, width, maxNameWidth, maxMatcherWidth, maxDetailWidth)
+		for i := range matchers {
+			matchers[i] = ansi.Truncate(matchers[i], maxMatcherWidth, "…")
 		}
 	}
 
 	var lines []string
 	for i, hi := range h.Hooks {
-		name := truncateHookName(sanitizedNames[i], maxNameWidth)
-		lines = append(lines, renderHookLine(sty, hi, name, details[i], maxNameWidth, maxMatcherWidth))
+		name := sanitizedNames[i]
+		if !noTruncate {
+			name = truncateHookName(name, maxNameWidth)
+		}
+		line := renderHookLine(sty, hi, name, matchers[i], details[i], maxNameWidth, maxMatcherWidth)
+		lines = append(lines, fitHookLine(line, details[i], width, noTruncate))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// fitHookColumns narrows the name column, then the matcher column, until a
+// hook line fits width beside a detail of detailWidth. The per-line layout
+// is:
+//
+//	"Hook " + name(padded) + [" " + matcher(padded)] + " → " + detail
+func fitHookColumns(sty *styles.Styles, width, nameWidth, matcherWidth, detailWidth int) (int, int) {
+	if width <= 0 {
+		return nameWidth, matcherWidth
+	}
+	room := width - lipgloss.Width(sty.Tool.HookLabel.Render("Hook")) - 1 -
+		(1 + lipgloss.Width(sty.Tool.HookArrow.Render(styles.ArrowRightIcon)) + 1) - detailWidth
+	matcherRoom := 0
+	if matcherWidth > 0 {
+		matcherRoom = 1 + matcherWidth
+	}
+	nameWidth = max(1, min(nameWidth, room-matcherRoom))
+	if matcherWidth > 0 {
+		matcherWidth = max(1, min(matcherWidth, room-nameWidth-1))
+	}
+	return nameWidth, matcherWidth
+}
+
+// fitHookLine holds a hook line to width: cut with an ellipsis, or with
+// noTruncate, its detail wrapped under where it starts. When that leaves
+// too little room to read it, the rest of the line wraps and the detail
+// goes on the lines below, indented, so none of it is lost.
+func fitHookLine(line, detail string, width int, noTruncate bool) string {
+	if width <= 0 {
+		return line
+	}
+	if !noTruncate {
+		return ansi.Truncate(line, width, "…")
+	}
+	col := lipgloss.Width(line) - lipgloss.Width(detail)
+	if width-col < minParamValueWidth {
+		// The head ends with the space before the detail, which goes.
+		indent := min(stackIndent, width-1)
+		below := indentLines(lipgloss.Wrap(detail, width-indent, ""), indent, indent)
+		return lipgloss.Wrap(ansi.Truncate(line, col-1, ""), width, "") + "\n" + below
+	}
+	return ansi.Truncate(line, col, "") + indentLines(lipgloss.Wrap(detail, width-col, ""), 0, col)
 }
 
 // truncateHookName truncates a hook name to fit within maxWidth cells,
@@ -1116,14 +1224,14 @@ func isLikelyPath(s string) bool {
 }
 
 // renderHookLine renders a single hook indicator line with aligned columns.
-func renderHookLine(sty *styles.Styles, hi hooks.HookInfo, rawName, detail string, maxNameWidth, maxMatcherWidth int) string {
+func renderHookLine(sty *styles.Styles, hi hooks.HookInfo, rawName, rawMatcher, detail string, maxNameWidth, maxMatcherWidth int) string {
 	name := sty.Tool.HookName.Render(rawName)
 	namePad := strings.Repeat(" ", max(0, maxNameWidth-lipgloss.Width(name)))
 
 	var matcherPart string
 	if maxMatcherWidth > 0 {
-		if hi.Matcher != "" {
-			matcher := sty.Tool.HookMatcher.Render(hi.Matcher)
+		if rawMatcher != "" {
+			matcher := sty.Tool.HookMatcher.Render(rawMatcher)
 			matcherPad := strings.Repeat(" ", maxMatcherWidth-lipgloss.Width(matcher))
 			matcherPart = " " + matcher + matcherPad
 		} else {
@@ -1159,7 +1267,7 @@ func hookDetail(sty *styles.Styles, hi hooks.HookInfo) string {
 	switch hi.Decision {
 	case "deny":
 		if hi.Reason != "" {
-			return sty.Tool.HookDenied.Render(denialMessage) + " " + sty.Tool.HookDeniedReason.Render(hi.Reason)
+			return sty.Tool.HookDenied.Render(denialMessage) + " " + sty.Tool.HookDeniedReason.Render(oneLineSpace.Replace(hi.Reason))
 		}
 		return sty.Tool.HookDenied.Render(denialMessage)
 	case "allow":
@@ -1328,7 +1436,7 @@ func roundedEnumerator(lPadding, width int) tree.Enumerator {
 
 // toolOutputMarkdownContent renders markdown content with optional truncation.
 func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded, noTruncate bool) string {
-	content = stringext.NormalizeSpace(content)
+	content = stringext.NormalizeSpace(lineSpace.Replace(content))
 
 	renderer := common.QuietMarkdownRenderer(sty, width)
 	mu := common.LockMarkdownRenderer(renderer)

@@ -133,10 +133,10 @@ func renderJobNotice(sty *styles.Styles, text string, width int, expanded bool) 
 			out = append(out, jobNoticeHeader(sty, line, width))
 		case strings.HasPrefix(line, "  "):
 			if expanded {
-				out = append(out, sty.Tool.JobID.Render(ansi.Truncate("    "+strings.TrimPrefix(line, "  "), width, "…")))
+				out = append(out, sty.Tool.JobID.Render(ansi.Truncate("    "+oneLineSpace.Replace(strings.TrimPrefix(line, "  ")), width, "…")))
 			}
 		default:
-			out = append(out, sty.Tool.JobID.Render(ansi.Truncate(line, width, "…")))
+			out = append(out, sty.Tool.JobID.Render(ansi.Truncate(oneLineSpace.Replace(line), width, "…")))
 		}
 	}
 	return strings.Join(out, "\n")
@@ -161,18 +161,18 @@ func jobNoticeHeader(sty *styles.Styles, line string, width int) string {
 		icon = toolIcon(sty, ToolStatusRunning)
 		action, jobID, detail, description = "Watch", m[1], m[2], m[3]
 	} else {
-		return sty.Tool.JobDescription.Render(ansi.Truncate(strings.TrimPrefix(line, "- "), width, "…"))
+		return sty.Tool.JobDescription.Render(ansi.Truncate(oneLineSpace.Replace(strings.TrimPrefix(line, "- ")), width, "…"))
 	}
 
 	prefix := fmt.Sprintf("%s %s %s %s %s", icon,
 		sty.Tool.JobToolName.Render("Job"),
 		sty.Tool.JobAction.Render("("+action+")"),
 		sty.Tool.JobID.Render(jobIDLabel(jobID)),
-		sty.Tool.JobID.Render(detail),
+		sty.Tool.JobID.Render(oneLineSpace.Replace(detail)),
 	)
 	available := width - lipgloss.Width(prefix) - 1
 	if description == "" || available < 10 {
 		return ansi.Truncate(prefix, width, "…")
 	}
-	return prefix + " " + sty.Tool.JobDescription.Render(ansi.Truncate(description, available, "…"))
+	return prefix + " " + sty.Tool.JobDescription.Render(ansi.Truncate(oneLineSpace.Replace(description), available, "…"))
 }

@@ -177,11 +177,11 @@ func (w *WriteToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	if opts.Result.IsError {
 		var meta tools.WriteResponseMetadata
 		if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err == nil && meta.Diff != "" {
-			errLine := toolErrorContent(sty, opts.Result, width)
+			errLine := toolResultErrorContent(sty, opts.Result, width, opts.NoTruncate)
 			diff := toolOutputDiffContentFromUnified(sty, meta.Diff, width, opts.ExpandedContent, opts.NoTruncate)
 			return strings.Join([]string{header, "", errLine, "", diff}, "\n")
 		}
-		return joinToolParts(header, toolErrorContent(sty, opts.Result, width))
+		return joinToolParts(header, toolResultErrorContent(sty, opts.Result, width, opts.NoTruncate))
 	}
 
 	// Render code content with syntax highlighting.
@@ -258,7 +258,7 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	// content. Rendering a diff of nothing still emits its padding, which
 	// reads as a stray blank line hanging under the error.
 	if opts.Result.IsError {
-		errLine := toolErrorContent(sty, opts.Result, width)
+		errLine := toolResultErrorContent(sty, opts.Result, width, opts.NoTruncate)
 		if meta.OldContent == "" && meta.NewContent == "" {
 			return joinToolParts(header, errLine)
 		}
@@ -339,7 +339,7 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	// content. Rendering a diff of nothing still emits its padding, which
 	// reads as a stray blank line hanging under the error.
 	if opts.Result.IsError {
-		errLine := toolErrorContent(sty, opts.Result, width)
+		errLine := toolResultErrorContent(sty, opts.Result, width, opts.NoTruncate)
 		if meta.OldContent == "" && meta.NewContent == "" {
 			return joinToolParts(header, errLine)
 		}

@@ -299,15 +299,15 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 	prefix := fmt.Sprintf("%s %s %s", icon, jobPart, actionPart)
 	// A command that finished before it became a background job has no ID.
 	if shellID != "" {
-		prefix += " " + sty.Tool.JobID.Render(jobIDLabel(shellID))
+		prefix += " " + sty.Tool.JobID.Render(jobIDLabel(oneLineSpace.Replace(shellID)))
 	}
 
 	suffix, availableWidth := fitToolTimerSuffix(sty, duration, width, lipgloss.Width(prefix)+1)
 	if description == "" || availableWidth < 10 {
-		return prefix + suffix
+		return ansi.Truncate(prefix+suffix, width, "…")
 	}
 
-	truncatedDesc := ansi.Truncate(description, availableWidth, "…")
+	truncatedDesc := ansi.Truncate(oneLineSpace.Replace(description), availableWidth, "…")
 	return prefix + " " + sty.Tool.JobDescription.Render(truncatedDesc) + suffix
 }
 
