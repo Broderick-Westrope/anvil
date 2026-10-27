@@ -1119,16 +1119,11 @@ func toolOutputHookIndicator(sty *styles.Styles, metadata string, width int, noT
 	maxDetailWidth := 0
 	for i, hi := range h.Hooks {
 		sanitizedNames[i] = hookNameSpace.Replace(hi.Name)
-		w := lipgloss.Width(sty.Tool.HookName.Render(sanitizedNames[i]))
-		if w > maxNameWidth {
-			maxNameWidth = w
-		}
+		maxNameWidth = max(maxNameWidth, lipgloss.Width(sty.Tool.HookName.Render(sanitizedNames[i])))
 		matchers[i] = oneLineSpace.Replace(hi.Matcher)
 		maxMatcherWidth = max(maxMatcherWidth, lipgloss.Width(sty.Tool.HookMatcher.Render(matchers[i])))
 		details[i] = hookDetail(sty, hi)
-		if dw := lipgloss.Width(details[i]); dw > maxDetailWidth {
-			maxDetailWidth = dw
-		}
+		maxDetailWidth = max(maxDetailWidth, lipgloss.Width(details[i]))
 	}
 
 	// A line that's cut gives up its name, then its matcher, to keep its
