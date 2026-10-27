@@ -1277,6 +1277,10 @@ func findWordBoundaries(line string, col int) (startCol, endCol int) {
 		return 0, 0
 	}
 
+	if start, end, ok := copyTokenAt(line, col); ok {
+		return start, end
+	}
+
 	i := displaywidth.StringGraphemes(line)
 	for i.Next() {
 	}
