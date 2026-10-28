@@ -45,11 +45,11 @@ var (
 
 // Skill represents a parsed SKILL.md file.
 type Skill struct {
-	Name          string            `yaml:"name" json:"name"`
-	Description   string            `yaml:"description" json:"description"`
-	License       string            `yaml:"license,omitempty" json:"license,omitempty"`
-	Compatibility string            `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
-	Metadata      map[string]string `yaml:"metadata,omitempty" json:"metadata,omitempty"`
+	Name          string         `yaml:"name" json:"name"`
+	Description   string         `yaml:"description" json:"description"`
+	License       string         `yaml:"license,omitempty" json:"license,omitempty"`
+	Compatibility string         `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
+	Metadata      map[string]any `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 	// Unlisted keeps the skill out of the prompt catalog, so its description
 	// costs no context and it never triggers on its own. Users, commands
 	// and agents can still load it by its exact name.

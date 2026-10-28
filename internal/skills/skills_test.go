@@ -19,7 +19,7 @@ func TestParse(t *testing.T) {
 		wantDesc    string
 		wantLicense string
 		wantCompat  string
-		wantMeta    map[string]string
+		wantMeta    map[string]any
 		wantTools   string
 		wantInstr   string
 		wantErr     bool
@@ -45,7 +45,7 @@ Use this skill when the user needs to work with PDF files.
 			wantDesc:    "Extracts text and tables from PDF files, fills PDF forms, and merges multiple PDFs.",
 			wantLicense: "Apache-2.0",
 			wantCompat:  "Requires python 3.8+, pdfplumber, pdfrw libraries",
-			wantMeta:    map[string]string{"author": "example-org", "version": "1.0"},
+			wantMeta:    map[string]any{"author": "example-org", "version": "1.0"},
 			wantInstr:   "# PDF Processing\n\n## When to use this skill\nUse this skill when the user needs to work with PDF files.",
 		},
 		{
@@ -95,6 +95,27 @@ Instructions here.
 			wantName:  "spaced-delimiter",
 			wantDesc:  "Delimiter has spaces.",
 			wantInstr: "# Spaced Delimiter",
+		},
+		{
+			name: "metadata with non-string values",
+			content: `---
+name: euc-triage-disturbed
+description: Works the Disturbed queue.
+metadata:
+  type: workflow
+  dependencies:
+    - euc-disturbed-sizing
+---
+
+# Triage
+`,
+			wantName: "euc-triage-disturbed",
+			wantDesc: "Works the Disturbed queue.",
+			wantMeta: map[string]any{
+				"type":         "workflow",
+				"dependencies": []any{"euc-disturbed-sizing"},
+			},
+			wantInstr: "# Triage",
 		},
 		{
 			name:    "no frontmatter",
