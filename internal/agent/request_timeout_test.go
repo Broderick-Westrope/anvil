@@ -484,3 +484,160 @@ func TestBuildAgentModelsAppliesRequestTimeout(t *testing.T) {
 		})
 	}
 }
+
+// toolInputStream starts a write tool call, then runs gap and finishes the
+// call and the stream.
+func toolInputStream(inner *fakeLanguageModel, gap func()) func(yield func(fantasy.StreamPart) bool) {
+	return func(yield func(fantasy.StreamPart) bool) {
+		if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputStart, ID: "call_1", ToolCallName: "write"}) {
+			return
+		}
+		gap()
+		if err := inner.streamCtx.Err(); err != nil {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeError, Error: err})
+			return
+		}
+		for _, part := range []fantasy.StreamPart{
+			{Type: fantasy.StreamPartTypeToolInputDelta, ID: "call_1", ToolCallInput: `{"file_path":"a.go"}`},
+			{Type: fantasy.StreamPartTypeToolInputEnd, ID: "call_1"},
+			{Type: fantasy.StreamPartTypeToolCall, ID: "call_1", ToolCallName: "write", ToolCallInput: `{"file_path":"a.go"}`},
+			{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls},
+		} {
+			if !yield(part) {
+				return
+			}
+		}
+	}
+}
+
+// Providers may send nothing while the model writes a large tool
+// parameter, so that gap gets the longer tool input window.
+func TestRequestTimeoutToolInputGetsLongerWindow(t *testing.T) {
+	t.Parallel()
+
+	inner := &fakeLanguageModel{}
+	inner.stream = toolInputStream(inner, func() { time.Sleep(100 * time.Millisecond) })
+	m := requestTimeoutModel{LanguageModel: inner, timeout: 20 * time.Millisecond, toolInputTimeout: 5 * time.Second}
+	stream, err := m.Stream(t.Context(), fantasy.Call{})
+	require.NoError(t, err)
+
+	var parts int
+	for part := range stream {
+		require.NoError(t, part.Error, "a 100ms gap in tool input must not trip the 20ms idle timeout")
+		parts++
+	}
+	require.Equal(t, 5, parts)
+}
+
+func TestRequestTimeoutToolInputStallNamesTheTool(t *testing.T) {
+	t.Parallel()
+
+	inner := &fakeLanguageModel{}
+	inner.stream = toolInputStream(inner, func() { <-inner.streamCtx.Done() })
+	m := requestTimeoutModel{LanguageModel: inner, timeout: time.Millisecond, toolInputTimeout: 30 * time.Millisecond}
+	stream, err := m.Stream(t.Context(), fantasy.Call{})
+	require.NoError(t, err)
+
+	var got error
+	for part := range stream {
+		got = firstErr(got, part.Error)
+	}
+	var timeoutErr *requestTimeoutError
+	require.ErrorAs(t, got, &timeoutErr)
+	require.Equal(t, "LLM stream received no data for 30ms while streaming write tool input", got.Error())
+	require.Equal(t, `The model stopped sending data for 30ms while writing the input for its write tool call. Raise "options.request_timeout" (seconds) in anvil.json, or set it to 0 to disable the timeout.`, timeoutErr.userMessage())
+}
+
+// Once a tool call's input is complete, the normal window applies again.
+func TestRequestTimeoutToolInputWindowEndsWithTheInput(t *testing.T) {
+	t.Parallel()
+
+	for name, end := range map[string]fantasy.StreamPartType{
+		"input end": fantasy.StreamPartTypeToolInputEnd,
+		"tool call": fantasy.StreamPartTypeToolCall,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			inner := &fakeLanguageModel{}
+			inner.stream = func(yield func(fantasy.StreamPart) bool) {
+				if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolInputStart, ID: "call_1", ToolCallName: "write"}) {
+					return
+				}
+				if !yield(fantasy.StreamPart{Type: end, ID: "call_1"}) {
+					return
+				}
+				<-inner.streamCtx.Done()
+				yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeError, Error: inner.streamCtx.Err()})
+			}
+			m := requestTimeoutModel{LanguageModel: inner, timeout: 20 * time.Millisecond, toolInputTimeout: time.Minute}
+			stream, err := m.Stream(t.Context(), fantasy.Call{})
+			require.NoError(t, err)
+
+			var got error
+			for part := range stream {
+				got = firstErr(got, part.Error)
+			}
+			require.Equal(t, "LLM stream received no data for 20ms", got.Error())
+		})
+	}
+}
+
+// With two tool inputs open, the window stays long until both end, and a
+// stall names the most recently started one.
+func TestRequestTimeoutToolInputTracksEachCall(t *testing.T) {
+	t.Parallel()
+
+	inner := &fakeLanguageModel{}
+	inner.stream = func(yield func(fantasy.StreamPart) bool) {
+		for _, part := range []fantasy.StreamPart{
+			{Type: fantasy.StreamPartTypeToolInputStart, ID: "call_1", ToolCallName: "write"},
+			{Type: fantasy.StreamPartTypeToolInputStart, ID: "call_2", ToolCallName: "edit"},
+			{Type: fantasy.StreamPartTypeToolInputEnd, ID: "call_other"},
+			{Type: fantasy.StreamPartTypeToolInputEnd, ID: "call_2"},
+		} {
+			if !yield(part) {
+				return
+			}
+		}
+		<-inner.streamCtx.Done()
+		yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeError, Error: inner.streamCtx.Err()})
+	}
+	m := requestTimeoutModel{LanguageModel: inner, timeout: time.Millisecond, toolInputTimeout: 30 * time.Millisecond}
+	stream, err := m.Stream(t.Context(), fantasy.Call{})
+	require.NoError(t, err)
+
+	var got error
+	for part := range stream {
+		got = firstErr(got, part.Error)
+	}
+	require.Equal(t, "LLM stream received no data for 30ms while streaming write tool input", got.Error())
+}
+
+func TestNewRequestTimeoutModelToolInputWindow(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		timeout, want time.Duration
+	}{
+		"short timeout uses the minimum": {timeout: 2 * time.Minute, want: minToolInputTimeout},
+		"long timeout is kept":           {timeout: 20 * time.Minute, want: 20 * time.Minute},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			m, ok := newRequestTimeoutModel(&fakeLanguageModel{}, tc.timeout).(requestTimeoutModel)
+			require.True(t, ok)
+			require.Equal(t, tc.timeout, m.timeout)
+			require.Equal(t, tc.want, m.toolInputTimeout)
+		})
+	}
+	require.Equal(t, 10*time.Minute, minToolInputTimeout)
+}
+
+// firstErr keeps the first non-nil error.
+func firstErr(got, next error) error {
+	if got != nil {
+		return got
+	}
+	return next
+}

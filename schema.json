@@ -773,7 +773,7 @@
         },
         "request_timeout": {
           "type": "integer",
-          "description": "Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity, so slow but active streams are never killed. 0 disables it",
+          "description": "Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity, so slow but active streams are never killed. While a tool call's input streams the window is at least 10 minutes. 0 disables it",
           "default": 120,
           "examples": [
             300,
