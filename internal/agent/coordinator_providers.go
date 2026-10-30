@@ -26,6 +26,11 @@ import (
 	openaisdk "github.com/charmbracelet/openai-go/option"
 )
 
+// fineGrainedToolStreamingBeta makes Anthropic stream every tool's input as
+// it is generated. The per-tool eager_input_streaming field replaces it, but
+// fantasy doesn't set that and the API still honours the header.
+const fineGrainedToolStreamingBeta = "fine-grained-tool-streaming-2025-05-14"
+
 // OpenCode models that use Anthropic Messages API instead of Chat Completions.
 var opencodeMessagesModels = map[string]bool{
 	"qwen3.7-max": true,
@@ -291,6 +296,17 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		} else {
 			headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
 		}
+	}
+
+	// Without fine-grained tool streaming, Anthropic holds back each tool
+	// parameter until the model has generated all of it, so a large write
+	// shows nothing for minutes. Only Anthropic's own API gets it, since
+	// compatible endpoints may reject betas they don't know.
+	if providerCfg.Type == anthropic.Name && providerCfg.ID == string(catwalk.InferenceProviderAnthropic) {
+		headers["anthropic-beta"] = anthropicoauth.MergeBetas(
+			headers["anthropic-beta"],
+			[]string{fineGrainedToolStreamingBeta},
+		)
 	}
 
 	// When the Anthropic provider uses OAuth, merge model-specific beta

@@ -424,7 +424,7 @@ type Options struct {
 	DisableNotifications      bool     `json:"disable_notifications,omitempty" jsonschema:"description=Disable desktop notifications,default=false"`
 	DisabledSkills            []string `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=anvil-config"`
 	ExpandedTools             []string `json:"expanded_tools,omitempty" jsonschema:"description=Glob patterns for tools that should render expanded instead of compact,example=bash,example=mcp_*"`
-	RequestTimeout            *int     `json:"request_timeout,omitempty" jsonschema:"description=Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity\\, so slow but active streams are never killed. 0 disables it,default=120,example=300,example=0"`
+	RequestTimeout            *int     `json:"request_timeout,omitempty" jsonschema:"description=Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity\\, so slow but active streams are never killed. While a tool call's input streams the window is at least 10 minutes. 0 disables it,default=120,example=300,example=0"`
 
 	BackgroundJobs *BackgroundJobsOptions `json:"background_jobs,omitempty" jsonschema:"description=Background job behaviour"`
 
