@@ -134,7 +134,7 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
 
 Important:
 
-- Report the PR URL
+- Report the full PR URL that gh pr create prints, not just the PR number
 - Never update git config
 </pull_requests>
 

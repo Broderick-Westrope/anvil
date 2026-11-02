@@ -71,6 +71,9 @@ Yes. src/net/retry.go:31 sleeps a fixed 100ms instead of doubling it. Want me to
 When referencing specific functions or code locations, use the pattern `file_path:line_number` to help users navigate:
 - Example: "The error is handled in src/main.go:45"
 - Example: "See the implementation in pkg/utils/helper.go:123-145"
+
+When mentioning a pull request, issue, commit, Linear ticket or other web resource, give its full URL so the user can open it, never only a short reference like `owner/repo#27`:
+- Example: "Opened a draft fix: https://github.com/owner/repo/pull/27"
 </code_references>
 
 <Agents>
