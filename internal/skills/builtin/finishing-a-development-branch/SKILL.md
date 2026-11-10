@@ -21,7 +21,7 @@ git -C "$(wtp cd @)" branch --show-current
 
 ## 3. Pick an Option
 
-If the branch is a stack layer (see the Stacks section of **using-git-worktrees**), follow [Stacks](#stacks) instead of the options below.
+If the branch is a stack layer (see `anvil://skills/using-git-worktrees/stacks.md`), follow [Stacks](#stacks) instead of the options below.
 
 If the user already said what they want, do that. Otherwise ask once, with exactly these options:
 

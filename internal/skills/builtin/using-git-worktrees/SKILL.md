@@ -56,23 +56,7 @@ Then run the project's tests once. If they already fail, note the failures, don'
 
 ## Stacks
 
-A stack is a chain of branches managed with the `gh stack` extension, each with its own PR based on the branch below it. Use one when work ships as several dependent PRs, such as one per phase of a plan. Load the **gh-stack** skill for its commands and recovery; if it isn't installed, `gh stack <command> --help` is authoritative. If `gh stack` itself is missing, tell the user it needs `gh extension install github/gh-stack`.
-
-Keep the whole stack in one worktree, named after its bottom layer, and move between layers inside it:
-
-```bash
-wtp add -b <bottom-branch> --stay main
-path="$(wtp cd <bottom-branch>)"
-cd "$path" && gh stack init <bottom-branch>   # adopts the checked-out branch
-# ...commit the bottom layer...
-cd "$path" && gh stack add <next-branch>      # next layer, checked out in the same worktree
-```
-
-- **Create the stack before writing code**, then commit each concern on the layer that owns it. To change a lower layer, `gh stack down` or `gh stack checkout <branch>` to it, commit, then `gh stack rebase --upstack` and `gh stack top`.
-- **`wtp` names a worktree by the branch checked out in it**, so `wtp cd <bottom-branch>` fails once another layer is checked out. Keep `$path` from when you created the worktree, or find the current layer with `wtp list` and run `wtp cd <current-layer>`.
-- **Remove a stack's worktree with `wtp remove --keep-branch <current-layer>`** until every PR in it has merged: the other layers' branches stay either way, but the current one is deleted without it.
-- **`gh stack push`, `submit` and `sync` push.** Run them only when you'd be allowed to `git push`. `gh stack rebase` rewrites local branches without pushing.
-- **You're on a stack layer** when `gh stack view --json | jq -e 'any(.branches[]; .isCurrent)'` succeeds. Exit 0 from `view` alone isn't enough: on the trunk it can still print a stack, with no layer current. Its `branches` list runs bottom first.
+A stack is a chain of dependent branches managed with `gh stack`, one PR per layer. Read `anvil://skills/using-git-worktrees/stacks.md` before starting one, working on a branch that may be a layer, or turning existing work into one: splitting a large branch, stacking follow-on work, or combining branches from several worktrees.
 
 ## Remove a Worktree
 
