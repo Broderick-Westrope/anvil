@@ -372,7 +372,7 @@ Today's date: 1/1/2025
   </skill>
   <skill>
     <name>finishing-a-development-branch</name>
-    <description>Lands or wraps up work on a feature branch in a linked worktree: verifies tests, then merges locally, opens a PR, keeps the branch, or discards it, and cleans up the worktree with wtp. Use when implementation is done and the user wants to merge, open a PR, or clean up a branch or worktree.</description>
+    <description>Lands or wraps up work on a feature branch in a linked worktree: verifies tests, then merges locally, opens a PR, keeps the branch, or discards it, and cleans up the worktree with wtp. Use when implementation is done and the user wants to merge, open a PR or a stack of PRs, or clean up a branch or worktree.</description>
     <type>builtin</type>
   </skill>
   <skill>
@@ -382,7 +382,7 @@ Today's date: 1/1/2025
   </skill>
   <skill>
     <name>using-git-worktrees</name>
-    <description>Source of truth for where to make changes and how to manage git worktrees with wtp. Use before editing or committing in a git repository, when starting work that needs a feature branch, when executing implementation plans, when working on multiple branches at once, or when finding, entering, or removing a worktree.</description>
+    <description>Source of truth for where to make changes and how to manage git worktrees with wtp. Use before editing or committing in a git repository, when starting work that needs a feature branch, when executing implementation plans, when working on multiple branches at once or a stack of dependent PRs, or when finding, entering, or removing a worktree.</description>
     <type>builtin</type>
   </skill>
 </available_skills>
