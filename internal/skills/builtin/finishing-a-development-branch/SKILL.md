@@ -1,6 +1,6 @@
 ---
 name: finishing-a-development-branch
-description: "Lands or wraps up work on a feature branch in a linked worktree: verifies tests, then merges locally, opens a PR, keeps the branch, or discards it, and cleans up the worktree with wtp. Use when implementation is done and the user wants to merge, open a PR, or clean up a branch or worktree."
+description: "Lands or wraps up work on a feature branch in a linked worktree: verifies tests, then merges locally, opens a PR, keeps the branch, or discards it, and cleans up the worktree with wtp. Use when implementation is done and the user wants to merge, open a PR or a stack of PRs, or clean up a branch or worktree."
 ---
 
 # Finishing a Development Branch
@@ -20,6 +20,8 @@ git -C "$(wtp cd @)" branch --show-current
 ```
 
 ## 3. Pick an Option
+
+If the branch is a stack layer (see `anvil://skills/using-git-worktrees/stacks.md`), follow [Stacks](#stacks) instead of the options below.
 
 If the user already said what they want, do that. Otherwise ask once, with exactly these options:
 
@@ -82,6 +84,36 @@ Only after the user types `discard`:
 ```bash
 cd "$root" && wtp remove --force --force-branch <branch>
 ```
+
+## Stacks
+
+A stack exists so each layer is reviewed as its own PR, so it lands on GitHub, never through a local merge. Run step 1 on every layer, from `gh stack bottom` up with `gh stack up`, since each one merges on its own. If the user already said what they want, do that. Otherwise ask once:
+
+```
+The stack <bottom> ... <top> is complete. What would you like to do?
+
+1. Push and open a pull request for each layer
+2. Keep the stack as-is
+```
+
+Choosing option 1 is the user's explicit permission to push every layer.
+
+### Option 1: Push and Open PRs
+
+```bash
+cd "$path" && gh stack submit --auto
+cd "$path" && gh stack view --json     # each layer's PR number and URL
+```
+
+`submit` pushes every layer and opens draft PRs with generated titles and bodies. Write each layer's title and body as described in `<pull_requests>`, from that layer's own commits (`git log <branch below>..<layer>`, where the bottom layer's branch below is the trunk), and set them with `gh pr edit <number> --title ... --body ...`. Start a CI watcher for each PR as described in `<ci_checks>`, and report every PR URL. Keep the worktree.
+
+If `submit` exits 9, stacked PRs aren't enabled on the repository: tell the user and stop.
+
+Merging comes later, once the PRs are approved and the user asks for it: `gh stack merge <pr> --yes` merges that PR and every unmerged one below it. `gh pr merge` can't merge a stacked PR.
+
+### Option 2: Keep As-Is
+
+Report the layers and the worktree path. Change nothing.
 
 ## Quick Reference
 

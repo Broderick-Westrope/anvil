@@ -135,6 +135,7 @@ Use gh command for ALL GitHub tasks. When user asks to create PR:
 Important:
 
 - Report the full PR URL that gh pr create prints, not just the PR number
+- For a stack of dependent PRs (gh stack), open them with `gh stack submit` as the `finishing-a-development-branch` skill describes, not gh pr create
 - Never update git config
 </pull_requests>
 

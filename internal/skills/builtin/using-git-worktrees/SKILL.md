@@ -1,6 +1,6 @@
 ---
 name: using-git-worktrees
-description: "Source of truth for where to make changes and how to manage git worktrees with wtp. Use before editing or committing in a git repository, when starting work that needs a feature branch, when executing implementation plans, when working on multiple branches at once, or when finding, entering, or removing a worktree."
+description: "Source of truth for where to make changes and how to manage git worktrees with wtp. Use before editing or committing in a git repository, when starting work that needs a feature branch, when executing implementation plans, when working on multiple branches at once or a stack of dependent PRs, or when finding, entering, or removing a worktree."
 ---
 
 # Using Git Worktrees
@@ -53,6 +53,10 @@ path="$(wtp cd <branch>)"
 `wtp add` runs the repository's `.wtp.yml` hooks. If there are none, install dependencies the way the project does (check memory files, `Taskfile`, `Makefile`, `package.json`, `go.mod`, ...).
 
 Then run the project's tests once. If they already fail, note the failures, don't fix unrelated ones, and mention them in your final message so nobody blames your change for them.
+
+## Stacks
+
+A stack is a chain of dependent branches managed with `gh stack`, one PR per layer. Read `anvil://skills/using-git-worktrees/stacks.md` before starting one, working on a branch that may be a layer, or turning existing work into one: splitting a large branch, stacking follow-on work, or combining branches from several worktrees.
 
 ## Remove a Worktree
 

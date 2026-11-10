@@ -1,8 +1,10 @@
 package skills
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -520,6 +522,29 @@ func TestDiscoverBuiltin(t *testing.T) {
 		}
 	}
 	require.True(t, foundExtensionTypes, "choosing-extension-types builtin skill not found")
+}
+
+func TestBuiltinSkillPathsExist(t *testing.T) {
+	t.Parallel()
+
+	pathRe := regexp.MustCompile(`anvil://skills/[A-Za-z0-9_./-]+\.md`)
+	var checked int
+	err := fs.WalkDir(builtinFS, "builtin", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(name, ".md") {
+			return err
+		}
+		data, err := builtinFS.ReadFile(name)
+		require.NoError(t, err)
+		for _, ref := range pathRe.FindAllString(string(data), -1) {
+			target := "builtin/" + strings.TrimPrefix(ref, BuiltinPrefix)
+			_, statErr := fs.Stat(builtinFS, target)
+			require.NoError(t, statErr, "%s refers to %s, which isn't embedded", name, ref)
+			checked++
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Positive(t, checked)
 }
 
 func TestDeduplicate(t *testing.T) {
