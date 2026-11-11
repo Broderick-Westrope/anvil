@@ -30,6 +30,7 @@ Reuse a worktree if one already exists for the branch (`wtp list`). Otherwise cr
 wtp add -b <branch> --stay              # new branch from the current HEAD
 wtp add -b <branch> --stay main         # new branch from main
 wtp add <branch> --stay                 # existing local or remote branch
+wtp add --pr <number|url> --stay        # a GitHub PR's branch (fork PRs get pr/<number>)
 ```
 
 - Name branches `<type>/<short-kebab-description>`, e.g. `feat/embed-wtp` or `fix/login-timeout`, unless the repository uses a different convention.
@@ -80,6 +81,7 @@ Don't remove worktrees on your own initiative. Leave them for the user unless th
 | List worktrees | `wtp list` |
 | New branch | `wtp add -b <branch> --stay` |
 | Existing branch | `wtp add <branch> --stay` |
+| Check out a GitHub PR | `wtp add --pr <number\|url> --stay` |
 | Path to a worktree | `wtp cd <branch>` |
 | Path to the root worktree | `wtp cd @` |
 | Run one command in a worktree | `wtp exec <branch> -- <cmd>` |

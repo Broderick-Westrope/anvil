@@ -14,7 +14,7 @@ require (
 	charm.land/x/vcr v0.1.1
 	github.com/Broderick-Westrope/pele-go v0.2.0
 	github.com/Broderick-Westrope/pele-go/raster v0.3.0
-	github.com/Broderick-Westrope/wtp/v3 v3.3.0
+	github.com/Broderick-Westrope/wtp/v3 v3.5.0
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/alecthomas/chroma/v2 v2.27.0
