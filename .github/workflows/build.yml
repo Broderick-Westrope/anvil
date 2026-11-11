@@ -55,5 +55,9 @@ jobs:
         run: git diff --exit-code
       - if: env.CODE != 'false'
         run: go build ${{ env.RACE }} ./...
+      - if: env.CODE != 'false' && runner.os == 'Linux'
+        run: |
+          nproc
+          (while sleep 20; do echo "=== ps $(date +%T)"; ps -eo pcpu,etime,args --sort=-pcpu | cut -c1-200 | head -12; done) &
       - if: env.CODE != 'false'
         run: go test ${{ env.RACE }} -failfast ./...
