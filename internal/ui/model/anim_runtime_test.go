@@ -146,9 +146,28 @@ func (r *animRuntime) send(msg tea.Msg) {
 }
 
 // run processes messages for d and returns how many Updates ran, by type.
+// Bound only upper limits with it: under load fewer frames fit in d, so a
+// lower limit on a fixed window fails on a busy machine.
 func (r *animRuntime) run(d time.Duration) map[string]int {
 	r.t.Helper()
+	counts, _ := r.runUntil(d, func() bool { return false })
+	return counts
+}
+
+// animateTimeout is how long a spinner may take to show its frames before
+// it counts as stuck. At 20 fps the frames take a fraction of a second; the
+// rest is room for a CPU-starved CI runner.
+const animateTimeout = 15 * time.Second
+
+// runUntil processes messages until done reports true after an Update, or
+// until d passes, and returns how many Updates ran, by type, and whether
+// done was reached.
+func (r *animRuntime) runUntil(d time.Duration, done func() bool) (map[string]int, bool) {
+	r.t.Helper()
 	counts := map[string]int{}
+	if done() {
+		return counts, true
+	}
 	deadline := time.After(d)
 	for {
 		select {
@@ -160,12 +179,41 @@ func (r *animRuntime) run(d time.Duration) map[string]int {
 				r.sample()
 			}
 			r.exec(cmd)
-		case <-deadline:
-			if n := r.panics.Load(); n > 0 {
-				r.t.Fatalf("%d command(s) panicked; last: %v", n, r.panicMsg.Load())
+			if done() {
+				r.failOnPanics()
+				return counts, true
 			}
-			return counts
+		case <-deadline:
+			r.failOnPanics()
+			return counts, false
 		}
+	}
+}
+
+func (r *animRuntime) failOnPanics() {
+	r.t.Helper()
+	if n := r.panics.Load(); n > 0 {
+		r.t.Fatalf("%d command(s) panicked; last: %v", n, r.panicMsg.Load())
+	}
+}
+
+// requireAnimates runs until every spinner in ids has drawn at least three
+// distinct frames, failing with msg if one hasn't within animateTimeout.
+func (s *spinScene) requireAnimates(seen renders, msg string, ids ...string) {
+	s.r.t.Helper()
+	animated := func() bool {
+		for _, id := range ids {
+			if len(seen[id]) < 3 {
+				return false
+			}
+		}
+		return true
+	}
+	if _, ok := s.r.runUntil(animateTimeout, animated); ok {
+		return
+	}
+	for _, id := range ids {
+		require.GreaterOrEqual(s.r.t, len(seen[id]), 3, "%s: %s", msg, id)
 	}
 }
 
@@ -339,13 +387,10 @@ func TestAnimation_SpinnersAnimate(t *testing.T) {
 	s := newSpinScene(t)
 	seen := s.track(func() *Chat { return s.u.chat })
 	s.start()
-	s.r.run(600 * time.Millisecond)
 
 	ids := append([]string{"a-think", sceneAgentTC}, sceneBashIDs...)
 	ids = append(ids, sceneNestedIDs...)
-	for _, id := range ids {
-		require.GreaterOrEqual(t, len(seen[id]), 3, "spinner %s should animate", id)
-	}
+	s.requireAnimates(seen, "spinner should animate", ids...)
 }
 
 // TestAnimation_CostDoesNotScaleWithSpinners pins the reason for a shared
@@ -413,8 +458,7 @@ func TestAnimation_ScrolledBackIntoView(t *testing.T) {
 	seen := s.track(func() *Chat { return s.u.chat })
 	s.u.focus = uiFocusMain
 	s.r.send(tea.KeyPressMsg{Code: tea.KeyHome})
-	s.r.run(600 * time.Millisecond)
-	require.GreaterOrEqual(t, len(seen["a-think"]), 3, "spinner should resume once visible")
+	s.requireAnimates(seen, "spinner should resume once visible", "a-think")
 }
 
 // TestAnimation_DrillIn pins the drilled-in view: the subagent's spinners
@@ -428,24 +472,21 @@ func TestAnimation_DrillIn(t *testing.T) {
 	s.ws.drill[0].SessionID = sceneChild
 
 	s.r.send(drillIn(sceneChild))
-	s.r.run(200 * time.Millisecond)
-	require.True(t, s.u.isDrilledIn())
+	_, drilled := s.r.runUntil(animateTimeout, s.u.isDrilledIn)
+	require.True(t, drilled)
 	seen := s.track(func() *Chat { return s.u.activeChat() })
 
 	first := s.r.run(500 * time.Millisecond)
 	second := s.r.run(500 * time.Millisecond)
-	for _, id := range sceneNestedIDs {
-		require.GreaterOrEqual(t, len(seen[id]), 3, "drilled-in spinner %s should animate", id)
-	}
-	require.LessOrEqual(t, sum(second), sum(first)*3/2+3,
-		"tick rate must not grow: first %s second %s", describe(first), describe(second))
+	// A tick storm grows every frame, so it blows past this cap within a few
+	// frames whatever the machine's speed.
 	require.LessOrEqual(t, sum(first)+sum(second), 32, "updates in 1s drilled in: %s %s", describe(first), describe(second))
+	s.requireAnimates(seen, "drilled-in spinner should animate", sceneNestedIDs...)
 
 	s.r.send(tea.KeyPressMsg{Code: tea.KeyLeft})
 	require.False(t, s.u.isDrilledIn())
 	seen = s.track(func() *Chat { return s.u.chat })
-	s.r.run(600 * time.Millisecond)
-	require.GreaterOrEqual(t, len(seen["a-think"]), 3, "root spinner should animate after backing out")
+	s.requireAnimates(seen, "root spinner should animate after backing out", "a-think")
 }
 
 func drillIn(sessionID string) tea.Msg {
