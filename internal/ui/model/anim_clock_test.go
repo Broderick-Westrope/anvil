@@ -116,8 +116,7 @@ func TestAnimation_GhostSpinnerResumesOnActivity(t *testing.T) {
 	seen := s.track(func() *Chat { return s.u.chat })
 	s.ws.busy.Store(true)
 	s.r.send(updated(sceneSession, message.Message{ID: "a-think", Role: message.Assistant}))
-	s.r.run(600 * time.Millisecond)
-	require.GreaterOrEqual(t, len(seen["a-think"]), 3)
+	s.requireAnimates(seen, "ghost spinner should resume", "a-think")
 }
 
 func TestAnimClock_TickOverdueByExactlyTheLimitIsLost(t *testing.T) {

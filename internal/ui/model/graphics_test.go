@@ -52,12 +52,13 @@ var engineSlots = make(chan struct{}, 4)
 
 func newTestGraphicsFeature(t *testing.T, host *fakeDiagramHost, caps *common.Capabilities) *graphicsFeature {
 	t.Helper()
+	require.NoError(t, warmCompileCache(), "compile resvg")
 	engineSlots <- struct{}{}
 	t.Cleanup(func() { <-engineSlots })
 	st := uistyles.TokyoNight()
 	f := newGraphicsFeature(host, caps, &common.Common{Styles: &st})
 	f.exportDir = t.TempDir()
-	f.compileCacheDir = t.TempDir()
+	f.compileCacheDir = testCompileCacheDir
 	stubClipboard(f)
 	// Free the engines soon after a test stops using them.
 	f.idleTimeout = 200 * time.Millisecond
@@ -78,12 +79,17 @@ func kittyCaps() *common.Capabilities {
 	return &common.Capabilities{KittyGraphics: true, Columns: 100, Rows: 40, PixelX: 1000, PixelY: 800}
 }
 
+// workerHangTimeout only catches a worker that will never answer. A render
+// takes milliseconds, so the deadline is generous enough that a CPU-starved
+// runner can't trip it.
+const workerHangTimeout = 2 * time.Minute
+
 func waitResult(t *testing.T, f *graphicsFeature) tea.Msg {
 	t.Helper()
 	select {
 	case msg := <-f.results:
 		return msg
-	case <-time.After(30 * time.Second):
+	case <-time.After(workerHangTimeout):
 		t.Fatal("the worker never answered")
 		return nil
 	}
@@ -649,6 +655,9 @@ func TestGraphicsFeatureRendersThroughTheCompileCache(t *testing.T) {
 	t.Parallel()
 
 	f := newTestGraphicsFeature(t, &fakeDiagramHost{}, kittyCaps())
+	// An empty cache of its own, so the entry below can only be this
+	// rasterizer's.
+	f.compileCacheDir = t.TempDir()
 	showDiagram(t, f, "flowchart LR\n  A --> B", 60)
 	entries, err := filepath.Glob(filepath.Join(f.compileCacheDir, "wazero-*", "*"))
 	require.NoError(t, err)
