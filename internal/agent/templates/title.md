@@ -1,11 +1,18 @@
-Generate a short title (max 50 characters) for the following conversation. The title should capture the main topic or task being discussed.
+Label the following conversation with 2-5 keywords (under 30 characters). The label names a tab and an agent, so it only needs to tell this session apart from the user's other sessions.
 
 <rules>
-- Keep the title in the same language that the user wrote their messages in.
-- Ensure it is not more than 50 characters long.
-- The title should summarize the main topic of the conversation.
-- It should be one line long.
-- Do not use quotes or colons.
-- The entire text you return will be used as the title.
-- Never return anything that is more than one sentence (one line) long.
+- Write in the same language as the user's messages.
+- Write a keyword phrase made of the nouns that matter: the person, project, service, ticket or bug first, then the issue (e.g. "gary datadog missing addr").
+- Write in lowercase, keeping the original casing of proper nouns, acronyms and code identifiers.
+- Use common abbreviations (txn, addr, PR, gha) where they save space.
+- Return only the label on one line, with no quotes or trailing punctuation.
 </rules>
+
+<examples>
+gary datadog missing addr
+txn SLOs & monitors
+revbot min turns bug
+stale prescribing
+gert mcp catalogue
+lokalise missing translations
+</examples>
