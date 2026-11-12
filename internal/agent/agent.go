@@ -1106,7 +1106,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, msgs
 		)
 	}
 
-	streamCall := call.streamCall(fmt.Sprintf("Generate a concise title for the following conversation:\n\n%s\n <think>\n\n</think>", conversationText))
+	streamCall := call.streamCall(fmt.Sprintf("Label this conversation:\n\n%s\n <think>\n\n</think>", conversationText))
 
 	type modelAttempt struct {
 		name  string
