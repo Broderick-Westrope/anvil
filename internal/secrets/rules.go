@@ -61,6 +61,12 @@ const (
 	keyedLinePattern    = `(?im)^` + linePrefix + `[ \t]*(?:export[ \t]+)?[A-Za-z0-9_.-]*` + secretNames + `[ \t]*[:=][ \t]*([^\s"'.,(\[;]{8,})` + lineEnd
 )
 
+// tokenStart begins a vendor token at a word boundary or right after a
+// literal \n, \t or \r escape, where the escape's letter would hide the
+// boundary. Rules using it capture the token in group 1, so the escape
+// stays.
+const tokenStart = `(?:\b|\\[nrt])`
+
 // Rules run in order on the output of the one before, so vendor shapes
 // name a key before the generic keyed-assignment rules see it.
 var rules = []rule{
@@ -80,31 +86,33 @@ var rules = []rule{
 		re:    regexp.MustCompile(pemTruncatedPattern),
 		group: 1,
 	},
-	{name: "aws_access_key", kind: "aws_key", re: regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)},
-	{name: "github_token", kind: "github_token", re: regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,})`)},
-	{name: "anthropic_key", kind: "anthropic_key", re: regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`)},
+	{name: "aws_access_key", kind: "aws_key", re: regexp.MustCompile(tokenStart + `((?:AKIA|ASIA)[0-9A-Z]{16}\b)`), group: 1},
+	{name: "github_token", kind: "github_token", re: regexp.MustCompile(tokenStart + `((?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,}))`), group: 1},
+	{name: "anthropic_key", kind: "anthropic_key", re: regexp.MustCompile(tokenStart + `(sk-ant-[A-Za-z0-9_-]{20,})`), group: 1},
 	{
 		// A key mixes cases and digits; a package slug (sk-learn-...) is
 		// lower case.
 		name:   "openai_key",
 		kind:   "openai_key",
-		re:     regexp.MustCompile(`\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}`),
+		re:     regexp.MustCompile(tokenStart + `(sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,})`),
+		group:  1,
 		accept: func(m match) bool { return classes(m.value) == 3 },
 	},
-	{name: "stripe_key", kind: "stripe_key", re: regexp.MustCompile(`\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|whsec_[A-Za-z0-9+/=]{20,})`)},
-	{name: "slack_token", kind: "slack_token", re: regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`)},
-	{name: "gcp_api_key", kind: "gcp_api_key", re: regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`)},
-	{name: "gcp_access_token", kind: "gcp_access_token", re: regexp.MustCompile(`\bya29\.[0-9A-Za-z_-]{20,}`)},
-	{name: "gcp_refresh_token", kind: "gcp_refresh_token", re: regexp.MustCompile(`\b1//0[0-9A-Za-z_-]{20,}`)},
-	{name: "npm_token", kind: "npm_token", re: regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}\b`)},
-	{name: "gitlab_token", kind: "gitlab_token", re: regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}`)},
-	{name: "huggingface_token", kind: "huggingface_token", re: regexp.MustCompile(`\bhf_[A-Za-z0-9]{30,}\b`)},
+	{name: "stripe_key", kind: "stripe_key", re: regexp.MustCompile(tokenStart + `((?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|whsec_[A-Za-z0-9+/=]{20,}))`), group: 1},
+	{name: "slack_token", kind: "slack_token", re: regexp.MustCompile(tokenStart + `(xox[abposr]-[A-Za-z0-9-]{10,})`), group: 1},
+	{name: "gcp_api_key", kind: "gcp_api_key", re: regexp.MustCompile(tokenStart + `(AIza[0-9A-Za-z_-]{35})`), group: 1},
+	{name: "gcp_access_token", kind: "gcp_access_token", re: regexp.MustCompile(tokenStart + `(ya29\.[0-9A-Za-z_-]{20,})`), group: 1},
+	{name: "gcp_refresh_token", kind: "gcp_refresh_token", re: regexp.MustCompile(tokenStart + `(1//0[0-9A-Za-z_-]{20,})`), group: 1},
+	{name: "npm_token", kind: "npm_token", re: regexp.MustCompile(tokenStart + `(npm_[A-Za-z0-9]{36}\b)`), group: 1},
+	{name: "gitlab_token", kind: "gitlab_token", re: regexp.MustCompile(tokenStart + `(glpat-[A-Za-z0-9_-]{20,})`), group: 1},
+	{name: "huggingface_token", kind: "huggingface_token", re: regexp.MustCompile(tokenStart + `(hf_[A-Za-z0-9]{30,}\b)`), group: 1},
 	{
 		// A JWT signing a URL (an upload link's signature= or jwt=, or a
 		// path segment) is short-lived, and masking it breaks the link.
 		name:   "jwt",
 		kind:   "jwt",
-		re:     regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`),
+		re:     regexp.MustCompile(tokenStart + `(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})`),
+		group:  1,
 		accept: func(m match) bool { return !signsURL(m.before) },
 	},
 	{

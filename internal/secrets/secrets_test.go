@@ -729,3 +729,39 @@ func TestMask_AllowedKnownValueStaysVisible(t *testing.T) {
 func dsn(scheme, user string) string {
 	return scheme + "://" + user + ":"
 }
+
+// Output that quotes JSON without being JSON (a log line, several JSON
+// lines) puts a token right after a literal \n or \t escape, where the n or
+// t would otherwise hide the token's start.
+func TestMask_TokensAfterAnEscape(t *testing.T) {
+	t.Parallel()
+
+	tokens := map[string]string{
+		"github": "ghp_" + "aBcDeF" + "gHiJkL" + "mNoPqR" + "sTuVwX" + "yZ0123" + "456789",
+		"stripe": "sk_live_" + "51HxYz" + "AbCdEf" + "GhIjKl" + "Mn",
+		"aws":    "AKIA" + "IOSFOD" + "NN7ABC" + "DEFG",
+		"slack":  "xoxb-" + "123456" + "7890-abcdefghij",
+		"gcp":    "ya29." + "a0AfB_" + "byC1d2" + "E3f4G5" + "h6I7j8" + "K9l0M",
+	}
+	for name, token := range tokens {
+		for _, escape := range []string{`\n`, `\t`, `\r`} {
+			t.Run(name+escape, func(t *testing.T) {
+				t.Parallel()
+				in := `log: {"text":"key:` + escape + token + `"} more` + "\nnext line"
+				got, findings := secrets.New(nil, testKey).Mask(in)
+				require.NotContains(t, got, token)
+				require.Len(t, findings, 1)
+				require.Contains(t, got, `key:`+escape+"[SECRET:", "the escape stays")
+			})
+		}
+	}
+}
+
+func TestMask_EscapeLikeTextIsntAToken(t *testing.T) {
+	t.Parallel()
+
+	in := `path C:\new\tokens and \nxoxb is a word`
+	got, findings := secrets.New(nil, testKey).Mask(in)
+	require.Equal(t, in, got)
+	require.Empty(t, findings)
+}
