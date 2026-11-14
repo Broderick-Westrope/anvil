@@ -44,7 +44,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	trustedYolo, err := loadTrustedYolo(trustedPaths)
+	trustedUser, err := loadUserSettings(trustedPaths)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	}
 
 	cfg.applyTrustedBouncer(trustedBouncer)
-	cfg.applyTrustedYolo(trustedYolo)
+	cfg.applyUserSettings(trustedUser)
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.

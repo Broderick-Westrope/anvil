@@ -27,6 +27,8 @@ import (
 //     startup, so a change is never applied.
 //   - yolo: the runtime level (ctrl+y) wins over config after startup, so
 //     a change is never applied.
+//   - secrets: the detector and the system prompt are built from
+//     ConfigStore.SecretsAtStartup.
 //   - options.project_directory: a reload keeps the existing directory,
 //     so the raw configured values are compared.
 //   - options.tui: only compact_mode, transparent and diagrams are captured
@@ -49,6 +51,9 @@ func RestartRequired(startup, cur *Config, startupB, curB *TrustedBouncer, start
 	labels = append(labels, bouncerRestartLabels(trustedBouncerConfig(startupB), trustedBouncerConfig(curB))...)
 	if cmp.Or(startup.Yolo, YoloModeOff) != cmp.Or(cur.Yolo, YoloModeOff) {
 		labels = append(labels, "yolo")
+	}
+	if secretsChanged(startup, cur) {
+		labels = append(labels, "secrets")
 	}
 	if startupRaw != curRaw {
 		labels = append(labels, "options.project_directory")

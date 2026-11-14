@@ -946,6 +946,8 @@ type Config struct {
 
 	Yolo YoloMode `json:"yolo,omitempty" jsonschema:"description=Yolo level new sessions start at when --yolo is not passed. Only read from user-level config files,enum=off,enum=standard,enum=full,default=off"`
 
+	Secrets *Secrets `json:"secrets,omitempty" jsonschema:"description=Masking of credentials in everything sent to models. Only read from user-level config files"`
+
 	Tools Tools `json:"tools,omitzero" jsonschema:"description=Tool configurations"`
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`

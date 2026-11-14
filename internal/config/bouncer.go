@@ -13,9 +13,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	"github.com/qjebbs/go-jsons"
-	"github.com/tidwall/gjson"
 )
 
 // DefaultBouncerAPIKeyEnv is the environment variable the bouncer API key
@@ -190,49 +187,12 @@ func checkBouncerRange(name string, v *float64, upper float64) error {
 	return nil
 }
 
-// trustedConfigPaths returns the user-level config files the bouncer block
-// may be read from. It reads the process env, so it must only be called
-// before any config-provided env has been applied.
-func trustedConfigPaths() []string {
-	return []string{systemConfigPath, GlobalConfigData(), GlobalConfig()}
-}
-
 // loadBouncerBlock merges the bouncer blocks from paths and
 // validates the result. It returns nil when no path sets the block.
 func loadBouncerBlock(paths []string) (*Bouncer, error) {
-	var blocks [][]byte
-	for _, path := range paths {
-		if path == "" {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to open config file %s: %w", path, err)
-		}
-		if len(data) == 0 {
-			continue
-		}
-		if !json.Valid(data) {
-			return nil, fmt.Errorf("invalid JSON in config file %s", path)
-		}
-		block := gjson.GetBytes(data, "bouncer")
-		switch {
-		case !block.Exists() || block.Type == gjson.Null:
-			continue
-		case !block.IsObject():
-			return nil, fmt.Errorf("bouncer in %s must be an object", path)
-		}
-		blocks = append(blocks, []byte(block.Raw))
-	}
-	if len(blocks) == 0 {
-		return nil, nil
-	}
-	merged, err := jsons.Merge(blocks)
-	if err != nil {
-		return nil, fmt.Errorf("failed to merge bouncer: %w", err)
+	merged, err := loadTrustedBlock(paths, "bouncer")
+	if err != nil || merged == nil {
+		return nil, err
 	}
 	var pa Bouncer
 	if err := json.Unmarshal(merged, &pa); err != nil {

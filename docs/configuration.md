@@ -49,9 +49,9 @@ they are automatically migrated into the global database on first startup.
 After editing config or running `anvil permissions triage`, run **Reload
 Config & Plugins** from the command palette (`ctrl+p`). Permission rules,
 bouncer thresholds, hooks, agents, and plugins apply immediately, and model
-changes apply from the next turn. Changes to MCP servers, LSPs, and the
-bouncer connection need `/reload-instance`, and the reload names any that are
-pending.
+changes apply from the next turn. Changes to MCP servers, LSPs, the
+bouncer connection, and `secrets` need `/reload-instance`, and the reload
+names any that are pending.
 
 ## Reloading
 
@@ -519,6 +519,54 @@ them in `options.expanded_tools` (globs work, such as `"mcp_*"`).
 | `options.background_jobs.wake_on_event` | `false` | Start a turn in an idle session when one of its background jobs finishes |
 | `options.project_directory` | `.anvil` at the git root | Where project state (logs, workspace config) lives |
 | `options.disable_default_providers` | `false` | Ignore the built-in provider list and use only the providers you configure |
+
+## Secret Masking
+
+Anvil replaces credentials with placeholders such as
+`[SECRET:stripe_key:3f9a01c2d4e5f6]` in the conversation it sends to a
+model: your prompts, tool calls and output, history, summaries and
+subagent requests. The
+chat, the database and logs keep the real values, and nothing turns a
+placeholder back into its value.
+
+It masks the credentials Anvil holds (provider keys and OAuth tokens, MCP
+headers, env and tokens, the fetch and search keys, and environment
+variables named like `*_TOKEN` or `*_PASSWORD`) wherever they appear, and
+values shaped like vendor credentials (Stripe, GitHub, AWS, GCP, Slack,
+OpenAI, Anthropic and others) or assigned to a secret-looking name.
+Identifiers such as `cus_` and publishable `pk_` keys are left alone.
+
+The agent can't write a placeholder into a file or a command: `write`,
+`edit`, `multiedit` and `bash` refuse it and suggest an environment
+reference instead. To put a real key in a file, do it yourself.
+
+```json
+{
+  "secrets": {
+    "enabled": true,
+    "allow": ["my-fixture-token-value", "re:ghp_0+"]
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `secrets.enabled` | `true` | Mask credentials in every model request |
+| `secrets.allow` | None | Values never masked, such as sample keys in test fixtures. An entry starting with `re:` is a regular expression that must match the whole value |
+
+The `secrets` block is only read from your user-level config, so a
+repository can't turn masking off or allow its own values. Changes need
+`/reload-instance`. Masking stops credentials reaching a model by
+accident; it can't stop an agent that sets out to leak one, for example by
+encoding it. It doesn't cover image and PDF bytes (or a text attachment
+Anvil reads as binary), the model's own reasoning, tool definitions, or a
+credential no rule recognises that Anvil wasn't given, and MCP tools that
+write files aren't guarded. The bouncer's classifier gets its own
+redaction.
+
+Placeholders are keyed by `secrets.key`, beside the global database, so
+every Anvil instance gives a value the same placeholder. Deleting it
+changes every placeholder, which costs each session one prompt-cache miss.
 
 ## Environment Variables
 

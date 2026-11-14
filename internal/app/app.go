@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/permission/decisionlog"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/secrets"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -71,6 +73,10 @@ type App struct {
 	// cacheUsage records per-call prompt-cache usage. It is closed by the
 	// shutdown cleanup after agents have been cancelled.
 	cacheUsage *cacheusage.Recorder
+
+	// secrets masks credentials in every model request; nil when masking
+	// is off.
+	secrets *secrets.Detector
 
 	config *config.ConfigStore
 	// bouncer is the same Bouncer the permission service assesses with,
@@ -194,6 +200,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore) (*App, er
 
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)
+	// The detector exists before any token refresh or MCP connection, so
+	// the credentials they produce are known from the first request.
+	app.secrets = newSecretsDetector(ctx, store, q, os.Environ())
+	mcp.SetSecretDetector(app.secrets)
 	// ChatGPT and Grok model catalogs are fetched at login; renew them
 	// once per start so they follow plan changes.
 	go func() {
@@ -638,6 +648,7 @@ func (app *App) InitOrchestratorAgent(ctx context.Context) error {
 		app.jobWaker.trigger,
 		app.jobWaker.enabled.Load,
 		app.cacheUsage,
+		agent.WithSecrets(app.secrets),
 	)
 	if err != nil {
 		slog.Error("Failed to create orchestrator agent", "err", err)

@@ -50,6 +50,9 @@ Keep responses minimal:
 {{- if .Diagrams}}
 - Mermaid diagrams in your replies may be rendered as images, so use them whenever a picture would explain something faster than prose: a flow, an interaction over time, a lifecycle, a data model, an architecture, a timeline, a hierarchy or a comparison. Pick the Mermaid diagram type that fits the content from the full range (sequence, state, class, ER, gantt, timeline, mindmap, pie, quadrant, gitGraph and others) rather than defaulting to a flowchart. Skip diagrams for short or simple answers; a diagram doesn't count toward the line limit. Sequence diagram participant IDs can't be keywords in any case (`end`, `off`, `opt`, `loop`, `note`, `box`, `par`), so write `participant Ofr as Off`; a flowchart node can't be a lowercase `end`; quote labels holding brackets, quotes or semicolons.{{- if .HasValidateMermaid}} Check a diagram with `validate_mermaid` when you're unsure of its syntax, and after writing one to a file.{{- end}}
 {{- end}}
+{{- if .SecretMasking}}
+- `[SECRET:<kind>:<tag>]` stands for a credential Anvil hid from you. Nothing turns it back into the value, and the same value always has the same tag. Use environment variables or config references (such as `$STRIPE_KEY`) instead, and don't write a placeholder into a file or command, where it would be taken literally.
+{{- end}}
 
 Examples:
 user: what is 2+2?

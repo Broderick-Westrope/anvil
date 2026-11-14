@@ -36,6 +36,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/permission"
 	"github.com/Broderick-Westrope/anvil/internal/plugin"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/secrets"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/skills"
@@ -190,6 +191,9 @@ type coordinator struct {
 	jobWakeEnabled func() bool
 	// usageRecorder records per-response cache usage; nil disables it.
 	usageRecorder *cacheusage.Recorder
+	// secrets masks credentials in every model request; nil when masking
+	// is off.
+	secrets *secrets.Detector
 
 	// orchestrator is the eagerly-built top-level agent. Protected by orchestratorMu.
 	// Do NOT use csync.Value[SessionAgent] — it panics on interface types backed by pointers.
@@ -253,6 +257,16 @@ type coordinator struct {
 	returned   []SubagentSteersReturned
 }
 
+// CoordinatorOption configures a coordinator beyond its required
+// dependencies.
+type CoordinatorOption func(*coordinator)
+
+// WithSecrets masks credentials in every model request with d, and guards
+// tools against writing its placeholders. Without it, nothing is masked.
+func WithSecrets(d *secrets.Detector) CoordinatorOption {
+	return func(c *coordinator) { c.secrets = d }
+}
+
 func NewCoordinator(
 	ctx context.Context,
 	cfg *config.ConfigStore,
@@ -267,6 +281,7 @@ func NewCoordinator(
 	onIdle func(sessionID string),
 	jobWakeEnabled func() bool,
 	usageRecorder *cacheusage.Recorder,
+	opts ...CoordinatorOption,
 ) (Coordinator, error) {
 	// Discover plugins once for both skills and agents.
 	plugins := plugin.DiscoverAll(cfg.Config().Plugins, nil)
@@ -295,6 +310,9 @@ func NewCoordinator(
 		skillTracker:   skillTracker,
 		plugins:        plugins,
 		agents:         csync.NewMap[string, SessionAgent](),
+	}
+	for _, opt := range opts {
+		opt(c)
 	}
 	// Runs the admission queue starts on their own goroutines count as
 	// active for Pause, but a cancelled submission stops waiting for one.
@@ -871,6 +889,7 @@ func (c *coordinator) buildAgent(ctx context.Context, agentName string, agentCfg
 		JobEvents:            c.jobEvents,
 		OnIdle:               onIdle,
 		UsageRecorder:        c.usageRecorder,
+		Secrets:              c.secrets,
 		AgentName:            agentName,
 		WorkingDir:           c.cfg.WorkingDir(),
 		CheckDiagrams:        !isSubAgent && c.cfg.DiagramFixEnabled(),
@@ -1140,7 +1159,7 @@ func (c *coordinator) buildToolsWithState(
 	}
 
 	// Add the agentic_fetch tool to the candidate set; filtering via AllowedTools applies below.
-	webClient := tools.NewWebClient(resolveOnce(c.cfg.Resolver(), c.cfg.Config().Tools.Fetch.GitHubToken))
+	webClient := tools.NewWebClient(c.resolveSecretOnce(GitHubTokenSecretKind, c.cfg.Config().Tools.Fetch.GitHubToken))
 	agenticFetch, err := c.agenticFetchTool(ctx, webClient)
 	if err != nil {
 		return nil, mcpListing{}, err
@@ -1343,6 +1362,9 @@ func (c *coordinator) buildResolvedAgentModels(ctx context.Context, largeModelCf
 	requestTimeout := c.cfg.Config().Options.GetRequestTimeout()
 	largeModel = newRequestTimeoutModel(largeModel, requestTimeout)
 	smallModel = newRequestTimeoutModel(smallModel, requestTimeout)
+	// Outside the timeout, so scanning never counts against it.
+	largeModel = newSecretMaskModel(largeModel, c.secrets)
+	smallModel = newSecretMaskModel(smallModel, c.secrets)
 
 	return Model{
 		Model:      largeModel,

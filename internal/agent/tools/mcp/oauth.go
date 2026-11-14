@@ -57,6 +57,7 @@ func (h *StoredTokenHandler) TokenSource(ctx context.Context) (oauth2.TokenSourc
 		return nil, fmt.Errorf("loading OAuth token for %q: %w", h.serverName, err)
 	}
 
+	reportRow(row)
 	token := buildTokenFromRow(row)
 
 	if row.RefreshToken.Valid && row.RefreshToken.String != "" &&
@@ -115,6 +116,7 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 		}
 		return nil, err
 	}
+	reportTokens(s.serverName, token.AccessToken, token.RefreshToken)
 	// Persist if the token changed (refresh happened).
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,6 +183,7 @@ func (rt *oauthRoundTripper) getToken(ctx context.Context) *oauth2.Token {
 		return nil
 	}
 
+	reportRow(row)
 	rt.cachedToken = buildTokenFromRow(row)
 	rt.cachedAt = time.Now()
 	return rt.cachedToken

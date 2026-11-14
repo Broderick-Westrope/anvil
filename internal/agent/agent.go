@@ -39,6 +39,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/jobevents"
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/pubsub"
+	"github.com/Broderick-Westrope/anvil/internal/secrets"
 	"github.com/Broderick-Westrope/anvil/internal/session"
 	"github.com/Broderick-Westrope/anvil/internal/shell"
 	"github.com/Broderick-Westrope/anvil/internal/stringext"
@@ -162,6 +163,7 @@ type sessionAgent struct {
 	disableAutoSummarize bool
 	isYolo               bool
 	checkDiagrams        bool
+	secrets              *secrets.Detector
 	notify               pubsub.Publisher[notify.Notification]
 	providerConfig       *csync.Value[config.ProviderConfig]
 	jobEvents            *jobevents.Store
@@ -244,6 +246,9 @@ type SessionAgentOptions struct {
 	// CheckDiagrams asks the model to fix diagrams in its interactive
 	// replies that don't render.
 	CheckDiagrams bool
+	// Secrets refuses tool calls that would write a masked secret's
+	// placeholder; nil when masking is off.
+	Secrets *secrets.Detector
 }
 
 func NewSessionAgent(
@@ -276,6 +281,7 @@ func NewSessionAgent(
 		jobEvents:            opts.JobEvents,
 		onIdle:               opts.OnIdle,
 		usageRecorder:        opts.UsageRecorder,
+		secrets:              opts.Secrets,
 		agentName:            opts.AgentName,
 		workingDir:           opts.WorkingDir,
 		lastTurn:             csync.NewMap[string, turnPrefix](),
