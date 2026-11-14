@@ -885,6 +885,7 @@ func createTransport(ctx context.Context, name string, m config.MCPConfig, resol
 		if err != nil {
 			return nil, err
 		}
+		secretDetector.Load().AddKnown(ServerSecrets(name, nil, envs, "")...)
 		cmd := exec.CommandContext(ctx, home.Long(command), args...)
 		cmd.Env = append(os.Environ(), envs...)
 		// Run the child in its own process group and kill the whole group when
@@ -908,6 +909,7 @@ func createTransport(ctx context.Context, name string, m config.MCPConfig, resol
 		if err != nil {
 			return nil, err
 		}
+		secretDetector.Load().AddKnown(ServerSecrets(name, headers, nil, "")...)
 		client := &http.Client{
 			Transport: &headerRoundTripper{
 				headers: headers,
@@ -933,6 +935,7 @@ func createTransport(ctx context.Context, name string, m config.MCPConfig, resol
 		if err != nil {
 			return nil, err
 		}
+		secretDetector.Load().AddKnown(ServerSecrets(name, headers, nil, "")...)
 		var rt http.RoundTripper
 		if m.Auth == config.MCPAuthOAuth && queries != nil {
 			rt = &oauthRoundTripper{

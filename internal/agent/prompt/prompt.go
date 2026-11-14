@@ -63,6 +63,9 @@ type PromptDat struct {
 	// Diagrams reports whether the UI may render Mermaid fences as
 	// diagrams (config.ConfigStore.DiagramsEnabled).
 	Diagrams bool
+	// SecretMasking reports whether credentials reach the model as
+	// placeholders (config.ConfigStore.SecretsAtStartup).
+	SecretMasking bool
 }
 
 type ContextFile struct {
@@ -304,6 +307,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		AgentBody:          p.agentBody,
 		AppendPrompt:       p.appendPrompt,
 		Diagrams:           store.DiagramsEnabled(),
+		SecretMasking:      store.SecretsAtStartup().MaskingEnabled(),
 	}
 	if isGit {
 		var err error

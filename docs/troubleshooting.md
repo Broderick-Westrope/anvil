@@ -87,6 +87,23 @@ So before upgrading, quit every running Anvil and copy `anvil.db`
 somewhere safe. To go back, quit every Anvil again and restore that copy.
 Anything you did on the newer build is lost, but nothing else is.
 
+## The agent refuses to write or edit a line with a secret
+
+When a file holds a credential, the model sees it as a placeholder like
+`[SECRET:stripe_key:3f9a01c2d4e5f6]` (see
+[Secret Masking](./configuration.md#secret-masking)). Writing that text
+back would replace the real value, so `write`, `edit`, `multiedit` and
+`bash` refuse input that holds one. Ask the agent to edit around the line,
+to read the value from the environment, or make that change yourself.
+
+The same goes for a key you paste into a prompt and ask the agent to use in
+a command: it only sees the placeholder, so `bash` refuses it. Export the
+key in the shell Anvil runs in (or put it in a `.env` the program loads)
+and ask the agent to use the variable, such as `$STRIPE_KEY`.
+
+If the masked value isn't a secret, such as a sample key in a test, add it
+to `secrets.allow` in your user-level config and run `/reload-instance`.
+
 ## Why is clipboard copy and paste not working?
 
 Installing an extra tool might be needed on Unix-like environments.

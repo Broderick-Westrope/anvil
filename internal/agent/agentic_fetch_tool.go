@@ -15,6 +15,7 @@ import (
 	"github.com/Broderick-Westrope/anvil/internal/agent/tools"
 	"github.com/Broderick-Westrope/anvil/internal/config"
 	"github.com/Broderick-Westrope/anvil/internal/permission"
+	"github.com/Broderick-Westrope/anvil/internal/secrets"
 )
 
 //go:embed templates/agentic_fetch.md
@@ -30,7 +31,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 	searchCfg := c.cfg.Config().Tools.WebSearch
 	searchBackend := tools.WebSearchBackend{
 		Provider: searchCfg.Provider,
-		APIKey:   resolveOnce(c.cfg.Resolver(), searchCfg.APIKey),
+		APIKey:   c.resolveSecretOnce(WebSearchKeySecretKind, searchCfg.APIKey),
 	}
 
 	return fantasy.NewParallelAgentTool(
@@ -137,6 +138,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				Sessions:             c.sessions,
 				Messages:             c.messages,
 				Tools:                fetchTools,
+				Secrets:              c.secrets,
 				JobEvents:            c.jobEvents,
 				UsageRecorder:        c.usageRecorder,
 				AgentName:            config.AgenticFetchAgentID,
@@ -210,5 +212,28 @@ func resolveOnce(resolver config.VariableResolver, value string) func() (string,
 		}
 		resolved, done = v, true
 		return resolved, nil
+	}
+}
+
+// Kinds of the web tools' credentials in placeholders.
+const (
+	GitHubTokenSecretKind  = "github_token"
+	WebSearchKeySecretKind = "web_search_api_key"
+)
+
+// resolveSecretOnce is resolveOnce for a credential: the value it resolves
+// is added to the coordinator's known secrets, so it is masked wherever a
+// tool's output repeats it.
+func (c *coordinator) resolveSecretOnce(kind, value string) func() (string, error) {
+	resolve := resolveOnce(c.cfg.Resolver(), value)
+	if resolve == nil {
+		return nil
+	}
+	return func() (string, error) {
+		v, err := resolve()
+		if err == nil {
+			c.secrets.AddKnown(secrets.Known{Kind: kind, Value: v})
+		}
+		return v, err
 	}
 }

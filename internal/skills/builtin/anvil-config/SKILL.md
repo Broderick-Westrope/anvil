@@ -440,6 +440,14 @@ set top-level `"yolo": "off" | "standard" | "full"` in the user-level config
 (`~/.config/anvil/anvil.json`). It is ignored in project and workspace
 configs, `--yolo` / `--yolo=false` override it, and `anvil run` ignores it.
 
+Anvil masks credentials in everything it sends to a model, replacing each
+with a placeholder like `[SECRET:stripe_key:3f9a01c2d4e5f6]`; `write`,
+`edit`, `multiedit` and `bash` refuse input holding one. It's on by
+default. Top-level `"secrets": {"enabled": false}` turns it off, and
+`"allow": ["value", "re:regexp"]` lists values never masked (a `re:` entry
+must match the whole value). Like `yolo`, the block is only read from the
+user-level config, and a change needs `/reload-instance`.
+
 `permissions.allowed_tools` is deprecated (each entry becomes an `allow`
 rule) and cannot be combined with the rule format.
 

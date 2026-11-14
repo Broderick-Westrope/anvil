@@ -36,6 +36,7 @@ internal/
     hooks.go                       Decision types, aggregation logic, event constants
     runner.go                      Parallel hook execution, timeout, dedup
     input.go                       Stdin payload builder, env vars, stdout parsing (Anvil + Claude Code compat)
+  secrets/                         Credential detection and placeholders for masking model requests
   session/session.go               Session CRUD backed by SQLite
   message/                         Message model and content types
   db/                              SQLite via sqlc, with migrations
@@ -221,6 +222,36 @@ Terms with a specific meaning in this codebase are defined in
   TestBranchSummaryEval -v`; run it whenever you change the prompt or
   the serialisation. Design:
   `plans/completed/design-2026-10-20-branch-summaries.md`.
+- **Secret masking**: `secretMaskModel` (`internal/agent/secret_mask.go`)
+  wraps both models in `buildResolvedAgentModels`, outside the request
+  timeout, and masks a copy of every prompt (text, tool results, tool-call
+  input through `Detector.MaskJSON`) with the process's one
+  `secrets.Detector`. It skips reasoning, files and provider-executed
+  parts, and fails the request on a part shape it doesn't know. Masking is
+  one way: `[SECRET:<kind>:<tag><check>]` never maps back. `app.New`
+  builds the detector (`newSecretsDetector`) before any token refresh or
+  MCP connection, from the top-level `secrets` block, which only
+  user-level config sets and which needs a restart
+  (`ConfigStore.SecretsAtStartup`); nil means off. Known values only grow:
+  the environment and every credential the config and database hold at
+  startup (`configuredSecrets`, which never runs `$(...)` or backticks),
+  then credentials as they're set (`ConfigStore.ObserveProviderCredentials`,
+  called from `SetProviderAPIKey` and `applyToken`; `buildProvider`;
+  `resolveSecretOnce`) and as MCP servers connect
+  (`mcp.SetSecretDetector`, a process-wide pointer since servers connect
+  from several entry points). Rules in `internal/secrets/rules.go` match
+  credentials, never IDs; the generic ones skip fixtures (`looksFake`),
+  word passwords in URLs and page tokens, and `jwt` skips signed URLs.
+  Tool calls and JSON tool output are masked as JSON. Masking stops
+  accidental echoes, not an agent set on leaking (encodings and splits get
+  past it). `secretGuardTool` refuses `write`, `edit`, `multiedit` and
+  `bash` content or commands holding a placeholder whose check matches the
+  install key (`Detector.Issued`), so it holds across restarts and
+  summaries. A detector knows real credentials, so tests pass
+  `newSecretsDetector` a fixed environ, isolate `HOME` and config, and
+  never print a detector. Tune rules with the offline scan:
+  `ANVIL_SECRETS_SCAN=1 go test ./internal/secrets -run TestSecretsScan -v`.
+  Design: `plans/completed/design-2026-11-13-secret-masking.md`.
 - **Cache usage metrics**: every model response (turn steps, summaries,
   titles, `CompleteSmall`) is recorded as a `step_usage` row with
   normalised token counts, prices and hashed request fingerprints. The

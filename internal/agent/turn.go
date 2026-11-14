@@ -145,7 +145,8 @@ func (t *turn) newAgent(agentTools []fantasy.AgentTool, systemPrompt string) fan
 // its Go errors to the model here, whoever built it, so no tool error ends
 // the turn.
 func (t *turn) stepTools(agentTools []fantasy.AgentTool) []fantasy.AgentTool {
-	return withCachedLastTool(t.timed(wrapToolsWithErrorResults(agentTools)), t.a.getCacheControlOptions())
+	guarded := guardSecretPlaceholders(agentTools, t.a.secrets)
+	return withCachedLastTool(t.timed(wrapToolsWithErrorResults(guarded)), t.a.getCacheControlOptions())
 }
 
 // withCachedLastTool returns a copy of agentTools whose last tool carries

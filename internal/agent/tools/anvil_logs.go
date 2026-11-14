@@ -63,6 +63,8 @@ var reservedFields = map[string]bool{
 }
 
 // Sensitive field keys that should be redacted (matched case-insensitively).
+// The names secret masking treats as credentials live in internal/secrets;
+// consider both when changing either.
 var sensitiveKeys = []string{
 	"authorization",
 	"api-key",

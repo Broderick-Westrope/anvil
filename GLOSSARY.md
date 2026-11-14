@@ -172,6 +172,13 @@ The drill-in for one workflow run: its phases and, under each, the sessions, sub
 - **Code:** `workflowhost.RunView`, `chat.BuildWorkflowRunItems`, `drillInEntry.runID`
 - **Not:** the run node, which is the run's one-line summary in the transcript and opens the run view.
 
+## Secret Placeholder
+
+What a model sees in place of a credential: `[SECRET:<kind>:<tag>]`, where the tag is a keyed hash of the value (so one value always gets the same placeholder) followed by a check that only the install's key can produce. Nothing turns a placeholder back into its value; the write guard refuses writes and commands that hold one with a valid check.
+
+- **Code:** `secrets.Detector` (`internal/secrets`), applied by `secretMaskModel` (`internal/agent/secret_mask.go`); the guard is `secretGuardTool` (`internal/agent/secret_guard.go`)
+- **Not:** `[REDACTED]`, which `bouncer.Redact` writes before System One calls and which carries no tag.
+
 ## Session
 
 A conversation between the user and an agent, stored with its message tree, usage and todos. Sessions are stored in one global database and remember the directory they started in.

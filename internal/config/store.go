@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -138,6 +139,10 @@ type ConfigStore struct {
 	// consumer's defaults merged in) before a reload publishes. Guarded by
 	// writeMu.
 	bouncerValidator func(*Bouncer) error
+	// credentialObserver hears each provider credential set in this
+	// process (a login, a refreshed token, a new key), so secret masking
+	// learns it before any model prints it.
+	credentialObserver atomic.Pointer[func(ProviderConfig)]
 
 	// startupConfig, startupBouncer, and startupRawProjectDir are captured
 	// once at the end of Load. They are the baseline for RestartRequired,
@@ -727,7 +732,16 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 	}
 	cred.apply(&providerConfig, providerID)
 	cfg.Providers.Set(providerID, providerConfig)
+	s.observeCredential(providerConfig)
 	return nil
+}
+
+// observeCredential tells the credential observer about a provider whose
+// credential was just set.
+func (s *ConfigStore) observeCredential(pc ProviderConfig) {
+	if observe := s.credentialObserver.Load(); observe != nil {
+		(*observe)(pc)
+	}
 }
 
 // providerCredential is a credential the user gave a provider. It owns
@@ -1180,6 +1194,7 @@ func (s *ConfigStore) applyToken(providerConfig ProviderConfig, token *oauth.Tok
 		providerConfig.SetupAnthropic()
 	}
 	s.Config().Providers.Set(providerID, providerConfig)
+	s.observeCredential(providerConfig)
 	return nil
 }
 
@@ -1473,11 +1488,11 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	}
 	cfg.applyTrustedBouncer(trustedBouncer)
 
-	trustedYolo, err := loadTrustedYolo(s.trustedPaths)
+	trustedUser, err := loadUserSettings(s.trustedPaths)
 	if err != nil {
 		return fmt.Errorf("failed to reload config: %w", err)
 	}
-	cfg.applyTrustedYolo(trustedYolo)
+	cfg.applyUserSettings(trustedUser)
 
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
