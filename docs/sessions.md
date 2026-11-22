@@ -31,7 +31,11 @@ cd '/path/to/project' && anvil --session <session-id>
 Paste each `cd` line into a new terminal tab. Reopening a session dismisses its
 interrupted record, so the list shrinks as you work through it. To dismiss
 the rest without reopening them, run `anvil session recover --clear`. This
-does not delete conversations or records owned by running windows.
+does not delete conversations or records owned by running windows. To
+dismiss only some, pass their session IDs:
+`anvil session recover --clear <session-id>...`. A script that closes a
+window on purpose, such as killing its terminal tab, can use this so the
+window isn't listed as interrupted.
 
 A window counts as interrupted when it is killed, loses its terminal, or
 receives `SIGTERM` (as macOS sends during restart and logout). Quitting

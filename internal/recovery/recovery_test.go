@@ -122,6 +122,35 @@ func TestClearPreservesLiveRecords(t *testing.T) {
 	require.Equal(t, "live", entries[0].SessionID)
 }
 
+func TestClearSessionsPreservesLiveRecordsOfTheSameSession(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	interrupted, err := NewTracker(root)
+	require.NoError(t, err)
+	interrupted.Track(Entry{SessionID: "reopened"})
+	require.NoError(t, interrupted.Close(false))
+	other, err := NewTracker(root)
+	require.NoError(t, err)
+	other.Track(Entry{SessionID: "other"})
+	require.NoError(t, other.Close(false))
+	live, err := NewTracker(root)
+	require.NoError(t, err)
+	live.Track(Entry{SessionID: "live"})
+	require.Eventually(t, func() bool {
+		files, err := filepath.Glob(filepath.Join(root, "*.json"))
+		return err == nil && len(files) == 3
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, ClearSessions(root, "reopened", "live"))
+	require.NoError(t, live.Close(false))
+	entries, err := List(root)
+	require.NoError(t, err)
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, entry.SessionID)
+	}
+	require.ElementsMatch(t, []string{"other", "live"}, ids)
+}
+
 func TestTrackerSurvivesForceKill(t *testing.T) {
 	if root := os.Getenv("ANVIL_TEST_RECOVERY_ROOT"); root != "" {
 		tracker, err := NewTracker(root)

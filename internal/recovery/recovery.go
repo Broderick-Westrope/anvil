@@ -224,8 +224,14 @@ func GroupByInterruption(entries []Entry) [][]Entry {
 // session open again, those records describe work that is no longer lost,
 // and leaving them would keep it listed after this window exits cleanly.
 func reclaim(root, sessionID string) error {
+	return ClearSessions(root, sessionID)
+}
+
+// ClearSessions removes the interrupted records for sessionIDs, leaving
+// records owned by running windows.
+func ClearSessions(root string, sessionIDs ...string) error {
 	return scan(root, true, func(path string, entry Entry, active bool) error {
-		if active || entry.SessionID != sessionID {
+		if active || !slices.Contains(sessionIDs, entry.SessionID) {
 			return nil
 		}
 		return removeRecord(path)

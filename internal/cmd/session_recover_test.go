@@ -60,6 +60,44 @@ func TestSessionRecoverListsOnlyInterruptedSessions(t *testing.T) {
 	require.Empty(t, entries)
 }
 
+func TestSessionRecoverClearsOnlyTheGivenSessions(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, id := range []string{"wrapped", "also-wrapped", "crashed"} {
+		tracker, err := recovery.NewTracker(root)
+		require.NoError(t, err)
+		tracker.Track(recovery.Entry{SessionID: id, WorkingDir: "/project"})
+		require.NoError(t, tracker.Close(false))
+	}
+	command := newSessionRecoverCommand(root, nil)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"--clear", "wrapped", "also-wrapped"})
+	require.NoError(t, command.Execute())
+	require.Equal(t, "Cleared recovery records for 2 sessions. Conversations were not deleted.\n", output.String())
+	entries, err := recovery.List(root)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "crashed", entries[0].SessionID)
+}
+
+func TestSessionRecoverRejectsSessionIDsWithoutClear(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tracker, err := recovery.NewTracker(root)
+	require.NoError(t, err)
+	tracker.Track(recovery.Entry{SessionID: "kept"})
+	require.NoError(t, tracker.Close(false))
+	command := newSessionRecoverCommand(root, nil)
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"kept"})
+	require.EqualError(t, command.Execute(), "session IDs can only be given with --clear")
+	entries, err := recovery.List(root)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+}
+
 func TestSessionRecoverWarnsAndPrintsPartialResults(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

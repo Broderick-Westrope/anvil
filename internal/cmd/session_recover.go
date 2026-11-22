@@ -77,9 +77,9 @@ type sessionRecover struct {
 func newSessionRecoverCommand(root string, openSessions openSessionLookup) *cobra.Command {
 	sr := &sessionRecover{root: root, openSessions: openSessions}
 	command := &cobra.Command{
-		Use: "recover", Short: "List sessions left open after an interrupted exit",
-		Long: "List working directories, full session IDs, and titles from Anvil windows that were open when Anvil last stopped without being closed, such as during a restart. Windows lost together are grouped, and only the most recent group is shown unless --all is given. Running windows and sessions with no messages are excluded. Nothing is resumed automatically; use --print-commands for commands that resume each session.",
-		Args: cobra.NoArgs,
+		Use: "recover [session-id...]", Short: "List sessions left open after an interrupted exit",
+		Long: "List working directories, full session IDs, and titles from Anvil windows that were open when Anvil last stopped without being closed, such as during a restart. Windows lost together are grouped, and only the most recent group is shown unless --all is given. Running windows and sessions with no messages are excluded. Nothing is resumed automatically; use --print-commands for commands that resume each session. --clear dismisses every record, or only those of the session IDs given after it.",
+		Args: sr.args,
 		RunE: sr.run,
 	}
 	command.Flags().BoolVar(&sr.asJSON, "json", false, "Output recovery records as JSON")
@@ -91,10 +91,24 @@ func newSessionRecoverCommand(root string, openSessions openSessionLookup) *cobr
 	return command
 }
 
-func (sr *sessionRecover) run(command *cobra.Command, _ []string) error {
+func (sr *sessionRecover) args(_ *cobra.Command, args []string) error {
+	if len(args) > 0 && !sr.clearRecords {
+		return errors.New("session IDs can only be given with --clear")
+	}
+	return nil
+}
+
+func (sr *sessionRecover) run(command *cobra.Command, sessionIDs []string) error {
 	directory := sr.root
 	if directory == "" {
 		directory = filepath.Join(config.GlobalDataDir(), "recovery")
+	}
+	if sr.clearRecords && len(sessionIDs) > 0 {
+		if err := recovery.ClearSessions(directory, sessionIDs...); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(command.OutOrStdout(), "Cleared recovery records for %s. Conversations were not deleted.\n", countSessions(len(sessionIDs)))
+		return err
 	}
 	if sr.clearRecords {
 		if err := recovery.Clear(directory); err != nil {
