@@ -2729,8 +2729,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			m.dialog.CloseFrontDialog()
 			argsDialog := dialog.NewArguments(
 				m.com,
-				"Custom Command Arguments",
-				"",
+				customCommandArgsTitle,
+				customCommandArgsDescription(msg),
 				customCommandDialogArguments(msg),
 				msg, // Pass the action as the result
 			)
@@ -4800,17 +4800,20 @@ func (m *UI) tryExecuteSlashCommand(value string) tea.Cmd {
 		return run
 	}
 
-	// Command matched. If it has named arguments and none were
-	// provided inline, open the argument dialog.
-	if len(cmd.Arguments) > 0 && rawArgs == "" {
-		action := dialog.ActionRunCustomCommand{
+	// Named arguments can only be filled in the arguments dialog, so open
+	// it here rather than returning the action as a message: with no
+	// dialog open, Update has nowhere to route that message and the
+	// command would vanish. Inline text becomes the starting value for
+	// $ARGUMENTS.
+	if len(cmd.Arguments) > 0 {
+		m.openCustomCommandArgs(dialog.ActionRunCustomCommand{
 			Name:      argName,
 			Content:   cmd.Content,
 			Arguments: cmd.Arguments,
 			Skills:    cmd.Skills,
 			Location:  cmd.Location,
-		}
-		return func() tea.Msg { return action }
+		}, rawArgs)
+		return func() tea.Msg { return nil }
 	}
 
 	content := commands.SubstituteArgs(cmd.Content, nil, rawArgs)

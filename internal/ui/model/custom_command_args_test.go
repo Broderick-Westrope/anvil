@@ -93,3 +93,12 @@ func TestCustomCommandLine(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomCommandArgsDescriptionNamesTheCommandFile(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "Each field fills a $NAME placeholder in /cmds/wrap/COMMAND.md",
+		customCommandArgsDescription(dialog.ActionRunCustomCommand{Location: "/cmds/wrap/COMMAND.md"}))
+	require.Equal(t, "Each field fills a $NAME placeholder in the command",
+		customCommandArgsDescription(dialog.ActionRunCustomCommand{}))
+}
