@@ -69,6 +69,8 @@ skills: [refactoring-code]
 ---
 ```
 
+In a command body, `$ARGUMENTS` is the text typed after `/name`. Every other `$UPPER_CASE` word becomes a required argument that a dialog asks for before the command runs, so name environment variables without the `$` (the `WRAP_HUB` environment variable).
+
 Agent (`<name>.md`):
 
 ```yaml

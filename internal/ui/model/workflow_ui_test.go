@@ -392,47 +392,70 @@ func TestWorkflowCommandFromPaletteThroughUpdate(t *testing.T) {
 	require.Empty(t, f.ws.runs)
 }
 
-func TestPromptCommandAsksForItsArgumentsOnlyWhenNoneAreGiven(t *testing.T) {
+func TestTypedPromptCommandAsksForItsNamedArguments(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		arguments  []commands.Argument
-		line       string
-		wantDialog bool
-		wantSent   string
+		line     string
+		wantSent string
 	}{
-		"declared arguments and none given": {
-			arguments: []commands.Argument{{ID: "target"}}, line: "/fix", wantDialog: true,
-		},
-		"declared arguments given inline": {
-			arguments: []commands.Argument{{ID: "target"}}, line: "/fix the retry loop", wantSent: "Fix the retry loop.",
-		},
-		"no declared arguments": {line: "/fix", wantSent: "Fix ."},
+		"none given inline": {line: "/fix", wantSent: "Fix  in auth."},
+		"given inline":      {line: "/fix the retry loop", wantSent: "Fix the retry loop in auth."},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newWorkflowUIFixture(t)
 			f.u.customCommands = append(f.u.customCommands, commands.CustomCommand{
-				ID: "user:fix", Name: "fix", Content: "Fix $ARGUMENTS.", Arguments: tc.arguments,
+				ID: "user:fix", Name: "fix", Content: "Fix $ARGUMENTS in $TARGET.", Location: "/cmds/fix/COMMAND.md",
+				Arguments: []commands.Argument{{ID: "TARGET", Title: "TARGET", Required: true}},
 			})
-			var dialogs []dialog.ActionRunCustomCommand
-			for _, msg := range cmdMsgs(f.u.tryExecuteSlashCommand(tc.line)) {
-				if action, ok := msg.(dialog.ActionRunCustomCommand); ok {
-					dialogs = append(dialogs, action)
-				}
+
+			f.submit(tc.line)
+			require.True(t, f.u.dialog.ContainsDialog(dialog.ArgumentsID), "typing the command opens its arguments dialog")
+			require.Empty(t, f.ws.runs, "nothing is sent before the arguments are filled")
+
+			f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.Empty(t, f.ws.runs, "enter on the prefilled $ARGUMENTS field moves on to the named one")
+			for _, r := range "auth" {
+				f.press(tea.KeyPressMsg{Code: r, Text: string(r)})
 			}
-			if tc.wantDialog {
-				require.Equal(t, []dialog.ActionRunCustomCommand{{Name: "fix", Content: "Fix $ARGUMENTS.", Arguments: tc.arguments}}, dialogs)
-				require.Empty(t, f.ws.runs)
-				return
-			}
-			require.Empty(t, dialogs)
+			f.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			require.False(t, f.u.dialog.ContainsDialog(dialog.ArgumentsID))
 			require.Len(t, f.ws.runs, 1)
 			require.Contains(t, f.ws.runs[0], tc.wantSent)
+			require.NotContains(t, f.ws.runs[0], "$TARGET")
 			require.NotContains(t, f.ws.runs[0], "$ARGUMENTS")
 		})
 	}
+}
+
+func TestTypedPromptCommandWithoutNamedArgumentsSendsStraightAway(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.u.customCommands = append(f.u.customCommands, commands.CustomCommand{
+		ID: "user:fix", Name: "fix", Content: "Fix $ARGUMENTS.",
+	})
+	f.submit("/fix")
+	require.False(t, f.u.dialog.HasDialogs())
+	require.Len(t, f.ws.runs, 1)
+	require.Contains(t, f.ws.runs[0], "Fix .")
+}
+
+func TestTypedCommandArgumentsDialogLeavesTheFrontDialogOpen(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkflowUIFixture(t)
+	f.u.customCommands = append(f.u.customCommands, commands.CustomCommand{
+		ID: "user:fix", Name: "fix", Content: "Fix $TARGET.",
+		Arguments: []commands.Argument{{ID: "TARGET", Title: "TARGET", Required: true}},
+	})
+	f.u.dialog.OpenDialog(&stubDialog{id: "front"})
+	require.NotNil(t, f.u.tryExecuteSlashCommand("/fix"), "a matched command is never sent as a prompt")
+	require.True(t, f.u.dialog.ContainsDialog("front"))
+	require.True(t, f.u.dialog.ContainsDialog(dialog.ArgumentsID))
 }
 
 func TestABrokenWorkflowCommandIsNeverSentAsAPrompt(t *testing.T) {

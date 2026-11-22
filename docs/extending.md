@@ -168,6 +168,14 @@ autocomplete, and `skills`, a list of skill names whose bodies are sent with
 the command. `$ARGUMENTS` in the body is replaced with whatever follows the
 command name. `workflow` makes the command run a script instead (see below).
 
+Any other `$UPPER_CASE` word in the body, such as `$TARGET`, is a named
+argument. Every named argument is required, so running the command opens a
+dialog with one field per name, plus an `ARGUMENTS` field when the body uses
+`$ARGUMENTS`; text typed after the command name starts in that field. Because
+every such word counts, write an environment variable without the dollar sign
+("the `WRAP_HUB` environment variable", not `$WRAP_HUB`), or the command will
+ask for it as an argument.
+
 ### Workflow commands
 
 A command can run a JavaScript workflow instead of sending its body to the
