@@ -176,7 +176,16 @@ func TestChatHighlightContent_DoubleClickCopiesShownText(t *testing.T) {
 func TestChatHighlightContent_DragAfterDoubleClickKeepsMarkdown(t *testing.T) {
 	t.Parallel()
 
-	for name, freshClick := range map[string]bool{"extend double-click": false, "new click": true} {
+	tests := map[string]struct {
+		freshClick bool
+		dragDown   bool
+		want       string
+	}{
+		"extend double-click sideways": {want: "Alpha has **bold** words"},
+		"extend double-click down":     {dragDown: true, want: "Alpha has **bold** words and more text after it."},
+		"new click":                    {freshClick: true, want: "Alpha has **bold** words"},
+	}
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
@@ -185,7 +194,7 @@ func TestChatHighlightContent_DragAfterDoubleClickKeepsMarkdown(t *testing.T) {
 				ID:   "a1",
 				Role: message.Assistant,
 				Parts: []message.ContentPart{
-					message.TextContent{Text: "Alpha has **bold** words and more text after it."},
+					message.TextContent{Text: "Alpha has **bold** words and more text after it.\n\nBeta line."},
 					message.Finish{Reason: message.FinishReasonEndTurn},
 				},
 			}
@@ -197,30 +206,37 @@ func TestChatHighlightContent_DragAfterDoubleClickKeepsMarkdown(t *testing.T) {
 			c.list.Render()
 
 			lines := strings.Split(ansi.Strip(item.RawRender(c.list.Width())), "\n")
-			lineIdx, line := -1, ""
+			alphaLine, betaLine, line := -1, -1, ""
 			for i, l := range lines {
 				if strings.Contains(l, "Alpha") {
-					lineIdx, line = i, l
-					break
+					alphaLine, line = i, l
+				}
+				if strings.Contains(l, "Beta") {
+					betaLine = i
 				}
 			}
-			require.GreaterOrEqual(t, lineIdx, 0)
+			require.GreaterOrEqual(t, alphaLine, 0)
+			require.Greater(t, betaLine, alphaLine)
 			pad := chat.MessageLeftPaddingTotal
 			alphaX := strings.Index(line, "Alpha") + pad
-			wordsX := strings.Index(line, "words") + len("words") + pad
-
-			c.HandleMouseDown(alphaX, lineIdx)
-			c.HandleMouseDown(alphaX, lineIdx)
-			if freshClick {
-				c.HandleMouseUp(alphaX, lineIdx)
-				c.lastClickTime = c.lastClickTime.Add(-time.Second)
-				c.HandleMouseDown(alphaX, lineIdx)
+			require.Equal(t, alphaX, strings.Index(lines[betaLine], "Beta")+pad)
+			dragX, dragY := strings.Index(line, "words")+len("words")+pad, alphaLine
+			if tc.dragDown {
+				dragX, dragY = alphaX, betaLine
 			}
-			c.HandleMouseDrag(wordsX, lineIdx)
-			c.HandleMouseUp(wordsX, lineIdx)
+
+			c.HandleMouseDown(alphaX, alphaLine)
+			c.HandleMouseDown(alphaX, alphaLine)
+			if tc.freshClick {
+				c.HandleMouseUp(alphaX, alphaLine)
+				c.lastClickTime = c.lastClickTime.Add(-time.Second)
+				c.HandleMouseDown(alphaX, alphaLine)
+			}
+			c.HandleMouseDrag(dragX, dragY)
+			c.HandleMouseUp(dragX, dragY)
 			c.list.Render()
 
-			require.Equal(t, "Alpha has **bold** words", c.HighlightContent())
+			require.Equal(t, tc.want, c.HighlightContent())
 		})
 	}
 }
