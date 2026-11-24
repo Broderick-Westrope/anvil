@@ -32,6 +32,7 @@ func TestBranchKeyNavigatesImmediately(t *testing.T) {
 	require.NoError(t, f.Workspace.MoveLeaf(f.Context, sess.ID, source.ID))
 	m := newIntegrationUI(t, f, sess.ID, &source)
 	m.textarea.SetValue("original draft")
+	m.chat.Focus()
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'B', Text: "B"})
 	results := collectMsgs(cmd)
 	done, ok := findMsg[navigateTreeDoneMsg](results)
@@ -40,6 +41,8 @@ func TestBranchKeyNavigatesImmediately(t *testing.T) {
 	require.Equal(t, parent.ID, m.session.LeafMessageID)
 	require.Equal(t, "hello\n  world", m.textarea.Value())
 	require.Equal(t, uiFocusEditor, m.focus)
+	require.True(t, m.textarea.Focused())
+	require.False(t, m.chat.list.Focused(), "the chat must not show a selection while the editor has focus")
 	require.NotContains(t, m.renderEditorView(80), "later messages")
 }
 
