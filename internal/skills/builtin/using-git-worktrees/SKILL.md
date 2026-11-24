@@ -24,11 +24,27 @@ If you're already in a linked worktree for this task, keep working there.
 
 ## Create a Worktree
 
-Reuse a worktree if one already exists for the branch (`wtp list`). Otherwise create one from anywhere in the repository:
+Reuse a worktree if one already exists for the branch (`wtp list`). Otherwise create one from anywhere in the repository.
+
+New work starts from the latest default branch (here `main`; `git symbolic-ref --short refs/remotes/origin/HEAD` names it). Fetch, fast-forward the root worktree, then branch, all in one chain, so the branch starts from the remote's latest commit and the root checkout the user compares against stays current:
 
 ```bash
-wtp add -b <branch> --stay              # new branch from the current HEAD
-wtp add -b <branch> --stay main         # new branch from main
+root="$(wtp cd @)" && git -C "$root" fetch origin &&
+  [ "$(git -C "$root" branch --show-current)" = main ] &&
+  git -C "$root" merge --ff-only origin/main &&
+  wtp add -b <branch> --stay main
+```
+
+If the chain stops before `wtp add` (the fetch failed, the root is on another branch, or the fast-forward refused because the root's `main` diverged or its tweaks clash), keep the root as it is and tell the user why it's behind. Then branch from the remote ref, and drop the upstream that git sets from it so the branch doesn't track `main`:
+
+```bash
+wtp add -b <branch> --stay origin/main && git -C "$(wtp cd <branch>)" branch --unset-upstream
+```
+
+Without an `origin` remote, run `wtp add -b <branch> --stay main`. For other starting points:
+
+```bash
+wtp add -b <branch> --stay              # new branch from the current HEAD, e.g. follow-on work
 wtp add <branch> --stay                 # existing local or remote branch
 wtp add --pr <number|url> --stay        # a GitHub PR's branch (fork PRs get pr/<number>)
 ```
@@ -79,7 +95,8 @@ Don't remove worktrees on your own initiative. Leave them for the user unless th
 |---|---|
 | Am I in the root worktree? | `git rev-parse --git-dir --git-common-dir` |
 | List worktrees | `wtp list` |
-| New branch | `wtp add -b <branch> --stay` |
+| New branch | Fetch, fast-forward the root, `wtp add -b <branch> --stay main` (Create a Worktree) |
+| New branch from the current HEAD | `wtp add -b <branch> --stay` |
 | Existing branch | `wtp add <branch> --stay` |
 | Check out a GitHub PR | `wtp add --pr <number\|url> --stay` |
 | Path to a worktree | `wtp cd <branch>` |
