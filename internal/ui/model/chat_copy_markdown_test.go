@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Broderick-Westrope/anvil/internal/message"
 	"github.com/Broderick-Westrope/anvil/internal/ui/chat"
@@ -97,4 +98,129 @@ func TestChatHighlightContent_JoinsSoftWrappedLines(t *testing.T) {
 	}).SetHighlight(startLine, startCol+chat.MessageLeftPaddingTotal, endLine, endCol+chat.MessageLeftPaddingTotal)
 
 	require.Equal(t, paragraph, c.HighlightContent())
+}
+
+// TestChatHighlightContent_DoubleClickCopiesShownText verifies that a
+// double-clicked URL, issue ID or word is copied as shown, without the
+// markdown around it, so it pastes straight into a browser or tracker.
+func TestChatHighlightContent_DoubleClickCopiesShownText(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		markdown string
+		target   string
+	}{
+		"bold url in list": {
+			markdown: "Links:\n\n- **https://example.com/issues/42**\n- other",
+			target:   "https://example.com/issues/42",
+		},
+		"first line bold issue id": {
+			markdown: "**ENG-1234** is fixed.\n\nMore text here.",
+			target:   "ENG-1234",
+		},
+		"inline code url": {
+			markdown: "See `https://example.com/x?y=1` for details.",
+			target:   "https://example.com/x?y=1",
+		},
+		"bold word": {
+			markdown: "This is **important** stuff.",
+			target:   "important",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			com := common.DefaultCommon(nil)
+			msg := &message.Message{
+				ID:   "a1",
+				Role: message.Assistant,
+				Parts: []message.ContentPart{
+					message.TextContent{Text: tc.markdown},
+					message.Finish{Reason: message.FinishReasonEndTurn},
+				},
+			}
+			item := chat.NewAssistantMessageItem(com.Styles, msg)
+
+			c := NewChat(com)
+			c.SetSize(80, 20)
+			c.SetMessages(item)
+			c.list.Render()
+
+			lines := strings.Split(ansi.Strip(item.RawRender(c.list.Width())), "\n")
+			lineIdx, col := -1, -1
+			for i, line := range lines {
+				if idx := strings.Index(line, tc.target); idx >= 0 {
+					lineIdx, col = i, ansi.StringWidth(line[:idx])
+					break
+				}
+			}
+			require.GreaterOrEqual(t, lineIdx, 0, "rendered output missing %q", tc.target)
+
+			x := col + chat.MessageLeftPaddingTotal + 1
+			_, y := c.list.ItemIndexAtPosition(x, lineIdx)
+			require.Equal(t, lineIdx, y)
+			c.HandleMouseDown(x, lineIdx)
+			c.HandleMouseDown(x, lineIdx)
+			c.HandleMouseUp(x, lineIdx)
+			c.list.Render()
+
+			require.Equal(t, tc.target, c.HighlightContent())
+		})
+	}
+}
+
+// TestChatHighlightContent_DragAfterDoubleClickKeepsMarkdown verifies that
+// a selection made by dragging, after a double-click or after a fresh
+// click, still copies the markdown source.
+func TestChatHighlightContent_DragAfterDoubleClickKeepsMarkdown(t *testing.T) {
+	t.Parallel()
+
+	for name, freshClick := range map[string]bool{"extend double-click": false, "new click": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			com := common.DefaultCommon(nil)
+			msg := &message.Message{
+				ID:   "a1",
+				Role: message.Assistant,
+				Parts: []message.ContentPart{
+					message.TextContent{Text: "Alpha has **bold** words and more text after it."},
+					message.Finish{Reason: message.FinishReasonEndTurn},
+				},
+			}
+			item := chat.NewAssistantMessageItem(com.Styles, msg)
+
+			c := NewChat(com)
+			c.SetSize(80, 20)
+			c.SetMessages(item)
+			c.list.Render()
+
+			lines := strings.Split(ansi.Strip(item.RawRender(c.list.Width())), "\n")
+			lineIdx, line := -1, ""
+			for i, l := range lines {
+				if strings.Contains(l, "Alpha") {
+					lineIdx, line = i, l
+					break
+				}
+			}
+			require.GreaterOrEqual(t, lineIdx, 0)
+			pad := chat.MessageLeftPaddingTotal
+			alphaX := strings.Index(line, "Alpha") + pad
+			wordsX := strings.Index(line, "words") + len("words") + pad
+
+			c.HandleMouseDown(alphaX, lineIdx)
+			c.HandleMouseDown(alphaX, lineIdx)
+			if freshClick {
+				c.HandleMouseUp(alphaX, lineIdx)
+				c.lastClickTime = c.lastClickTime.Add(-time.Second)
+				c.HandleMouseDown(alphaX, lineIdx)
+			}
+			c.HandleMouseDrag(wordsX, lineIdx)
+			c.HandleMouseUp(wordsX, lineIdx)
+			c.list.Render()
+
+			require.Equal(t, "Alpha has **bold** words", c.HighlightContent())
+		})
+	}
 }
