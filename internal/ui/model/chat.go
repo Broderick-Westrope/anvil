@@ -102,6 +102,11 @@ type Chat struct {
 	mouseDragX    int // Current X in item content
 	mouseDragY    int // Current Y in item
 
+	// wordSelected is set while the selection is a double-clicked word,
+	// URL or issue ID, which is copied as shown: the markdown around it
+	// (bullets, bold, code spans) would have to be deleted before pasting.
+	wordSelected bool
+
 	// Click tracking for double/triple clicks
 	lastClickTime time.Time
 	lastClickX    int
@@ -890,6 +895,7 @@ func (m *Chat) HandleMouseDown(x, y int) (bool, tea.Cmd) {
 	m.lastClickTime = now
 	m.lastClickX = x
 	m.lastClickY = y
+	m.wordSelected = false
 
 	// Select the item that was clicked
 	m.list.SetSelected(itemIdx)
@@ -1022,6 +1028,9 @@ func (m *Chat) HandleMouseDrag(x, y int) bool {
 		return false
 	}
 
+	if x != m.lastClickX || y != m.lastClickY {
+		m.wordSelected = false
+	}
 	m.mouseDragItem = itemIdx
 	m.mouseDragX = x
 	m.mouseDragY = itemY
@@ -1056,7 +1065,7 @@ func (m *Chat) HighlightContent() string {
 				rendered = item.Render(listWidth)
 			}
 			area := uv.Rect(0, 0, listWidth, lipgloss.Height(rendered))
-			if text, ok := sourceSelection(item, rendered, area, startLine, startCol, endLine, endCol); ok {
+			if text, ok := m.sourceSelection(item, rendered, area, startLine, startCol, endLine, endCol); ok {
 				sb.WriteString(text)
 				sb.WriteString("\n")
 			} else {
@@ -1078,11 +1087,14 @@ func (m *Chat) HighlightContent() string {
 
 // sourceSelection maps a selection within a rendered item back to the
 // item's markdown source when the item provides one, so copied text keeps
-// its formatting. ok is false when the item has no source or the selection
-// cannot be mapped.
-func sourceSelection(item list.Item, rendered string, area uv.Rectangle, startLine, startCol, endLine, endCol int) (string, bool) {
+// its formatting. ok is false when the item has no source, the selection
+// cannot be mapped, or the selection is a double-clicked word.
+func (m *Chat) sourceSelection(item list.Item, rendered string, area uv.Rectangle, startLine, startCol, endLine, endCol int) (string, bool) {
 	if whole, ok := item.(chat.WholeSelectable); ok {
 		return whole.SelectedText(), true
+	}
+	if m.wordSelected {
+		return "", false
 	}
 	ss, ok := item.(list.SourceSelectable)
 	if !ok {
@@ -1232,6 +1244,7 @@ func (m *Chat) selectWord(itemIdx, x, itemY int) {
 	m.mouseDragItem = itemIdx
 	m.mouseDragX = endCol + offset
 	m.mouseDragY = itemY
+	m.wordSelected = true
 }
 
 // selectLine selects the entire line at the given position within an item.
