@@ -13,10 +13,10 @@ A stack is a chain of branches managed with the `gh stack` extension, each with 
 
 ## Start a New Stack
 
-Create the stack before writing code. Keep it in one worktree, named after its bottom layer, and move between layers inside it:
+Create the stack before writing code. Keep it in one worktree, named after its bottom layer, and move between layers inside it. Create the bottom branch from the latest default branch as in `anvil://skills/using-git-worktrees/SKILL.md` (Create a Worktree), which fetches and fast-forwards the root first:
 
 ```bash
-wtp add -b <bottom-branch> --stay main
+wtp add -b <bottom-branch> --stay main      # after the fetch and fast-forward
 path="$(wtp cd <bottom-branch>)"
 cd "$path" && gh stack init <bottom-branch>   # adopts the checked-out branch
 # ...commit the bottom layer...
