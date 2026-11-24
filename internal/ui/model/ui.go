@@ -5606,6 +5606,7 @@ func (m *UI) handleNavigateTreeDone(msg navigateTreeDoneMsg) tea.Cmd {
 
 	m.focus = uiFocusEditor
 	cmds = append(cmds, m.textarea.Focus())
+	m.chat.Blur()
 	m.updateLayoutAndSize()
 	if msg.restore != nil {
 		m.chat.restoreBranchViewport(msg.restore.originalViewport)
