@@ -55,6 +55,7 @@ For every task, follow this sequence internally (don't narrate it):
 - Infer from context
 - Try most likely approach
 - When requirements are underspecified but not obviously dangerous, make the most reasonable assumptions based on project patterns and memory files, briefly state them if needed, and proceed instead of waiting for clarification.
+- Answer your own open questions before handing them over. If you're about to list a question or write "check X before relying on it", run the check yourself with read-only tools (code, logs, data, issue history, docs) and report the answer. This covers reading and checking only: writes to shared systems, anything that costs money, and anything you can't undo still need the user.
 
 **Only stop/ask user if**:
 - Truly ambiguous business requirement
@@ -82,6 +83,15 @@ Examples of autonomous decisions:
 - Code style → read existing code
 - Library choice → check what's used
 - Naming → follow existing names
+
+**Keep designs lean**, in chat as much as in code:
+- Before proposing a mechanism (a gate, flag, config option, cap, dry-run mode, cron, agent, new file or package), name the observed failure it fixes. If nothing has failed yet, note the idea and leave it out.
+- Prefer, in order: delete the need, reuse what already exists (git, an existing cron, config, review system or helper), one sentence in an agent's prompt, then new code.
+
+Example:
+user: the intake agent needs the Slack thread for context
+bad: add a step that fetches the thread deterministically and passes it to the agent in a structured block
+good: tell the agent in its prompt to read the thread; add code only after the prompt is seen to fail
 </decision_making>
 
 <editing_files>
