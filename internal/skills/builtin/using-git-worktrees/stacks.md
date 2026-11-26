@@ -4,24 +4,47 @@ A stack is a chain of branches managed with the `gh stack` extension, each with 
 
 ## Rules
 
+- **Every layer has its own worktree, and a worktree stays on the branch it was made for.** Move between layers by changing worktree, never by changing branch: another agent or the user may be reading or writing in the worktree you'd switch, and a switch moves their files and their next commit onto your layer. gh-stack handles a stack spread across worktrees: `rebase` and `sync` update each clean worktree that owns a layer.
+- **Reach a layer through `wtp`:** `wtp cd <layer>` prints its worktree, and `wtp add <layer> --stay` creates one when it has none. `gh stack up`, `down`, `top`, `bottom`, `checkout` and `switch` check a layer that has no worktree out in the current one, so leave navigation to `wtp`.
 - **You're on a stack layer** when `gh stack view --json | jq -e 'any(.branches[]; .isCurrent)'` succeeds. Exit 0 from `view` alone isn't enough: on the trunk it can still print a stack, with no layer current. Its `branches` list runs bottom first.
 - **Stack only what depends on what's below it.** Each layer must build and pass its tests without the layers above. Unrelated changes are separate PRs or separate stacks, so reviewers can take them in any order.
-- **`wtp` names a worktree by the branch checked out in it**, so `wtp cd <branch>` fails once another layer is checked out there. Keep `$path` from when you resolved it, or find the current layer with `wtp list` and run `wtp cd <current-layer>`.
-- **Remove a stack's worktree with `wtp remove --keep-branch <current-layer>`** until every PR in it has merged: the other layers' branches stay either way, but the current one is deleted without it.
+- **Remove a layer's worktree with `wtp remove --keep-branch <layer>`** until its PR has merged, since plain `wtp remove` deletes the branch.
 - **`gh stack push`, `submit` and `sync` push.** Run them only when you'd be allowed to `git push`. `gh stack rebase` rewrites local branches without pushing; a layer that already has a PR then needs a force push, which `gh stack push` does.
-- **To change a lower layer**, `gh stack down` or `gh stack checkout <branch>` to it, commit, then `gh stack rebase --upstack` and `gh stack top`. `gh stack add` only runs on the top layer.
+
+## Add a Layer
+
+`gh stack add` only runs on the top layer. Create the new layer's branch and worktree from the top layer with `wtp`, then adopt it from the top layer's worktree; `gh stack add` adopts an existing branch checked out elsewhere and leaves the current checkout unchanged:
+
+```bash
+wtp add -b <next-branch> --stay <top-branch>
+cd "$(wtp cd <top-branch>)" && gh stack add <next-branch>
+path="$(wtp cd <next-branch>)"                # work on the new layer here
+```
 
 ## Start a New Stack
 
-Create the stack before writing code. Keep it in one worktree, named after its bottom layer, and move between layers inside it. Create the bottom branch from the latest default branch as in `anvil://skills/using-git-worktrees/SKILL.md` (Create a Worktree), which fetches and fast-forwards the root first:
+Create the stack before writing code. Create the bottom branch from the latest default branch as in `anvil://skills/using-git-worktrees/SKILL.md` (Create a Worktree), which fetches and fast-forwards the root first:
 
 ```bash
 wtp add -b <bottom-branch> --stay main      # after the fetch and fast-forward
 path="$(wtp cd <bottom-branch>)"
 cd "$path" && gh stack init <bottom-branch>   # adopts the checked-out branch
 # ...commit the bottom layer...
-cd "$path" && gh stack add <next-branch>      # next layer, checked out in the same worktree
 ```
+
+Then [add each further layer](#add-a-layer) in its own worktree.
+
+## Change a Lower Layer
+
+Commit in the lower layer's own worktree, then replay the layers above onto it from there:
+
+```bash
+lower="$(wtp cd <layer>)" || { wtp add <layer> --stay && lower="$(wtp cd <layer>)"; }
+cd "$lower" && git commit ...
+cd "$lower" && gh stack rebase --upstack
+```
+
+Check `git status` in each worktree above first: the rebase stops at one with uncommitted changes. If one has work that isn't yours to commit, ask the user. A conflict pauses the rebase in the worktree it names; resolve it there, `git add`, then `gh stack rebase --continue`.
 
 ## Turn Existing Work Into a Stack
 
@@ -33,10 +56,9 @@ The existing branch, and its PR if it has one, becomes the bottom layer:
 
 ```bash
 cd "$path" && gh stack init <existing-branch>
-cd "$path" && gh stack add <follow-on-branch>
 ```
 
-`gh stack submit` later links the existing PR into the stack instead of opening a new one.
+Then [add the follow-on layer](#add-a-layer). `gh stack submit` later links the existing PR into the stack instead of opening a new one.
 
 ### Splitting One Large Branch
 
@@ -55,30 +77,28 @@ cd "$path" && git branch <layer-1> <last-commit-of-layer-1>
 cd "$path" && gh stack init <layer-1> <layer-2> ... <branch>
 ```
 
-If concerns are mixed across commits, rebuild the layers from the saved tree, bottom up, in the same worktree:
+If concerns are mixed across commits, rebuild the layers from the saved tree, bottom up, each in its own worktree branched from the one below (the trunk for the first):
 
 ```bash
-cd "$path" && gh stack init <layer-1>   # new branch from the trunk, checked out here
-cd "$path" && git restore --source <branch>-presplit --staged --worktree -- <layer-1 paths>
+wtp add -b <layer-1> --stay <trunk>
+cd "$(wtp cd <layer-1>)" && git restore --source <branch>-presplit --staged --worktree -- <layer-1 paths>
 # For part of a file, apply an edited `git diff <trunk> <branch>-presplit -- <file>` with `git apply --index`.
-cd "$path" && git commit -m "..."       # then run the tests
-cd "$path" && gh stack add <layer-2>    # repeat for each middle layer
-# Top layer: move the large branch here and take everything that's left.
-cd "$path" && git branch -f <branch> HEAD && gh stack add <branch>
-cd "$path" && git restore --source <branch>-presplit --staged --worktree -- . && git commit -m "..."
+cd "$(wtp cd <layer-1>)" && git commit -m "..."   # then run the tests
+# Repeat for each middle layer: wtp add -b <layer-2> --stay <layer-1>, and so on.
+# Top layer: reset the large branch onto the layer below and take everything that's left.
+cd "$path" && git reset --hard <layer-below> && git restore --source <branch>-presplit --staged --worktree -- . && git commit -m "..."
+cd "$path" && gh stack init <layer-1> <layer-2> ... <branch>
 ```
 
 `git restore --source ... -- .` also removes files the original deleted. Interactive commands (`git add -p`, `git rebase -i`) need a terminal, so select by path or apply edited patches instead.
 
 ### Several Worktrees Holding Parts of One Change
 
-Leave each branch in its worktree; gh-stack updates the worktree that owns each branch. Order them by dependency, bottom first, then rebase each onto the one below:
+Leave each branch in its worktree. Order them by dependency, bottom first, then rebase each onto the one below:
 
 ```bash
 cd "$path" && gh stack init <branch-1> <branch-2> <branch-3>
 cd "$path" && gh stack rebase --no-trunk
 ```
 
-- Check `git status` in every one of those worktrees first: the rebase stops at one with uncommitted changes. If one has work that isn't yours to commit, ask the user.
-- A conflict pauses the rebase in the worktree it names. Resolve it there, `git add`, then `gh stack rebase --continue`.
-- `gh stack up`, `down`, `top` and `bottom` fail for a layer checked out in another worktree. Add `--print-path` to get that worktree's path instead, and run the next commands there; `gh stack add` runs in the top layer's worktree.
+As in [Change a Lower Layer](#change-a-lower-layer), check `git status` in every one of those worktrees first, and resolve a conflict in the worktree it names.
